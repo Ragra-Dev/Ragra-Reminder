@@ -1,0 +1,345 @@
+"""Ragra CLI entrypoint.
+
+Default behavior is always non-interactive: sync/reminders/serve/tick never
+open a browser. Interactive Google authorization only ever happens via the
+explicit `classroom-auth` / `calendar-auth` subcommands, and only when you
+run them yourself.
+
+`tick` is the one entrypoint meant to run unattended (Windows Task
+Scheduler): it runs Classroom sync, Calendar sync, and reminder dispatch in
+sequence, with each step isolated so a transient failure in one (e.g. a
+network blip talking to Google) never blocks the others, logs to a
+rotating file since nothing is watching stdout when it runs unattended, and
+tracks each step's health so a persisting failure eventually raises one
+notification instead of failing silently forever (see ragra/health.py).
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+import time
+from datetime import datetime, timedelta, timezone
+
+from dotenv import load_dotenv
+
+from ragra.adapters import calendar as calendar_adapter
+from ragra.adapters import classroom as classroom_adapter
+from ragra.config import Config, load_config
+from ragra.db.connection import connect_closing
+from ragra.reminders.dispatch import dispatch_due_reminders, preview_due_reminders
+from ragra.sync.calendar_sync import sync_all_task_events
+from ragra.sync.classroom_sync import sync_classroom
+
+
+def cmd_classroom_status(args: argparse.Namespace) -> int:
+    config = load_config()
+    if not config.hermes_repo_path:
+        print("HERMES_REPO_PATH is not set - cannot locate the Hermes Classroom module.")
+        return 1
+    status = classroom_adapter.classroom_auth_status(config.hermes_repo_path)
+    for key, value in status.items():
+        print(f"{key}: {value}")
+    return 0
+
+
+def cmd_classroom_auth(args: argparse.Namespace) -> int:
+    config = load_config()
+    if not config.hermes_repo_path:
+        print("HERMES_REPO_PATH is not set - cannot locate the Hermes Classroom module.")
+        return 1
+    print("Opening a browser for Google Classroom authorization...")
+    try:
+        classroom_adapter.get_classroom_client(config.hermes_repo_path, interactive=True)
+    except classroom_adapter.ClassroomAdapterError as exc:
+        print("Authorization failed:", exc)
+        return 1
+    print("Classroom authorization succeeded and was saved for future silent refresh.")
+    return 0
+
+
+def cmd_calendar_status(args: argparse.Namespace) -> int:
+    config = load_config()
+    status = calendar_adapter.calendar_auth_status(config.calendar_paths)
+    for key, value in status.items():
+        print(f"{key}: {value}")
+    return 0
+
+
+def cmd_calendar_auth(args: argparse.Namespace) -> int:
+    config = load_config()
+    print("Opening a browser for Google Calendar authorization (calendar.events scope only)...")
+    try:
+        calendar_adapter.ensure_calendar_credentials(config.calendar_paths, interactive=True)
+    except calendar_adapter.CalendarAdapterError as exc:
+        print("Authorization failed:", exc)
+        return 1
+    print("Calendar authorization succeeded and was saved for future silent refresh.")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Shared step runners - used by both the interactive commands (log=print)
+# and `tick` (log=logger.info), each step isolated from the others. Each
+# returns (exit_code, error_summary_or_None) so `tick` can feed a real
+# error string into health tracking, not just a bare pass/fail bit.
+# ---------------------------------------------------------------------------
+
+
+def _run_classroom_sync(conn, config: Config, log) -> tuple[int, str | None]:
+    if not config.hermes_repo_path:
+        msg = "Classroom sync skipped - HERMES_REPO_PATH is not set."
+        log(msg)
+        return 1, msg
+    try:
+        client = classroom_adapter.get_classroom_client(config.hermes_repo_path, interactive=False)
+    except classroom_adapter.ClassroomAdapterError as exc:
+        msg = f"Classroom sync skipped - authorization required: {exc}. Run: ragra classroom-auth"
+        log(msg)
+        return 1, str(exc)
+    except Exception as exc:  # noqa: BLE001 - a transient/network failure must not abort the tick
+        log(f"Classroom sync failed unexpectedly: {exc}")
+        return 1, str(exc)
+
+    try:
+        summary = sync_classroom(conn, client)
+    except Exception as exc:  # noqa: BLE001
+        log(f"Classroom sync failed unexpectedly: {exc}")
+        return 1, str(exc)
+
+    log(
+        f"Classroom sync: {summary.courses_seen} course(s), "
+        f"{summary.tasks_created} new task(s), {summary.tasks_updated} updated, "
+        f"{summary.tasks_cancelled} cancelled, {len(summary.deadlines_changed)} deadline change(s)"
+    )
+    if summary.tasks_marked_missed:
+        log(f"  ({summary.tasks_marked_missed} task(s) newly marked MISSED - past their actual deadline)")
+    if summary.teacher_lookups_skipped:
+        log(f"  (teacher name unavailable for {summary.teacher_lookups_skipped} course(s) - roster scope not granted, harmless)")
+    if summary.backlog_reminders_suppressed:
+        log(f"  ({summary.backlog_reminders_suppressed} historical backlog reminder(s) suppressed - already overdue when discovered)")
+    for change in summary.deadlines_changed:
+        log(f"  deadline changed: {change['title']!r} {change['old_deadline']} -> {change['new_deadline']}")
+    for error in summary.errors:
+        log(f"  sync error: {error}")
+
+    if summary.errors:
+        return 1, "; ".join(summary.errors)
+    return 0, None
+
+
+def _run_calendar_sync(conn, config: Config, log) -> tuple[int, str | None]:
+    try:
+        calendar_credentials = calendar_adapter.ensure_calendar_credentials(config.calendar_paths, interactive=False)
+    except calendar_adapter.CalendarAdapterError as exc:
+        msg = f"Calendar sync skipped - authorization required: {exc}. Run: ragra calendar-auth"
+        log(msg)
+        return 1, str(exc)
+    except Exception as exc:  # noqa: BLE001
+        log(f"Calendar sync failed unexpectedly: {exc}")
+        return 1, str(exc)
+
+    try:
+        calendar_client = calendar_adapter.GoogleCalendarClient(calendar_credentials)
+        counts = sync_all_task_events(conn, calendar_client, calendar_id=config.calendar_id)
+    except Exception as exc:  # noqa: BLE001 - a transient Calendar API failure must not abort the tick
+        log(f"Calendar sync failed unexpectedly: {exc}")
+        return 1, str(exc)
+
+    log(f"Calendar sync: {counts}")
+    return 0, None
+
+
+def _run_reminders_dispatch(conn, config: Config, log) -> tuple[int, str | None]:
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        summary = dispatch_due_reminders(
+            conn, hermes_bin=config.hermes_bin, notify_target=config.notify_target, now=now
+        )
+    except Exception as exc:  # noqa: BLE001
+        log(f"Reminder dispatch failed unexpectedly: {exc}")
+        return 1, str(exc)
+
+    log(
+        f"Reminders: {summary.sent} sent, {summary.retrying} retrying, "
+        f"{summary.permanently_failed} permanently failed, {summary.skipped_not_configured} skipped (not configured)"
+    )
+    if summary.skipped_not_configured and not (config.hermes_bin and config.notify_target):
+        log(
+            "  NOTE: RAGRA_NOTIFY_TARGET and/or HERMES_BIN are not configured, so due reminders "
+            "are not being delivered anywhere. This is safe (nothing invented, nothing lost - they "
+            "stay PENDING) but not useful until configured. See .env.example."
+        )
+    for error in summary.errors:
+        log(f"  reminder error: {error}")
+
+    if summary.permanently_failed:
+        return 1, "; ".join(summary.errors)
+    return 0, None
+
+
+def cmd_sync(args: argparse.Namespace) -> int:
+    config = load_config()
+    with connect_closing(config.db_path) as conn:
+        classroom_rc, _ = _run_classroom_sync(conn, config, print)
+        calendar_rc, _ = _run_calendar_sync(conn, config, print)
+    return classroom_rc or calendar_rc
+
+
+def cmd_reminders(args: argparse.Namespace) -> int:
+    config = load_config()
+    now = datetime.now(timezone.utc).isoformat()
+    with connect_closing(config.db_path) as conn:
+        if args.dry_run:
+            previews = preview_due_reminders(conn, now=now)
+            if not previews:
+                print("No reminders are due right now.")
+                return 0
+            print(f"{len(previews)} reminder(s) would be sent (dry run - nothing sent, nothing changed):")
+            for p in previews:
+                print(f"  [{p['reminder_type']}] due {p['scheduled_for']}: {p['message']!r}")
+            return 0
+
+        if not (config.hermes_bin and config.notify_target):
+            print(
+                "RAGRA_NOTIFY_TARGET and/or HERMES_BIN are not configured - reminders will stay "
+                "PENDING rather than being sent nowhere. See .env.example. (Use --dry-run to preview "
+                "what would be sent once configured.)"
+            )
+
+        rc, _ = _run_reminders_dispatch(conn, config, print)
+        return rc
+
+
+def cmd_tick(args: argparse.Namespace) -> int:
+    """The one entrypoint meant to run unattended (Windows Task Scheduler).
+    Each step is isolated: Classroom sync, Calendar sync, and reminder
+    dispatch each catch their own failures and continue, so e.g. Google
+    being briefly unreachable never prevents already-synced reminders from
+    still being dispatched. Logs to RAGRA_HOME/logs/ragra.log. Tracks each
+    step's health (ragra/health.py) and sends at most one notification if a
+    component has been failing for FAILURE_ALERT_THRESHOLD consecutive
+    ticks - re-armed automatically the next time that component succeeds."""
+    from ragra import health
+    from ragra.logging_setup import configure_logging
+
+    config = load_config()
+    logger = configure_logging(config.ragra_home)
+    started = time.monotonic()
+    logger.info("tick start")
+
+    exit_code = 0
+    try:
+        with connect_closing(config.db_path) as conn:
+            for component, runner in (
+                ("classroom", _run_classroom_sync),
+                ("calendar", _run_calendar_sync),
+                ("reminders", _run_reminders_dispatch),
+            ):
+                rc, error = runner(conn, config, logger.info)
+                health.record_result(conn, component=component, success=(rc == 0), error=error)
+                if rc:
+                    exit_code = 1
+
+            alerted = health.check_and_alert(conn, hermes_bin=config.hermes_bin, notify_target=config.notify_target)
+            if alerted:
+                logger.info("health alert sent for: %s", ", ".join(alerted))
+    except Exception as exc:  # noqa: BLE001 - last-resort guard; a tick must never leave a hung/corrupt process
+        logger.error("tick failed unexpectedly: %s", exc)
+        exit_code = 1
+
+    logger.info("tick end (%.1fs, exit=%d)", time.monotonic() - started, exit_code)
+    return exit_code
+
+
+def cmd_brief(args: argparse.Namespace) -> int:
+    from ragra.brief import build_deterministic_brief, build_full_brief
+
+    config = load_config()
+    now = datetime.now(timezone.utc)
+    with connect_closing(config.db_path) as conn:
+        if args.ai:
+            print(build_full_brief(conn, now=now, hermes_bin=config.hermes_bin))
+        else:
+            print(build_deterministic_brief(conn, now=now))
+    return 0
+
+
+def cmd_plan(args: argparse.Namespace) -> int:
+    from ragra.adapters.ai import AIAdapterError
+    from ragra.ai.advisor import ask_for_priorities
+
+    config = load_config()
+    now = datetime.now(timezone.utc)
+    week_end = now + timedelta(days=7)
+    with connect_closing(config.db_path) as conn:
+        try:
+            print(ask_for_priorities(
+                conn, hermes_bin=config.hermes_bin, now_iso=now.isoformat(), week_end_iso=week_end.isoformat()
+            ))
+        except AIAdapterError as exc:
+            print("AI advisory unavailable:", exc)
+            return 1
+    return 0
+
+
+def cmd_serve(args: argparse.Namespace) -> int:
+    import uvicorn
+
+    config = load_config()
+    from ragra.web.app import create_app
+
+    app = create_app(config.db_path)
+    uvicorn.run(app, host=config.web_host, port=config.web_port)
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="ragra")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    sub.add_parser("classroom-status", help="Show Classroom credential status (no browser, no secrets printed)").set_defaults(func=cmd_classroom_status)
+    sub.add_parser("classroom-auth", help="Interactively authorize Classroom access (opens a browser)").set_defaults(func=cmd_classroom_auth)
+    sub.add_parser("calendar-status", help="Show Calendar credential status (no browser, no secrets printed)").set_defaults(func=cmd_calendar_status)
+    sub.add_parser("calendar-auth", help="Interactively authorize Ragra's Calendar access (opens a browser)").set_defaults(func=cmd_calendar_auth)
+    sub.add_parser("sync", help="Sync Classroom -> database -> Calendar (never opens a browser)").set_defaults(func=cmd_sync)
+    reminders_parser = sub.add_parser("reminders", help="Dispatch any due reminders through Hermes")
+    reminders_parser.add_argument(
+        "--dry-run", action="store_true",
+        help="Preview what would be sent without sending anything or changing reminder state",
+    )
+    reminders_parser.set_defaults(func=cmd_reminders)
+    sub.add_parser("serve", help="Run the Ragra dashboard").set_defaults(func=cmd_serve)
+    sub.add_parser(
+        "tick",
+        help="Run sync + reminder dispatch once, logging to a file - the unattended/scheduled-task entrypoint",
+    ).set_defaults(func=cmd_tick)
+
+    brief_parser = sub.add_parser("brief", help="Print the deterministic daily academic brief")
+    brief_parser.add_argument("--ai", action="store_true", help="Append an AI priority narrative (advisory only)")
+    brief_parser.set_defaults(func=cmd_brief)
+
+    sub.add_parser(
+        "plan", help="Ask the AI advisor for a prioritized plan from current deterministic data (advisory only)"
+    ).set_defaults(func=cmd_plan)
+
+    return parser
+
+
+def main() -> None:
+    # Reminder messages can contain non-ASCII characters (e.g. the FINAL_1H
+    # warning emoji); the default Windows console codepage (cp1252) can't
+    # encode them and would crash a plain print(). UTF-8 with a safe
+    # fallback keeps output on any platform.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
+
+    load_dotenv()
+    parser = build_parser()
+    args = parser.parse_args()
+    sys.exit(args.func(args))
+
+
+if __name__ == "__main__":
+    main()

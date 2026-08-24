@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Ragra - {{ task.title }}</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 780px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
+  a.back { color: #666; font-size: 0.85rem; text-decoration: none; }
+  a.back:hover { text-decoration: underline; }
+  h1 { margin-top: 0.5rem; margin-bottom: 0.25rem; }
+  .course { color: #666; margin-bottom: 1.5rem; }
+  h2 { margin-top: 2rem; border-bottom: 1px solid #ddd; padding-bottom: 0.25rem; font-size: 1.1rem; }
+  .field { padding: 0.4rem 0; border-bottom: 1px solid #eee; }
+  .field .label { color: #666; font-size: 0.8rem; }
+  .badge { font-size: 0.7rem; padding: 0.1rem 0.5rem; border-radius: 999px; font-weight: 600; }
+  .badge.status-DISCOVERED, .badge.status-ACTION_REQUIRED, .badge.status-PLANNED, .badge.status-IN_PROGRESS { background: #e7f0ff; color: #1d4ed8; }
+  .badge.status-COMPLETED { background: #e6f4ea; color: #1e7d34; }
+  .badge.status-MISSED { background: #f3d4d4; color: #7a1f1f; }
+  .badge.status-CANCELLED { background: #eee; color: #666; }
+  .reminder-row, .history-row { padding: 0.4rem 0; border-bottom: 1px solid #eee; font-size: 0.9rem; }
+  .reminder-row .meta, .history-row .meta { color: #666; font-size: 0.8rem; }
+  .empty { color: #888; font-style: italic; }
+  .description { white-space: pre-wrap; }
+</style>
+</head>
+<body>
+  <a class="back" href="/">&larr; Back to Today</a>
+  <h1>{{ task.title }}</h1>
+  <div class="course">{{ task.course_code or task.course_name }}{% if task.course_code %} - {{ task.course_name }}{% endif %}</div>
+
+  <div class="field">
+    <div class="label">Status</div>
+    <span class="badge status-{{ task.status }}">{{ task.status }}</span>
+  </div>
+
+  <div class="field">
+    <div class="label">Academic (actual) deadline</div>
+    {{ task.actual_deadline or "No academic deadline set" }}
+  </div>
+
+  <div class="field">
+    <div class="label">Personal completion target</div>
+    {{ task.personal_deadline or "Not set" }}
+  </div>
+
+  {% if task.description %}
+  <div class="field">
+    <div class="label">Description / material</div>
+    <div class="description">{{ task.description }}</div>
+  </div>
+  {% endif %}
+
+  {% if task.link %}
+  <div class="field">
+    <div class="label">Classroom source</div>
+    <a href="{{ task.link }}" target="_blank" rel="noopener">{{ task.link }}</a>
+  </div>
+  {% endif %}
+
+  <div class="field">
+    <div class="label">Source</div>
+    {{ task.source_type }} (course id {{ task.course_id }}, external id {{ task.external_id or "manual" }})
+  </div>
+
+  {% if task.completed_at %}
+  <div class="field"><div class="label">Completed</div>{{ task.completed_at }}</div>
+  {% endif %}
+  {% if task.missed_at %}
+  <div class="field"><div class="label">Missed</div>{{ task.missed_at }}</div>
+  {% endif %}
+  {% if task.cancelled_at %}
+  <div class="field"><div class="label">Cancelled</div>{{ task.cancelled_at }}</div>
+  {% endif %}
+
+  <h2>Reminder state</h2>
+  {% if reminders %}
+    {% for r in reminders %}
+    <div class="reminder-row">
+      [{{ r.reminder_type }}] {{ r.status }} - scheduled for {{ r.scheduled_for }}
+      <div class="meta">
+        attempts: {{ r.attempt_count }}
+        {% if r.sent_at %} - sent {{ r.sent_at }}{% endif %}
+        {% if r.next_retry_at %} - next retry {{ r.next_retry_at }}{% endif %}
+        {% if r.last_error %} - last error: {{ r.last_error }}{% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  {% else %}
+    <p class="empty">No reminders recorded for this task.</p>
+  {% endif %}
+
+  <h2>History</h2>
+  {% if history %}
+    {% for h in history %}
+    <div class="history-row">
+      {{ h.field }}: {{ h.old_value or "(none)" }} &rarr; {{ h.new_value or "(none)" }}
+      <div class="meta">{{ h.changed_at }}</div>
+    </div>
+    {% endfor %}
+  {% else %}
+    <p class="empty">No history recorded.</p>
+  {% endif %}
+</body>
+</html>

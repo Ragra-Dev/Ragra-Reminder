@@ -1,0 +1,33 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+
+# Ragra local data - never commit tokens, credentials, or the personal DB
+.env
+.env.local
+.env.production
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite3
+data/
+logs/
+*.log
+*token*.json
+*credential*.json
+*client_secret*.json
+*.key
+*.pem
+secrets/
+
+.pytest_cache/
+
+# Conversation/session exports - never source, may contain private context
+ragra-session.txt
+*-session.txt
+*.session.txt
