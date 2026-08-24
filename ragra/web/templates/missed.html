@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Ragra - All Missed Tasks</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 780px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
+  a.back { color: #666; font-size: 0.85rem; text-decoration: none; }
+  a.back:hover { text-decoration: underline; }
+  h1 { margin-top: 0.5rem; }
+  .task { padding: 0.6rem 0; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
+  .task .meta { color: #666; font-size: 0.85rem; }
+  .task a { color: #1a1a1a; text-decoration: none; }
+  .task a:hover { text-decoration: underline; }
+  .badge { font-size: 0.7rem; padding: 0.1rem 0.5rem; border-radius: 999px; font-weight: 600; }
+  .badge.missed { background: #f3d4d4; color: #7a1f1f; }
+  form.inline { display: inline; }
+  button { cursor: pointer; border: 1px solid #ccc; background: #fff; border-radius: 6px; padding: 0.25rem 0.6rem; font-size: 0.85rem; }
+  button:hover { background: #f0f0f0; }
+  .empty { color: #888; font-style: italic; }
+</style>
+</head>
+<body>
+  <a class="back" href="/">&larr; Back to Today</a>
+  <h1>All missed tasks ({{ missed|length }})</h1>
+  <p class="meta">Ordered by academic deadline, most recent first. Nothing here has been deleted or hidden - this is the complete list.</p>
+
+  {% if missed %}
+    {% for t in missed %}
+    <div class="task">
+      <div>
+        <span class="badge missed">missed</span>
+        {{ t.course_code or t.course_name }} - <a href="/tasks/{{ t.id }}">{{ t.title }}</a>
+        <div class="meta">Deadline was {{ t.actual_deadline }} - marked missed {{ t.missed_at }}</div>
+      </div>
+      <form class="inline" method="post" action="/tasks/{{ t.id }}/complete">
+        <button type="submit">Mark complete</button>
+      </form>
+    </div>
+    {% endfor %}
+  {% else %}
+    <p class="empty">Nothing missed.</p>
+  {% endif %}
+</body>
+</html>

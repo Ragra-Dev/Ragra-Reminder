@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Ragra - Today</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 780px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
+  h1 { margin-bottom: 0.25rem; }
+  h2 { margin-top: 2rem; border-bottom: 1px solid #ddd; padding-bottom: 0.25rem; }
+  .task { padding: 0.6rem 0; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
+  .task .meta { color: #666; font-size: 0.85rem; }
+  .task a { color: #1a1a1a; text-decoration: none; }
+  .task a:hover { text-decoration: underline; }
+  .badge { font-size: 0.7rem; padding: 0.1rem 0.5rem; border-radius: 999px; font-weight: 600; }
+  .badge.overdue { background: #fde2e1; color: #9c1c1c; }
+  .badge.missed { background: #f3d4d4; color: #7a1f1f; }
+  .badge.due { background: #fff3cd; color: #7a5c00; }
+  .badge.actual { background: #e7f0ff; color: #1d4ed8; }
+  .badge.personal { background: #eafaf0; color: #147a3c; }
+  .badge.done { background: #e6f4ea; color: #1e7d34; }
+  .priority { background: #f5f7ff; border: 1px solid #dce3ff; border-radius: 8px; padding: 1rem; margin: 1rem 0; }
+  form.inline { display: inline; }
+  button { cursor: pointer; border: 1px solid #ccc; background: #fff; border-radius: 6px; padding: 0.25rem 0.6rem; font-size: 0.85rem; }
+  button:hover { background: #f0f0f0; }
+  .empty { color: #888; font-style: italic; }
+  .reminder-row { padding: 0.4rem 0; border-bottom: 1px solid #eee; font-size: 0.9rem; }
+  .reminder-row .meta { color: #666; font-size: 0.8rem; }
+</style>
+</head>
+<body>
+  <h1>Today</h1>
+
+  {% if priority %}
+  <div class="priority">
+    <strong>What's coming next:</strong> {{ priority.course_code or priority.course_name }} - {{ priority.title }}
+    <div class="meta">Due {{ priority.actual_deadline }}</div>
+  </div>
+  {% endif %}
+
+  <h2>Overdue</h2>
+  {% if overdue %}
+    {% for t in overdue %}
+    <div class="task">
+      <div>
+        <span class="badge overdue">overdue</span>
+        {{ t.course_code or t.course_name }} - <a href="/tasks/{{ t.id }}">{{ t.title }}</a>
+        <div class="meta">Academic deadline: {{ t.actual_deadline }}</div>
+      </div>
+      <form class="inline" method="post" action="/tasks/{{ t.id }}/complete">
+        <button type="submit">Mark complete</button>
+      </form>
+    </div>
+    {% endfor %}
+  {% else %}
+    <p class="empty">Nothing overdue.</p>
+  {% endif %}
+
+  <h2>Missed{% if missed_total %} ({{ missed_total }}){% endif %}</h2>
+  {% if missed %}
+    {% for t in missed %}
+    <div class="task">
+      <div>
+        <span class="badge missed">missed</span>
+        {{ t.course_code or t.course_name }} - <a href="/tasks/{{ t.id }}">{{ t.title }}</a>
+        <div class="meta">Deadline was {{ t.actual_deadline }} - marked missed {{ t.missed_at }}</div>
+      </div>
+      <form class="inline" method="post" action="/tasks/{{ t.id }}/complete">
+        <button type="submit">Mark complete</button>
+      </form>
+    </div>
+    {% endfor %}
+    {% if missed_total > missed_preview_limit %}
+    <p class="meta"><a href="/missed">See all {{ missed_total }} missed tasks &rarr;</a> (showing the {{ missed_preview_limit }} most recently due)</p>
+    {% endif %}
+  {% else %}
+    <p class="empty">Nothing missed.</p>
+  {% endif %}
+
+  <h2>Due today</h2>
+  {% if due_today %}
+    {% for t in due_today %}
+    <div class="task">
+      <div>
+        <span class="badge due">due today</span>
+        {{ t.course_code or t.course_name }} - <a href="/tasks/{{ t.id }}">{{ t.title }}</a>
+        <div class="meta">
+          Academic deadline: {{ t.actual_deadline }}
+          {% if t.personal_deadline %}<span class="badge personal">personal</span> {{ t.personal_deadline }}{% endif %}
+        </div>
+      </div>
+      <form class="inline" method="post" action="/tasks/{{ t.id }}/complete">
+        <button type="submit">Mark complete</button>
+      </form>
+    </div>
+    {% endfor %}
+  {% else %}
+    <p class="empty">Nothing due today.</p>
+  {% endif %}
+
+  <h2>Due soon (next 7 days)</h2>
+  {% if due_soon %}
+    {% for t in due_soon %}
+    <div class="task">
+      <div>
+        <span class="badge actual">actual</span>
+        {{ t.course_code or t.course_name }} - <a href="/tasks/{{ t.id }}">{{ t.title }}</a>
+        <div class="meta">
+          Academic deadline: {{ t.actual_deadline }}
+          {% if t.personal_deadline %}<span class="badge personal">personal</span> {{ t.personal_deadline }}{% endif %}
+        </div>
+      </div>
+      <form class="inline" method="post" action="/tasks/{{ t.id }}/complete">
+        <button type="submit">Mark complete</button>
+      </form>
+    </div>
+    {% endfor %}
+  {% else %}
+    <p class="empty">Nothing else due in the next 7 days.</p>
+  {% endif %}
+
+  <h2>Needs a personal completion target</h2>
+  {% if needs_planning %}
+    {% for t in needs_planning %}
+    <div class="task">
+      <div>
+        {{ t.course_code or t.course_name }} - <a href="/tasks/{{ t.id }}">{{ t.title }}</a>
+        <div class="meta">No academic deadline. When do you want this done?</div>
+      </div>
+      <form class="inline" method="post" action="/tasks/{{ t.id }}/personal-deadline">
+        <input type="date" name="personal_deadline" required>
+        <button type="submit">Set</button>
+      </form>
+    </div>
+    {% endfor %}
+  {% else %}
+    <p class="empty">Nothing waiting on a personal target.</p>
+  {% endif %}
+
+  <h2>Has an academic deadline - when do you plan to actually do it?</h2>
+  {% if needs_personal_target %}
+    {% for t in needs_personal_target %}
+    <div class="task">
+      <div>
+        {{ t.course_code or t.course_name }} - <a href="/tasks/{{ t.id }}">{{ t.title }}</a>
+        <div class="meta">
+          <span class="badge actual">actual</span> Due {{ t.actual_deadline }} - no personal target set yet
+        </div>
+      </div>
+      <form class="inline" method="post" action="/tasks/{{ t.id }}/personal-deadline">
+        <input type="date" name="personal_deadline" required>
+        <button type="submit">Set</button>
+      </form>
+    </div>
+    {% endfor %}
+  {% else %}
+    <p class="empty">Every deadlined task already has a personal target.</p>
+  {% endif %}
+
+  <h2>Scheduled reminders</h2>
+  {% if scheduled_reminders %}
+    {% for r in scheduled_reminders %}
+    <div class="reminder-row">
+      [{{ r.reminder_type }}] {{ r.course_code }} - {{ r.task_title }}
+      <div class="meta">Will fire {{ r.scheduled_for }}</div>
+    </div>
+    {% endfor %}
+  {% else %}
+    <p class="empty">No reminders currently scheduled.</p>
+  {% endif %}
+
+  <h2>Recently completed</h2>
+  {% if recently_completed %}
+    {% for t in recently_completed %}
+    <div class="task">
+      <div>
+        <span class="badge done">done</span>
+        {{ t.course_code or t.course_name }} - <a href="/tasks/{{ t.id }}">{{ t.title }}</a>
+        <div class="meta">Completed {{ t.completed_at }}</div>
+      </div>
+    </div>
+    {% endfor %}
+  {% else %}
+    <p class="empty">Nothing completed yet.</p>
+  {% endif %}
+</body>
+</html>
