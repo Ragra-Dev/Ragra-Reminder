@@ -70,14 +70,17 @@ def cmd_timetable_sync(args: argparse.Namespace) -> int:
     from ragra.sync.timetable_sync import TimetableSyncError, sync_timetable
 
     config = load_config()
-    if not config.sheets_api_key or not config.fast_timetable_spreadsheet_id:
-        print(
-            "FAST timetable sync is not configured - set RAGRA_SHEETS_API_KEY and "
-            "RAGRA_FAST_TIMETABLE_SPREADSHEET_ID. See .env.example."
-        )
+    if not config.fast_timetable_spreadsheet_id:
+        print("FAST timetable sync is not configured - set RAGRA_FAST_TIMETABLE_SPREADSHEET_ID. See .env.example.")
         return 1
 
+    # RAGRA_SHEETS_API_KEY is optional: values are always read via the
+    # public gviz endpoint (no credential needed); the key only enables
+    # true tab-title enumeration instead of the name-guessing fallback.
     client = FastTimetableClient(config.fast_timetable_spreadsheet_id, config.sheets_api_key)
+    if not client.has_metadata_access:
+        print("(no RAGRA_SHEETS_API_KEY configured - using zero-credential weekday name discovery)")
+
     with connect_closing(config.db_path) as conn:
         try:
             summary = sync_timetable(conn, client, spreadsheet_id=config.fast_timetable_spreadsheet_id)

@@ -68,3 +68,32 @@ def test_blank_cells_produce_no_entries():
     # Row "C-308" has a blank in column2 (OOP's column) - must not produce a
     # phantom entry there.
     assert not any(c.room == "C-308" and c.course_text != "DLD" for c in result)
+
+
+def test_embedded_time_override_is_resolved_against_its_own_columns_period():
+    # Real case, confirmed live: a cell reads "UHQ-I&II (CS-G) 02:30-04:20"
+    # sitting in a column whose header resolves to 14:30-15:50 (PM). The
+    # override genuinely extends 30 minutes past the column's normal slot
+    # end, and is only correct once its ambiguous "02:30-04:20" is read in
+    # the same PM period as its column - not literally, and not discarded.
+    grid = [
+        ["Monday", ""],
+        ["Room/ Time", "14:30-15:50"],
+        ["C-311", "UHQ-I&II (CS-G) 02:30-04:20"],
+    ]
+    result = extract_classes_from_grid(grid, day_of_week=0)
+    uhq = next(c for c in result if c.course_text == "UHQ-I&II")
+    assert uhq.start_time == "14:30"
+    assert uhq.end_time == "16:20"
+
+
+def test_embedded_time_override_in_an_am_column_is_left_as_literal():
+    grid = [
+        ["Monday", ""],
+        ["Room/ Time", "08:30-09:50"],
+        ["C-311", "Ideology of Pak (CS-F) 08:30-10:15"],
+    ]
+    result = extract_classes_from_grid(grid, day_of_week=0)
+    entry = next(c for c in result if c.course_text == "Ideology of Pak")
+    assert entry.start_time == "08:30"
+    assert entry.end_time == "10:15"

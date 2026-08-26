@@ -1,9 +1,12 @@
 import pytest
 
+from ragra.adapters import fast_timetable
 from ragra.adapters.fast_timetable import (
     AmbiguousTimetableStructureError,
+    FastTimetableClient,
     SheetInfo,
     discover_weekday_tabs,
+    discover_weekday_tabs_via_public_names,
 )
 
 
@@ -47,3 +50,52 @@ def test_gids_are_never_required_for_discovery():
     sheets = [SheetInfo(title="Tuesday", sheet_id=999999)]
     tabs = discover_weekday_tabs(sheets)
     assert tabs[1].sheet_id == 999999
+
+
+# --- Zero-credential fallback discovery (no API key configured) ---
+
+
+def test_public_name_discovery_finds_tabs_whose_own_content_confirms_the_weekday(monkeypatch):
+    fake_grids = {
+        "Monday": [["Monday", "stuff"]],
+        "Tuesday": [["Tuesday", "stuff"]],
+    }
+
+    def fake_fetch(spreadsheet_id, *, sheet_name, timeout=15):
+        return fake_grids.get(sheet_name)
+
+    monkeypatch.setattr(fast_timetable, "_fetch_public_gviz_csv", fake_fetch)
+
+    tabs = discover_weekday_tabs_via_public_names("fake-id")
+    assert tabs[0].title == "Monday"
+    assert tabs[1].title == "Tuesday"
+    assert tabs[0].sheet_id is None  # gid genuinely unknown in this mode
+    assert 2 not in tabs  # Wednesday not present - must not be invented
+
+
+def test_public_name_discovery_rejects_a_name_hit_whose_content_disagrees(monkeypatch):
+    # A tab happens to be titled "Monday" but its own first cell doesn't
+    # actually say "Monday" - must not be trusted on title alone.
+    def fake_fetch(spreadsheet_id, *, sheet_name, timeout=15):
+        if sheet_name == "Monday":
+            return [["Some Unrelated Sheet", "stuff"]]
+        return None
+
+    monkeypatch.setattr(fast_timetable, "_fetch_public_gviz_csv", fake_fetch)
+
+    tabs = discover_weekday_tabs_via_public_names("fake-id")
+    assert 0 not in tabs
+
+
+def test_client_falls_back_to_public_discovery_without_an_api_key(monkeypatch):
+    def fake_fetch(spreadsheet_id, *, sheet_name, timeout=15):
+        if sheet_name == "Tuesday":
+            return [["Tuesday", "stuff"]]
+        return None
+
+    monkeypatch.setattr(fast_timetable, "_fetch_public_gviz_csv", fake_fetch)
+
+    client = FastTimetableClient("fake-id")
+    assert not client.has_metadata_access
+    tabs = client.discover_tabs()
+    assert tabs[1].title == "Tuesday"
