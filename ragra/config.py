@@ -58,6 +58,8 @@ class Config:
     calendar_paths: CalendarTokenPaths
     web_host: str
     web_port: int
+    sheets_api_key: str | None
+    fast_timetable_spreadsheet_id: str | None
 
 
 def load_config() -> Config:
@@ -99,4 +101,6 @@ def load_config() -> Config:
         calendar_paths=CalendarTokenPaths(oauth_client_file, calendar_credential_file),
         web_host=os.environ.get("RAGRA_WEB_HOST", "127.0.0.1"),
         web_port=int(os.environ.get("RAGRA_WEB_PORT", "8731")),
+        sheets_api_key=os.environ.get("RAGRA_SHEETS_API_KEY") or None,
+        fast_timetable_spreadsheet_id=os.environ.get("RAGRA_FAST_TIMETABLE_SPREADSHEET_ID") or None,
     )

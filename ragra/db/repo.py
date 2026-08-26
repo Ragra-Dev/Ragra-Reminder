@@ -569,3 +569,129 @@ def record_sync_error(conn: sqlite3.Connection, *, source: str, error: str) -> N
         (error, source),
     )
     conn.commit()
+
+
+# ---------------------------------------------------------------------------
+# FAST timetable events
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class TimetableUpsertResult:
+    event_id: int
+    created: bool
+    changed_fields: list[str] = field(default_factory=list)
+
+
+_TIMETABLE_TRACKED_FIELDS = ("day_of_week", "start_time", "end_time", "room", "section", "status")
+
+
+def get_timetable_event_by_external_id(conn: sqlite3.Connection, *, external_id: str) -> sqlite3.Row | None:
+    return conn.execute(
+        "SELECT * FROM timetable_events WHERE external_id = ?", (external_id,)
+    ).fetchone()
+
+
+def upsert_timetable_event(
+    conn: sqlite3.Connection,
+    *,
+    external_id: str,
+    course_name: str,
+    program: str | None,
+    batch_year: str | None,
+    enrollment_type: str,
+    day_of_week: int,
+    occurrence_index: int,
+    start_time: str,
+    end_time: str,
+    room: str | None,
+    instructor: str | None,
+    section: str | None,
+    status: str,
+    source_spreadsheet_id: str | None,
+    source_sheet_gid: str | None,
+    source_sheet_title: str | None,
+) -> TimetableUpsertResult:
+    """Idempotent by external_id (see schema.sql for how that's derived -
+    never row/column position). Re-running a sync with unchanged data
+    touches nothing; a genuine change (time, room, section, or a
+    cancellation) updates the existing row in place rather than creating a
+    new one, so a class moving from one day/room/time to another is a
+    single UPDATE, not a delete-then-insert pair."""
+    now = now_iso()
+    existing = get_timetable_event_by_external_id(conn, external_id=external_id)
+
+    if existing is None:
+        cur = conn.execute(
+            """INSERT INTO timetable_events
+               (external_id, course_name, program, batch_year, enrollment_type, day_of_week,
+                occurrence_index, start_time, end_time, room, instructor, section, status,
+                source_spreadsheet_id, source_sheet_gid, source_sheet_title, last_synced_at,
+                created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                external_id, course_name, program, batch_year, enrollment_type, day_of_week,
+                occurrence_index, start_time, end_time, room, instructor, section, status,
+                source_spreadsheet_id, source_sheet_gid, source_sheet_title, now, now, now,
+            ),
+        )
+        conn.commit()
+        return TimetableUpsertResult(event_id=cur.lastrowid, created=True)
+
+    new_values = {
+        "day_of_week": day_of_week,
+        "start_time": start_time,
+        "end_time": end_time,
+        "room": room,
+        "section": section,
+        "status": status,
+    }
+    changed = [f for f in _TIMETABLE_TRACKED_FIELDS if existing[f] != new_values[f]]
+
+    conn.execute(
+        """UPDATE timetable_events
+           SET course_name = ?, program = ?, batch_year = ?, enrollment_type = ?, day_of_week = ?,
+               occurrence_index = ?, start_time = ?, end_time = ?, room = ?, instructor = ?,
+               section = ?, status = ?, source_spreadsheet_id = ?, source_sheet_gid = ?,
+               source_sheet_title = ?, last_synced_at = ?, updated_at = ?
+           WHERE id = ?""",
+        (
+            course_name, program, batch_year, enrollment_type, day_of_week, occurrence_index,
+            start_time, end_time, room, instructor, section, status, source_spreadsheet_id,
+            source_sheet_gid, source_sheet_title, now, now, existing["id"],
+        ),
+    )
+    conn.commit()
+    return TimetableUpsertResult(event_id=existing["id"], created=False, changed_fields=changed)
+
+
+def cancel_timetable_events_missing_from_source(
+    conn: sqlite3.Connection, *, seen_external_ids: set[str]
+) -> list[int]:
+    """A timetable sync that completed a structurally sound scrape (see
+    ragra/sync/timetable_sync.py) but no longer sees a previously-known
+    class marks it CANCELLED rather than deleting it - history is
+    preserved, and a class temporarily missing due to a genuinely malformed
+    scrape is never silently lost (callers must only call this after
+    confirming the scrape was structurally sound)."""
+    rows = conn.execute(
+        "SELECT id, external_id FROM timetable_events WHERE status != 'CANCELLED'"
+    ).fetchall()
+    cancelled_ids = []
+    now = now_iso()
+    for row in rows:
+        if row["external_id"] not in seen_external_ids:
+            conn.execute(
+                "UPDATE timetable_events SET status = 'CANCELLED', updated_at = ? WHERE id = ?",
+                (now, row["id"]),
+            )
+            cancelled_ids.append(row["id"])
+    if cancelled_ids:
+        conn.commit()
+    return cancelled_ids
+
+
+def list_timetable_events(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    return conn.execute(
+        "SELECT * FROM timetable_events ORDER BY day_of_week, start_time"
+    ).fetchall()

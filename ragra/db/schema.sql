@@ -111,17 +111,34 @@ CREATE TABLE IF NOT EXISTS pipeline_health (
     last_alert_sent_at TEXT
 );
 
+-- One row per weekly class meeting derived from the FAST timetable source,
+-- matched against the user's own enrollment config (see
+-- ragra/timetable/enrollment.py) - never against sheet color/formatting.
+-- external_id is a deterministic key derived from
+-- (program, batch_year-or-REPEAT, section, course_name, occurrence_index),
+-- not from sheet row/column position, so a reordered sheet updates the
+-- existing row instead of duplicating it. occurrence_index disambiguates a
+-- course+section that meets more than once a week.
 CREATE TABLE IF NOT EXISTS timetable_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    course_id INTEGER REFERENCES courses(id),
-    external_id TEXT NOT NULL UNIQUE,  -- stable id from the FAST timetable source
+    course_id INTEGER REFERENCES courses(id),  -- optional link to a matched Classroom course; not required
+    external_id TEXT NOT NULL UNIQUE,
+    course_name TEXT,                  -- from the user's enrollment config, not raw sheet text
+    program TEXT,
+    batch_year TEXT,                   -- NULL for REPEAT enrollment
+    enrollment_type TEXT NOT NULL DEFAULT 'REGULAR', -- REGULAR | REPEAT
     day_of_week INTEGER NOT NULL,      -- 0=Monday .. 6=Sunday
-    start_time TEXT NOT NULL,          -- HH:MM
-    end_time TEXT NOT NULL,            -- HH:MM
+    occurrence_index INTEGER NOT NULL DEFAULT 0,
+    start_time TEXT NOT NULL,          -- HH:MM, 24h
+    end_time TEXT NOT NULL,            -- HH:MM, 24h
     room TEXT,
     instructor TEXT,
     section TEXT,
     status TEXT NOT NULL DEFAULT 'SCHEDULED', -- SCHEDULED, CANCELLED, RESCHEDULED
+    source_spreadsheet_id TEXT,
+    source_sheet_gid TEXT,             -- stable per-tab id, survives tab renames
+    source_sheet_title TEXT,           -- human-readable only, never relied on for identity
+    last_synced_at TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );

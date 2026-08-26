@@ -22,6 +22,28 @@ def _ensure_reminder_retry_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE reminders ADD COLUMN next_retry_at TEXT")
 
 
+def _ensure_timetable_columns(conn: sqlite3.Connection) -> None:
+    """Targeted, idempotent column migration for databases created before
+    the FAST timetable columns existed. Same rationale as
+    _ensure_reminder_retry_columns: CREATE TABLE IF NOT EXISTS only helps
+    brand-new databases."""
+    existing = {row["name"] for row in conn.execute("PRAGMA table_info(timetable_events)")}
+    additions = {
+        "course_name": "TEXT",
+        "program": "TEXT",
+        "batch_year": "TEXT",
+        "enrollment_type": "TEXT NOT NULL DEFAULT 'REGULAR'",
+        "occurrence_index": "INTEGER NOT NULL DEFAULT 0",
+        "source_spreadsheet_id": "TEXT",
+        "source_sheet_gid": "TEXT",
+        "source_sheet_title": "TEXT",
+        "last_synced_at": "TEXT",
+    }
+    for column, ddl_type in additions.items():
+        if column not in existing:
+            conn.execute(f"ALTER TABLE timetable_events ADD COLUMN {column} {ddl_type}")
+
+
 def connect(db_path: Path) -> sqlite3.Connection:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(db_path))
@@ -35,6 +57,7 @@ def connect(db_path: Path) -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode = WAL")
     conn.executescript(_SCHEMA_PATH.read_text(encoding="utf-8"))
     _ensure_reminder_retry_columns(conn)
+    _ensure_timetable_columns(conn)
     conn.commit()
     return conn
 
