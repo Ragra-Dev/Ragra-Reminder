@@ -16,9 +16,24 @@ Google Classroom -> sync -> database -> task/deadline engine -> scheduler
                                                      +-> AI planner (optional)
 
 ## Core vs. optional layers
+
+```
+Ragra Core
+├── Classroom
+├── FAST
+├── Calendar
+├── Reminder Engine
+└── Notification Layer
+
+Optional Features
+└── AI Advisor
+```
+
 Core: Google Classroom sync, FAST timetable sync, Google Calendar sync, and the
-deadline/reminder engine. These have no dependency on Hermes or any other
-personal tooling and must work with none of it installed.
+deadline/reminder engine. These have no dependency on Hermes, the AI advisor,
+or any other personal/optional tooling, and must work with none of it
+installed. `ragra tick` - the unattended entrypoint - only ever runs these
+core stages; it never imports `ragra/ai/`.
 
 Notification layer: due reminders are delivered through pluggable providers
 (`ragra/adapters/*_notify.py`) behind a common `send_notification()` interface.
@@ -27,6 +42,16 @@ sync or the reminder engine's own state - reminders simply stay pending until a
 provider is available. Current providers: direct Telegram Bot API delivery, and
 an optional personal Hermes provider (for Hashim's own installation only,
 shelling out to `hermes send`, never importing Hermes internals).
+
+Optional features: the AI advisor (`ragra/ai/advisor.py`, via
+`ragra/adapters/ai.py`) is invoked only through its own explicit entrypoints
+(`ragra plan`, `ragra brief --ai`) - never automatically, and never from `tick`
+or any sync/reminder module. Every import of it is local to the function that
+needs it, so the rest of Ragra imports and runs cleanly with the AI package
+absent. When it's unavailable or unconfigured, those entrypoints fail with a
+clear message (or, for `brief --ai`, print the deterministic brief plus a note)
+rather than raising, and never touch sync/reminder state or trigger a browser
+flow.
 
 ## AI boundary
 AI can:
