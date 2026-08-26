@@ -60,6 +60,8 @@ class Config:
     web_port: int
     sheets_api_key: str | None
     fast_timetable_spreadsheet_id: str | None
+    telegram_bot_token: str | None
+    telegram_chat_id: str | None
 
 
 def load_config() -> Config:
@@ -103,4 +105,6 @@ def load_config() -> Config:
         web_port=int(os.environ.get("RAGRA_WEB_PORT", "8731")),
         sheets_api_key=os.environ.get("RAGRA_SHEETS_API_KEY") or None,
         fast_timetable_spreadsheet_id=os.environ.get("RAGRA_FAST_TIMETABLE_SPREADSHEET_ID") or None,
+        telegram_bot_token=os.environ.get("RAGRA_TELEGRAM_BOT_TOKEN") or None,
+        telegram_chat_id=os.environ.get("RAGRA_TELEGRAM_CHAT_ID") or None,
     )
