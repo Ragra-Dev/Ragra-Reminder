@@ -35,24 +35,19 @@ are never committed.
   task that runs Ragra every 15 minutes
 - `docs/` — product/domain/architecture context and the project status
   handoff document
-- the local development configuration — the development tooling project configuration (operating rules, secret-
-  protection hooks) used during development of this project
+- the local development configuration — project rules and secret-scanning hooks used by this repo's
+  local development tooling
 
-## Development configuration
-
-This repository was developed with the development tooling, and the local development configuration contains the
-operating rules and hooks used during that process:
+## Repository conventions and safety tooling
 
 - `the local development guide` / `the local rules directory/` — project operating rules (domain,
   security, testing)
-- `the local hooks directory/protect-secrets.py` — a `PreToolUse` guard that blocks
-  writing real secret-shaped material or writing directly into a known
-  credential file
+- `the local hooks directory/protect-secrets.py` — a guard that blocks writing
+  real secret-shaped material or writing directly into a known credential
+  file
 - `the local hooks directory/scan-staged-secrets.py` — a staged-diff secret scanner
 - the local development configuration — optional local pre-commit
   installer for the scanner above
 
 These hooks are a safety net, not a substitute for `.gitignore` and
-least-privilege credential handling. If you're resuming this project,
-re-check that your the development tooling version still accepts the hook syntax
-before relying on them.
+least-privilege credential handling.
