@@ -50,7 +50,7 @@ notification delivery, and `hermes -z "<prompt>"` for the one-shot AI
 advisory call. Both go through Hermes' existing CLI, not a rebuilt client.
 
 **WhatsApp** - one real, explicitly-approved test notification was sent
-through Hermes (`whatsapp:Hashim Amjad`) as a standalone connectivity test,
+through Hermes (a personal WhatsApp contact target) as a standalone connectivity test,
 deliberately outside the reminder pipeline so it changed zero database
 rows. Delivery reported successful (`NotifyResult(ok=True)`). No reminder
 has been dispatched through the real pipeline yet - nothing has been due
