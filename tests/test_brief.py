@@ -1,3 +1,4 @@
+import sys
 from datetime import datetime, timedelta, timezone
 
 from ragra.adapters.ai import AIAdapterError
@@ -49,19 +50,44 @@ def test_full_brief_falls_back_gracefully_when_ai_unavailable(conn, monkeypatch)
     def _raise(*args, **kwargs):
         raise AIAdapterError("AI is not configured (HERMES_BIN not resolved)")
 
-    monkeypatch.setattr("ragra.brief.ask_for_priorities", _raise)
+    monkeypatch.setattr("ragra.ai.advisor.ask_for_priorities", _raise)
 
     text = build_full_brief(conn, now=now, hermes_bin=None)
     # The deterministic facts are still fully present even though the AI
     # call failed - the AI layer must never block the core brief.
     assert "OVERDUE (0):" in text
     assert "AI PRIORITY NOTES" not in text
+    assert "AI priority notes unavailable" in text  # clear, user-facing explanation
 
 
 def test_full_brief_appends_ai_notes_when_available(conn, monkeypatch):
     now = datetime.now(timezone.utc)
-    monkeypatch.setattr("ragra.brief.ask_for_priorities", lambda *a, **kw: "Do the overdue thing first.")
+    monkeypatch.setattr("ragra.ai.advisor.ask_for_priorities", lambda *a, **kw: "Do the overdue thing first.")
 
     text = build_full_brief(conn, now=now, hermes_bin=None)
     assert "AI PRIORITY NOTES" in text
     assert "Do the overdue thing first." in text
+
+
+def test_brief_module_has_no_top_level_ai_dependency():
+    # ragra/brief.py must not import the AI package at module scope - only
+    # build_full_brief() may reach for it, lazily, so the rest of this
+    # module (and anything that merely imports it, like the web dashboard)
+    # works even with the AI package unavailable.
+    import ragra.brief
+
+    assert not hasattr(ragra.brief, "ask_for_priorities")
+    assert not hasattr(ragra.brief, "AIAdapterError")
+
+
+def test_full_brief_degrades_gracefully_when_ai_package_is_unavailable(conn, monkeypatch):
+    # Simulate the entire ragra.ai.advisor module being unimportable
+    # (uninstalled/broken), not just unconfigured.
+    monkeypatch.setitem(sys.modules, "ragra.ai.advisor", None)
+
+    now = datetime.now(timezone.utc)
+    text = build_full_brief(conn, now=now, hermes_bin=None)
+
+    assert "OVERDUE (0):" in text
+    assert "AI PRIORITY NOTES" not in text
+    assert "AI priority notes unavailable" in text

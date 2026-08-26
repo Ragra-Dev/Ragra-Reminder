@@ -386,20 +386,28 @@ def cmd_brief(args: argparse.Namespace) -> int:
 
 
 def cmd_plan(args: argparse.Namespace) -> int:
-    from ragra.adapters.ai import AIAdapterError
-    from ragra.ai.advisor import ask_for_priorities
-
+    """Optional AI feature entrypoint - never called from `tick` or any core
+    sync/reminder path. Both the import of the AI package and the call
+    itself are covered so a missing/unconfigured AI feature fails with a
+    clear message instead of a traceback."""
     config = load_config()
     now = datetime.now(timezone.utc)
     week_end = now + timedelta(days=7)
     with connect_closing(config.db_path) as conn:
         try:
-            print(ask_for_priorities(
+            from ragra.adapters.ai import AIAdapterError
+            from ragra.ai.advisor import ask_for_priorities
+
+            result = ask_for_priorities(
                 conn, hermes_bin=config.hermes_bin, now_iso=now.isoformat(), week_end_iso=week_end.isoformat()
-            ))
+            )
+        except ImportError as exc:
+            print("AI advisor is not available:", exc)
+            return 1
         except AIAdapterError as exc:
             print("AI advisory unavailable:", exc)
             return 1
+    print(result)
     return 0
 
 

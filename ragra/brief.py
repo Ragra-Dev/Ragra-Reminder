@@ -1,8 +1,12 @@
 """Daily academic brief: overdue work, today's deadlines, upcoming
 deadlines, and scheduled reminders - all deterministic, straight from
 Ragra's own tables. The AI priority narrative (see ragra/ai/advisor.py) is
-strictly additive: if it's unavailable or fails, the brief still prints in
-full with everything factual intact.
+an optional feature, strictly additive: `build_deterministic_brief` has no
+dependency on it at all, and `build_full_brief` imports it lazily so the
+rest of this module - and anything that merely imports it - keeps working
+even with the AI package unavailable. If AI is unavailable or fails, the
+brief still prints in full with everything factual intact, plus a short
+note explaining why the AI section is missing.
 """
 
 from __future__ import annotations
@@ -11,8 +15,6 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from ragra.adapters.ai import AIAdapterError
-from ragra.ai.advisor import ask_for_priorities
 from ragra.db import repo
 
 
@@ -72,14 +74,21 @@ def build_deterministic_brief(conn: sqlite3.Connection, *, now: datetime) -> str
 
 def build_full_brief(conn: sqlite3.Connection, *, now: datetime, hermes_bin: Path | None) -> str:
     """Deterministic brief plus an optional AI priority narrative. The AI
-    section is best-effort and never blocks or replaces the facts above."""
+    section is best-effort and never blocks or replaces the facts above -
+    it's imported lazily here so a missing/broken AI package degrades to a
+    clear note rather than an import failure."""
     text = build_deterministic_brief(conn, now=now)
 
     now_iso = now.isoformat()
     week_end_iso = (now + timedelta(days=7)).isoformat()
     try:
+        from ragra.adapters.ai import AIAdapterError
+        from ragra.ai.advisor import ask_for_priorities
+
         ai_notes = ask_for_priorities(conn, hermes_bin=hermes_bin, now_iso=now_iso, week_end_iso=week_end_iso)
-    except AIAdapterError:
-        return text
+    except ImportError as exc:
+        return text + f"\n\n(AI priority notes unavailable - AI advisor not available: {exc})"
+    except AIAdapterError as exc:
+        return text + f"\n\n(AI priority notes unavailable: {exc})"
 
     return text + "\n\nAI PRIORITY NOTES (advisory only - facts above are authoritative):\n" + ai_notes
