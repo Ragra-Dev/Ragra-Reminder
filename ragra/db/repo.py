@@ -695,3 +695,50 @@ def list_timetable_events(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     return conn.execute(
         "SELECT * FROM timetable_events ORDER BY day_of_week, start_time"
     ).fetchall()
+
+
+# ---------------------------------------------------------------------------
+# Tick session diagnostics (short-retention operational log, not app data)
+# ---------------------------------------------------------------------------
+
+
+def record_tick_session(
+    conn: sqlite3.Connection,
+    *,
+    started_at: str,
+    finished_at: str,
+    duration_seconds: float,
+    exit_code: int,
+    classroom_result: str | None,
+    calendar_result: str | None,
+    reminders_result: str | None,
+    timetable_result: str | None,
+    error: str | None,
+) -> int:
+    cur = conn.execute(
+        """INSERT INTO tick_sessions
+           (started_at, finished_at, duration_seconds, exit_code, classroom_result,
+            calendar_result, reminders_result, timetable_result, error)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            started_at, finished_at, duration_seconds, exit_code, classroom_result,
+            calendar_result, reminders_result, timetable_result, error,
+        ),
+    )
+    conn.commit()
+    return cur.lastrowid
+
+
+def purge_old_tick_sessions(conn: sqlite3.Connection, *, older_than_iso: str) -> int:
+    """Deletes tick_sessions rows older than the given cutoff. Called at the
+    start of every tick with a ~48-hour cutoff, so this operational log
+    never grows without bound - it never touches any other table."""
+    cur = conn.execute("DELETE FROM tick_sessions WHERE started_at < ?", (older_than_iso,))
+    conn.commit()
+    return cur.rowcount
+
+
+def list_recent_tick_sessions(conn: sqlite3.Connection, *, limit: int = 50) -> list[sqlite3.Row]:
+    return conn.execute(
+        "SELECT * FROM tick_sessions ORDER BY started_at DESC LIMIT ?", (limit,)
+    ).fetchall()

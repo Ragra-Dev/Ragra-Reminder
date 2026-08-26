@@ -29,6 +29,8 @@ def _make_config(tmp_path: Path, *, spreadsheet_id: str | None, sheets_api_key: 
         web_port=8731,
         sheets_api_key=sheets_api_key,
         fast_timetable_spreadsheet_id=spreadsheet_id,
+        telegram_bot_token=None,
+        telegram_chat_id=None,
     )
 
 
@@ -187,7 +189,10 @@ def test_api_key_never_appears_in_a_failure_log_line(conn, tmp_path, monkeypatch
 def test_tick_includes_timetable_step_and_isolates_its_failure(tmp_path, monkeypatch):
     monkeypatch.setenv("RAGRA_HOME", str(tmp_path))
     monkeypatch.setenv("RAGRA_FAST_TIMETABLE_SPREADSHEET_ID", "fake-id")
-    monkeypatch.delenv("HERMES_REPO_PATH", raising=False)
+    # Must NOT fall back to the real %LOCALAPPDATA%\hermes\hermes-agent
+    # default - combined with a real Classroom credential on this machine,
+    # that would make this "unit" test perform real live API calls.
+    monkeypatch.setenv("HERMES_REPO_PATH", str(tmp_path / "no-such-hermes-checkout"))
     monkeypatch.setenv("RAGRA_GOOGLE_CALENDAR_CREDENTIAL_FILE", str(tmp_path / "missing_calendar_token.json"))
     monkeypatch.setenv("RAGRA_GOOGLE_OAUTH_CLIENT_FILE", str(tmp_path / "missing_client.json"))
 
@@ -221,3 +226,161 @@ def argparse_namespace():
     import argparse
 
     return argparse.Namespace()
+
+
+# --- Structured tick_sessions diagnostics (48-hour retention) ---
+
+
+def _tick_env(tmp_path, monkeypatch):
+    monkeypatch.setenv("RAGRA_HOME", str(tmp_path))
+    monkeypatch.setenv("RAGRA_FAST_TIMETABLE_SPREADSHEET_ID", "fake-id")
+    # Must point somewhere that does NOT resolve to the real Hermes install:
+    # leaving this unset falls back to the real %LOCALAPPDATA%\hermes\hermes-agent
+    # default, which - combined with a real, valid Classroom credential
+    # already present on this machine - would make these "unit" tests
+    # perform real live Classroom API calls and real writes. Pointing it at
+    # a nonexistent directory forces a clean, fast, deterministic failure
+    # instead (caught by _run_classroom_sync's own exception handling).
+    monkeypatch.setenv("HERMES_REPO_PATH", str(tmp_path / "no-such-hermes-checkout"))
+    monkeypatch.setenv("RAGRA_GOOGLE_CALENDAR_CREDENTIAL_FILE", str(tmp_path / "missing_calendar_token.json"))
+    monkeypatch.setenv("RAGRA_GOOGLE_OAUTH_CLIENT_FILE", str(tmp_path / "missing_client.json"))
+
+
+def test_tick_records_a_structured_session_for_a_successful_stage(tmp_path, monkeypatch):
+    # Classroom/Calendar are deliberately left unconfigured by _tick_env (no
+    # real credential in this sandbox) - this test only needs to prove that
+    # a stage which DOES succeed (timetable, via the fake client) is
+    # captured correctly in the structured session record, independent of
+    # the tick's overall exit code.
+    _tick_env(tmp_path, monkeypatch)
+    monkeypatch.setattr("ragra.adapters.fast_timetable.FastTimetableClient", lambda *a, **k: FakeClient(GRID))
+
+    cli.cmd_tick(argparse_namespace())
+
+    from ragra.config import load_config
+    from ragra.db import repo
+    from ragra.db.connection import connect_closing
+
+    config = load_config()
+    with connect_closing(config.db_path) as conn:
+        sessions = repo.list_recent_tick_sessions(conn)
+
+    assert len(sessions) == 1
+    session = sessions[0]
+    assert session["started_at"] is not None
+    assert session["finished_at"] is not None
+    assert session["duration_seconds"] >= 0
+    assert session["timetable_result"] is not None and "Timetable sync:" in session["timetable_result"]
+    assert session["classroom_result"] is not None  # captured even though it failed in this sandbox
+    # classroom/calendar are expected to fail in this deliberately-unconfigured
+    # sandbox; the structured error summary should reflect that, not omit it.
+    assert session["error"] is not None
+    assert "classroom" in session["error"]
+
+
+def test_tick_records_a_structured_session_on_failure(tmp_path, monkeypatch):
+    _tick_env(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        "ragra.adapters.fast_timetable.FastTimetableClient",
+        lambda *a, **k: FakeClient(GRID, fail_with=FastTimetableAdapterError("simulated failure")),
+    )
+
+    exit_code = cli.cmd_tick(argparse_namespace())
+
+    from ragra.config import load_config
+    from ragra.db import repo
+    from ragra.db.connection import connect_closing
+
+    config = load_config()
+    with connect_closing(config.db_path) as conn:
+        sessions = repo.list_recent_tick_sessions(conn)
+
+    assert exit_code == 1
+    assert len(sessions) == 1
+    session = sessions[0]
+    assert session["exit_code"] == 1
+    assert session["error"] is not None
+    assert "timetable" in session["error"]
+
+
+def test_purge_old_tick_sessions_removes_only_rows_past_the_cutoff(conn):
+    from datetime import datetime, timedelta, timezone
+
+    from ragra.db import repo
+
+    now = datetime.now(timezone.utc)
+    old = (now - timedelta(hours=72)).isoformat()
+    recent = (now - timedelta(hours=1)).isoformat()
+
+    for started_at in (old, recent):
+        repo.record_tick_session(
+            conn,
+            started_at=started_at,
+            finished_at=started_at,
+            duration_seconds=1.0,
+            exit_code=0,
+            classroom_result=None,
+            calendar_result=None,
+            reminders_result=None,
+            timetable_result=None,
+            error=None,
+        )
+
+    cutoff = (now - timedelta(hours=48)).isoformat()
+    removed = repo.purge_old_tick_sessions(conn, older_than_iso=cutoff)
+
+    remaining = repo.list_recent_tick_sessions(conn)
+    assert removed == 1
+    assert len(remaining) == 1
+    assert remaining[0]["started_at"] == recent
+
+
+def test_tick_purges_old_sessions_automatically(tmp_path, monkeypatch):
+    _tick_env(tmp_path, monkeypatch)
+    monkeypatch.setattr("ragra.adapters.fast_timetable.FastTimetableClient", lambda *a, **k: FakeClient(GRID))
+
+    from datetime import datetime, timedelta, timezone
+
+    from ragra.config import load_config
+    from ragra.db import repo
+    from ragra.db.connection import connect_closing
+
+    config = load_config()
+    old_started_at = (datetime.now(timezone.utc) - timedelta(hours=72)).isoformat()
+    with connect_closing(config.db_path) as conn:
+        repo.record_tick_session(
+            conn,
+            started_at=old_started_at,
+            finished_at=old_started_at,
+            duration_seconds=1.0,
+            exit_code=0,
+            classroom_result=None,
+            calendar_result=None,
+            reminders_result=None,
+            timetable_result=None,
+            error=None,
+        )
+
+    cli.cmd_tick(argparse_namespace())
+
+    with connect_closing(config.db_path) as conn:
+        sessions = repo.list_recent_tick_sessions(conn)
+
+    assert all(s["started_at"] != old_started_at for s in sessions)  # the 72h-old row was purged
+    assert len(sessions) == 1  # only this tick's own fresh session remains
+
+
+def test_tick_sessions_never_touch_application_data(tmp_path, monkeypatch):
+    _tick_env(tmp_path, monkeypatch)
+    monkeypatch.setattr("ragra.adapters.fast_timetable.FastTimetableClient", lambda *a, **k: FakeClient(GRID))
+
+    cli.cmd_tick(argparse_namespace())
+
+    from ragra.config import load_config
+    from ragra.db.connection import connect_closing
+
+    config = load_config()
+    with connect_closing(config.db_path) as conn:
+        timetable_count = conn.execute("SELECT COUNT(*) AS c FROM timetable_events").fetchone()["c"]
+
+    assert timetable_count == 1  # only the legitimate synced class - purge never touches app data
