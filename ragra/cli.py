@@ -40,6 +40,10 @@ def cmd_classroom_status(args: argparse.Namespace) -> int:
     status = classroom_adapter.classroom_auth_status(config.hermes_repo_path)
     for key, value in status.items():
         print(f"{key}: {value}")
+    print(
+        "note: course teacher names are intentionally never looked up - that needs a "
+        "roster scope Ragra deliberately doesn't request, and no current feature displays it."
+    )
     return 0
 
 
@@ -114,8 +118,6 @@ def _run_classroom_sync(conn, config: Config, log) -> tuple[int, str | None]:
     )
     if summary.tasks_marked_missed:
         log(f"  ({summary.tasks_marked_missed} task(s) newly marked MISSED - past their actual deadline)")
-    if summary.teacher_lookups_skipped:
-        log(f"  (teacher name unavailable for {summary.teacher_lookups_skipped} course(s) - roster scope not granted, harmless)")
     if summary.backlog_reminders_suppressed:
         log(f"  ({summary.backlog_reminders_suppressed} historical backlog reminder(s) suppressed - already overdue when discovered)")
     for change in summary.deadlines_changed:

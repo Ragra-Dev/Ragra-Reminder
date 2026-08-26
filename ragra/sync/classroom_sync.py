@@ -20,7 +20,6 @@ from datetime import datetime, timezone
 
 class ClassroomClient(Protocol):
     def list_courses(self) -> list[dict[str, Any]]: ...
-    def list_teachers(self, course_id: str) -> list[dict[str, Any]]: ...
     def list_course_work(self, course_id: str) -> list[dict[str, Any]]: ...
     def list_announcements(self, course_id: str) -> list[dict[str, Any]]: ...
     def list_course_materials(self, course_id: str) -> list[dict[str, Any]]: ...
@@ -34,7 +33,6 @@ class SyncSummary:
     tasks_cancelled: int = 0
     backlog_reminders_suppressed: int = 0
     tasks_marked_missed: int = 0
-    teacher_lookups_skipped: int = 0
     deadlines_changed: list[dict] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
 
@@ -56,13 +54,6 @@ def _classroom_due_to_iso(due_date: dict | None, due_time: dict | None) -> str |
     return dt.isoformat()
 
 
-def _teacher_name(teachers: list[dict[str, Any]]) -> str | None:
-    if not teachers:
-        return None
-    profile = teachers[0].get("profile") or {}
-    return profile.get("name", {}).get("fullName")
-
-
 def sync_classroom(conn: sqlite3.Connection, client: ClassroomClient) -> SyncSummary:
     summary = SyncSummary()
     repo.record_sync_start(conn, source="classroom")
@@ -73,22 +64,19 @@ def sync_classroom(conn: sqlite3.Connection, client: ClassroomClient) -> SyncSum
             if course.get("courseState") not in ("ACTIVE", "PROVISIONED"):
                 continue
             summary.courses_seen += 1
-            try:
-                teachers = client.list_teachers(course["id"])
-            except Exception as exc:  # noqa: BLE001 - teacher name is informational only
-                # courses.teachers.list needs a roster scope Ragra
-                # deliberately doesn't request (least privilege - Ragra
-                # never uses roster data). A 403 here must not abort sync
-                # for the whole course; the teacher field is purely
-                # cosmetic, never used for deduplication or deadlines.
-                teachers = []
-                summary.teacher_lookups_skipped += 1
             course_id = repo.upsert_course(
                 conn,
                 external_id=course["id"],
                 name=course.get("name", "Untitled course"),
                 section=course.get("section"),
-                teacher=_teacher_name(teachers),
+                # No teacher-name lookup: courses.teachers.list needs a
+                # roster scope Ragra deliberately never requests (least
+                # privilege), so it would fail on every course, every sync,
+                # forever - not a transient condition worth retrying. No
+                # current feature reads this column; it stays None by
+                # design rather than spending an API call per course per
+                # tick on a lookup that can never succeed under this policy.
+                teacher=None,
                 # The Classroom API has no short "course code" field (no
                 # CS1004-style identifier) - courseGroupEmail is a mailing
                 # address, not a code, and must not be used as one.

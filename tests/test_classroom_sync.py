@@ -11,9 +11,6 @@ class FakeClient:
     def list_courses(self):
         return self._courses
 
-    def list_teachers(self, course_id):
-        return [{"profile": {"name": {"fullName": "Dr. Smith"}}}]
-
     def list_course_work(self, course_id):
         return self._coursework.get(course_id, [])
 
@@ -199,6 +196,35 @@ def test_completed_task_is_not_reopened_or_touched_if_source_item_disappears(con
     assert summary.tasks_cancelled == 0
     task_after = conn.execute("SELECT * FROM tasks WHERE external_id = 'cw-1'").fetchone()
     assert task_after["status"] == "COMPLETED"
+
+
+def test_sync_never_attempts_a_teacher_roster_lookup(conn):
+    # FakeClient deliberately has no list_teachers method at all. If
+    # sync_classroom ever called it again, this would raise AttributeError,
+    # get caught by sync_classroom's top-level handler, and show up as a
+    # sync error - which the assertions below would catch.
+    client = FakeClient([COURSE], coursework={"course-1": [ASSIGNMENT_V1]})
+    summary = sync_classroom(conn, client)
+
+    assert summary.errors == []
+    assert summary.courses_seen == 1
+    assert not hasattr(summary, "teacher_lookups_skipped")
+
+    course = conn.execute("SELECT teacher FROM courses WHERE external_id = 'course-1'").fetchone()
+    assert course["teacher"] is None
+
+
+def test_repeated_sync_with_no_roster_scope_produces_no_errors_across_many_courses(conn):
+    courses = [
+        {"id": f"course-{i}", "name": f"Course {i}", "section": "S", "courseState": "ACTIVE"}
+        for i in range(5)
+    ]
+    client = FakeClient(courses)
+
+    for _ in range(3):
+        summary = sync_classroom(conn, client)
+        assert summary.errors == []
+        assert summary.courses_seen == 5
 
 
 def test_announcement_without_deadline_never_gets_invented_deadline(conn):
