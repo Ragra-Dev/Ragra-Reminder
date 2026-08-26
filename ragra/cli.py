@@ -36,10 +36,7 @@ from ragra.sync.classroom_sync import sync_classroom
 
 def cmd_classroom_status(args: argparse.Namespace) -> int:
     config = load_config()
-    if not config.hermes_repo_path:
-        print("HERMES_REPO_PATH is not set - cannot locate the Hermes Classroom module.")
-        return 1
-    status = classroom_adapter.classroom_auth_status(config.hermes_repo_path)
+    status = classroom_adapter.classroom_auth_status(config.classroom_paths)
     for key, value in status.items():
         print(f"{key}: {value}")
     print(
@@ -51,12 +48,9 @@ def cmd_classroom_status(args: argparse.Namespace) -> int:
 
 def cmd_classroom_auth(args: argparse.Namespace) -> int:
     config = load_config()
-    if not config.hermes_repo_path:
-        print("HERMES_REPO_PATH is not set - cannot locate the Hermes Classroom module.")
-        return 1
     print("Opening a browser for Google Classroom authorization...")
     try:
-        classroom_adapter.get_classroom_client(config.hermes_repo_path, interactive=True)
+        classroom_adapter.get_classroom_client(config.classroom_paths, interactive=True)
     except classroom_adapter.ClassroomAdapterError as exc:
         print("Authorization failed:", exc)
         return 1
@@ -128,12 +122,8 @@ def cmd_calendar_auth(args: argparse.Namespace) -> int:
 
 
 def _run_classroom_sync(conn, config: Config, log) -> tuple[int, str | None]:
-    if not config.hermes_repo_path:
-        msg = "Classroom sync skipped - HERMES_REPO_PATH is not set."
-        log(msg)
-        return 1, msg
     try:
-        client = classroom_adapter.get_classroom_client(config.hermes_repo_path, interactive=False)
+        client = classroom_adapter.get_classroom_client(config.classroom_paths, interactive=False)
     except classroom_adapter.ClassroomAdapterError as exc:
         msg = f"Classroom sync skipped - authorization required: {exc}. Run: ragra classroom-auth"
         log(msg)

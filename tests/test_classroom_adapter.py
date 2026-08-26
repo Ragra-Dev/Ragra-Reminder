@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from ragra.adapters.classroom import ClassroomAdapterError, _status_from_paths
+from ragra.adapters.classroom import ClassroomAdapterError, classroom_auth_status
 
 
 class FakeOAuthPaths:
@@ -52,7 +52,7 @@ def test_status_reports_missing_credential_without_raising(tmp_path):
         legacy_token_file=tmp_path / "token.json",
         credentials_file=tmp_path / "credentials.json",
     )
-    status = _status_from_paths(paths)
+    status = classroom_auth_status(paths)
     assert status["token_present"] is False
     assert status["usable"] is False
 
@@ -65,7 +65,7 @@ def test_status_reports_reduced_but_present_scopes_as_usable(tmp_path):
         legacy_token_file=tmp_path / "token.json",
         credentials_file=tmp_path / "credentials.json",
     )
-    status = _status_from_paths(paths)
+    status = classroom_auth_status(paths)
     assert status["token_present"] is True
     assert status["usable"] is True
     assert status["granted_scopes"] == REDUCED_SCOPES

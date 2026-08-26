@@ -10,7 +10,7 @@ token file, while still reusing the SAME already-registered Google OAuth
 client (installed-app) so we are not standing up a second Google Cloud
 project.
 
-This mirrors hermes_cli.classroom.oauth's proven pattern exactly: load the
+This mirrors ragra/adapters/classroom.py's own OAuth pattern exactly: load the
 stored credential, refresh it silently if expired, persist the refreshed
 credential back to disk, and only open a browser if none of that is
 possible.
