@@ -32,8 +32,6 @@ def _make_config(tmp_path: Path, *, spreadsheet_id: str | None, sheets_api_key: 
         web_port=8731,
         sheets_api_key=sheets_api_key,
         fast_timetable_spreadsheet_id=spreadsheet_id,
-        telegram_bot_token=None,
-        telegram_chat_id=None,
     )
 
 

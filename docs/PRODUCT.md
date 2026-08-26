@@ -16,7 +16,7 @@ Initially one user: Hashim, FAST-NUCES Islamabad.
 6. Task database
 7. Reminder engine
 8. Completion and missed states
-9. Reminder notifications (Telegram; optional personal Hermes provider)
+9. Reminder notifications (pluggable provider; optional personal Hermes integration)
 10. Daily schedule
 11. Google Calendar sync
 

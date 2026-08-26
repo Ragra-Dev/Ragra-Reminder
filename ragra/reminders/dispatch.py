@@ -1,20 +1,30 @@
-"""Reminder dispatch: sends due, pending reminders through Hermes.
+"""Reminder dispatch: sends due, pending reminders through whichever
+notification provider(s) are configured (see ragra/adapters/notify.py's
+NotificationProvider protocol). This module never imports or knows about
+Hermes, WhatsApp, Web Push, or email specifically - only `send(message)`.
 
 Idempotent: the dispatch query only ever selects PENDING reminders, and a
 reminder is marked SENT only after a successful send - so re-running the
 scheduler can never resend one that already went out.
 
-Bounded retry: a send attempt that fails (not "unconfigured" - a genuine
-delivery failure) doesn't immediately give up, and doesn't retry forever
-either. It gets up to MAX_ATTEMPTS tries, spaced RETRY_DELAY apart, staying
-PENDING (still a legitimate dispatch candidate) between attempts via
-next_retry_at. Once attempts are exhausted the reminder transitions to the
-terminal FAILED status - a genuinely permanent failure, visible in
-`ragra reminders`/`tick` output and counted toward self-alerting (see
-ragra/health.py). This never risks a duplicate send: exactly one delivery
-attempt happens per dispatch pass per reminder, and a reminder leaves the
-PENDING pool for good the moment either a send succeeds or attempts are
-exhausted.
+Multi-provider delivery: every configured provider is attempted; a reminder
+is marked SENT if AT LEAST ONE succeeds. This is deliberate redundancy, not
+just a config convenience - with two independent providers configured, one
+channel breaking (e.g. Hermes) no longer silently takes down all reminder
+delivery. An empty provider list is a normal, fully-supported state (core
+Ragra never requires one) - reminders simply stay PENDING.
+
+Bounded retry: a send attempt where every configured provider fails (not
+"unconfigured" - a genuine delivery failure) doesn't immediately give up,
+and doesn't retry forever either. It gets up to MAX_ATTEMPTS tries, spaced
+RETRY_DELAY apart, staying PENDING (still a legitimate dispatch candidate)
+between attempts via next_retry_at. Once attempts are exhausted the
+reminder transitions to the terminal FAILED status - a genuinely permanent
+failure, visible in `ragra reminders`/`tick` output and counted toward
+self-alerting (see ragra/health.py). This never risks a duplicate send:
+exactly one delivery attempt happens per dispatch pass per reminder per
+provider, and a reminder leaves the PENDING pool for good the moment either
+a send succeeds or attempts are exhausted.
 """
 
 from __future__ import annotations
@@ -22,9 +32,8 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
-from ragra.adapters.notify import send_notification
+from ragra.adapters.notify import NotificationProvider, send_to_all_providers
 from ragra.db import repo
 from ragra.reminders.engine import reminder_message
 
@@ -71,8 +80,7 @@ def preview_due_reminders(conn: sqlite3.Connection, *, now: str) -> list[dict]:
 def dispatch_due_reminders(
     conn: sqlite3.Connection,
     *,
-    hermes_bin: Path | None,
-    notify_target: str | None,
+    providers: list[NotificationProvider],
     now: str,
 ) -> DispatchSummary:
     summary = DispatchSummary()
@@ -84,21 +92,22 @@ def dispatch_due_reminders(
         message = reminder_message(
             reminder["reminder_type"], reminder["task_title"], reminder["course_code"]
         )
-        result = send_notification(hermes_bin=hermes_bin, target=notify_target, message=message)
 
-        if result.ok:
+        if not providers:
+            # Left PENDING, attempt_count untouched: nothing was actually
+            # attempted, so this doesn't consume retry budget - it's safe
+            # (and correct) to try again once a provider is configured.
+            summary.skipped_not_configured += 1
+            continue
+
+        delivered, errors = send_to_all_providers(providers, message)
+
+        if delivered:
             repo.mark_reminder_sent(conn, reminder_id=reminder["id"])
             summary.sent += 1
             continue
 
-        if result.error == "notification delivery is not configured":
-            # Left PENDING, attempt_count untouched: nothing was actually
-            # attempted, so this doesn't consume retry budget - it's safe
-            # (and correct) to try again once notify_target/hermes_bin are set.
-            summary.skipped_not_configured += 1
-            continue
-
-        error = result.error or "unknown error"
+        error = "; ".join(errors) or "unknown error"
         attempt = reminder["attempt_count"] + 1
         if attempt >= MAX_ATTEMPTS:
             repo.mark_reminder_failed(conn, reminder_id=reminder["id"], error=error, attempt_count=attempt)

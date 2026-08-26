@@ -1,9 +1,22 @@
 """Tests for ragra.health - the self-alerting mechanism. Never touches a
-real notification channel: send_notification is always monkeypatched.
+real notification channel: a FakeProvider test double stands in for
+whatever provider(s) would actually be configured.
 """
+
+from dataclasses import dataclass, field
 
 from ragra import health
 from ragra.adapters.notify import NotifyResult
+
+
+@dataclass
+class FakeProvider:
+    result: NotifyResult
+    calls: list[str] = field(default_factory=list)
+
+    def send(self, message: str) -> NotifyResult:
+        self.calls.append(message)
+        return self.result
 
 
 def test_success_keeps_streak_at_zero(conn):
@@ -35,43 +48,41 @@ def test_a_success_resets_a_prior_failure_streak(conn):
     assert row["consecutive_failures"] == 0
 
 
-def test_no_alert_below_threshold(conn, monkeypatch):
-    sends = []
-    monkeypatch.setattr(health, "send_notification", lambda **kw: (sends.append(kw), NotifyResult(ok=True))[1])
+def test_no_alert_below_threshold(conn):
+    provider = FakeProvider(NotifyResult(ok=True))
 
     for _ in range(health.FAILURE_ALERT_THRESHOLD - 1):
         health.record_result(conn, component="classroom", success=False, error="boom")
 
-    alerted = health.check_and_alert(conn, hermes_bin="hermes.exe", notify_target="telegram")
+    alerted = health.check_and_alert(conn, providers=[provider])
     assert alerted == []
-    assert sends == []
+    assert provider.calls == []
 
 
-def test_alert_fires_exactly_once_at_threshold_and_not_again_for_the_same_streak(conn, monkeypatch):
-    sends = []
-    monkeypatch.setattr(health, "send_notification", lambda **kw: (sends.append(kw), NotifyResult(ok=True))[1])
+def test_alert_fires_exactly_once_at_threshold_and_not_again_for_the_same_streak(conn):
+    provider = FakeProvider(NotifyResult(ok=True))
 
     for _ in range(health.FAILURE_ALERT_THRESHOLD):
         health.record_result(conn, component="classroom", success=False, error="boom")
-    first = health.check_and_alert(conn, hermes_bin="hermes.exe", notify_target="telegram")
+    first = health.check_and_alert(conn, providers=[provider])
 
     # Keeps failing - must NOT alert again for the same ongoing streak
     # (no infinite notification loop).
     health.record_result(conn, component="classroom", success=False, error="boom")
     health.record_result(conn, component="classroom", success=False, error="boom")
-    second = health.check_and_alert(conn, hermes_bin="hermes.exe", notify_target="telegram")
+    second = health.check_and_alert(conn, providers=[provider])
 
     assert first == ["classroom"]
     assert second == []
-    assert len(sends) == 1
+    assert len(provider.calls) == 1
 
 
-def test_recovery_then_new_failure_streak_alerts_again(conn, monkeypatch):
-    monkeypatch.setattr(health, "send_notification", lambda **kw: NotifyResult(ok=True))
+def test_recovery_then_new_failure_streak_alerts_again(conn):
+    provider = FakeProvider(NotifyResult(ok=True))
 
     for _ in range(health.FAILURE_ALERT_THRESHOLD):
         health.record_result(conn, component="classroom", success=False, error="boom")
-    first = health.check_and_alert(conn, hermes_bin="hermes.exe", notify_target="telegram")
+    first = health.check_and_alert(conn, providers=[provider])
 
     # Recovers - re-arms alerting.
     health.record_result(conn, component="classroom", success=True)
@@ -79,49 +90,59 @@ def test_recovery_then_new_failure_streak_alerts_again(conn, monkeypatch):
     # Fails again for a new, separate streak.
     for _ in range(health.FAILURE_ALERT_THRESHOLD):
         health.record_result(conn, component="classroom", success=False, error="boom again")
-    second = health.check_and_alert(conn, hermes_bin="hermes.exe", notify_target="telegram")
+    second = health.check_and_alert(conn, providers=[provider])
 
     assert first == ["classroom"]
     assert second == ["classroom"]
 
 
-def test_multiple_failing_components_are_combined_into_one_alert(conn, monkeypatch):
-    sends = []
-    monkeypatch.setattr(health, "send_notification", lambda **kw: (sends.append(kw), NotifyResult(ok=True))[1])
+def test_multiple_failing_components_are_combined_into_one_alert(conn):
+    provider = FakeProvider(NotifyResult(ok=True))
 
     for _ in range(health.FAILURE_ALERT_THRESHOLD):
         health.record_result(conn, component="classroom", success=False, error="classroom broke")
         health.record_result(conn, component="calendar", success=False, error="calendar broke")
 
-    alerted = health.check_and_alert(conn, hermes_bin="hermes.exe", notify_target="telegram")
+    alerted = health.check_and_alert(conn, providers=[provider])
 
     assert set(alerted) == {"classroom", "calendar"}
-    assert len(sends) == 1  # one combined message, not two separate sends
-    assert "classroom" in sends[0]["message"]
-    assert "calendar" in sends[0]["message"]
+    assert len(provider.calls) == 1  # one combined message, not two separate sends
+    assert "classroom" in provider.calls[0]
+    assert "calendar" in provider.calls[0]
 
 
-def test_check_and_alert_does_nothing_when_not_configured(conn, monkeypatch):
-    sends = []
-    monkeypatch.setattr(health, "send_notification", lambda **kw: (sends.append(kw), NotifyResult(ok=True))[1])
+def test_check_and_alert_does_nothing_when_not_configured(conn):
+    for _ in range(health.FAILURE_ALERT_THRESHOLD):
+        health.record_result(conn, component="classroom", success=False, error="boom")
+
+    alerted = health.check_and_alert(conn, providers=[])
+    assert alerted == []  # never even attempted - nothing configured to send through
+
+
+def test_undelivered_alert_is_retried_on_a_later_check(conn):
+    """If the alert send fails through every configured provider (e.g.
+    Hermes is down too), it must not be marked as sent - the next check
+    should try again."""
+    provider = FakeProvider(NotifyResult(ok=False, error="hermes unreachable"))
 
     for _ in range(health.FAILURE_ALERT_THRESHOLD):
         health.record_result(conn, component="classroom", success=False, error="boom")
 
-    alerted = health.check_and_alert(conn, hermes_bin=None, notify_target=None)
-    assert alerted == []
-    assert sends == []  # never even attempted - nothing configured to send through
-
-
-def test_undelivered_alert_is_retried_on_a_later_check(conn, monkeypatch):
-    """If the alert send itself fails (e.g. Hermes is down too), it must
-    not be marked as sent - the next check should try again."""
-    monkeypatch.setattr(health, "send_notification", lambda **kw: NotifyResult(ok=False, error="hermes unreachable"))
-
-    for _ in range(health.FAILURE_ALERT_THRESHOLD):
-        health.record_result(conn, component="classroom", success=False, error="boom")
-
-    first = health.check_and_alert(conn, hermes_bin="hermes.exe", notify_target="telegram")
+    first = health.check_and_alert(conn, providers=[provider])
     assert first == []
     row = conn.execute("SELECT last_alert_sent_at FROM pipeline_health WHERE component = 'classroom'").fetchone()
     assert row["last_alert_sent_at"] is None
+
+
+def test_alert_delivers_via_any_successful_provider_when_others_fail(conn):
+    failing = FakeProvider(NotifyResult(ok=False, error="channel A down"))
+    succeeding = FakeProvider(NotifyResult(ok=True))
+
+    for _ in range(health.FAILURE_ALERT_THRESHOLD):
+        health.record_result(conn, component="classroom", success=False, error="boom")
+
+    alerted = health.check_and_alert(conn, providers=[failing, succeeding])
+
+    assert alerted == ["classroom"]
+    assert len(failing.calls) == 1  # attempted, not skipped
+    assert len(succeeding.calls) == 1

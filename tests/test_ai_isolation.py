@@ -99,8 +99,6 @@ def _make_config(tmp_path: Path, *, spreadsheet_id: str | None = None) -> Config
         web_port=8731,
         sheets_api_key=None,
         fast_timetable_spreadsheet_id=spreadsheet_id,
-        telegram_bot_token=None,
-        telegram_chat_id=None,
     )
 
 
@@ -153,7 +151,7 @@ def test_reminders_command_works_with_ai_package_unavailable(tmp_path, monkeypat
         from ragra.reminders.dispatch import dispatch_due_reminders
 
         # Must not raise ImportError/AttributeError even though ragra.ai is poisoned.
-        summary = dispatch_due_reminders(conn, hermes_bin=None, notify_target=None, now="2026-01-01T00:00:00+00:00")
+        summary = dispatch_due_reminders(conn, providers=[], now="2026-01-01T00:00:00+00:00")
 
     assert summary.errors == []
 

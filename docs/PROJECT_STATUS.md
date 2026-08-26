@@ -45,18 +45,36 @@ scopes requested; after a Google Cloud Console branding/scope fix partway
 through development, all 5 are now actually granted, confirmed via live
 `courses.courseWork.list` calls returning real assignment data. Credential
 refreshes silently - verified across many non-interactive `tick` runs with
-no browser prompt.
+no browser prompt. The OAuth consent screen's production/publishing status
+was a concern going into the soak-test phase (a "Testing"-status app would
+have its refresh tokens auto-expire after 7 days, silently breaking sync
+mid-soak) - manually verified resolved: repeated `sync`/`tick` runs across
+this session complete with no re-authentication required and no browser
+prompt. Separately, Google's own refresh-grant response doesn't always echo
+`classroom.coursework.me.readonly` back in its `scope` field even though
+it's genuinely granted and working (investigated directly by forcing a real
+refresh); this produced a harmless but recurring library warning on every
+token refresh, now suppressed at its exact source (a filter scoped to that
+one message only - any other/real scope or auth problem still surfaces).
 
 **Google Calendar** - a separate, Ragra-owned OAuth credential, scoped to
 `calendar.events` only. Silent refresh confirmed. Real events were verified
 to exist on Google's side (read back via the API, not just recorded
 locally).
 
-**Notifications (optional)** - reminders dispatch through a pluggable
-provider: direct Telegram Bot API delivery, or an optional personal Hermes
-provider (`hermes send --to <target> "<message>"`) for Hashim's own
-installation. Neither is required for Classroom/Calendar/FAST sync or the
-reminder engine itself.
+**Notifications (optional)** - reminders dispatch through whichever
+`NotificationProvider`s are configured (`ragra/adapters/notify.py`), behind
+one `send(message)` interface; `ragra/reminders/dispatch.py`/`ragra/health.py`
+never know which provider they're talking to. Every configured provider is
+attempted per send (deliberate redundancy - one channel breaking doesn't
+silently take down delivery). Current provider: an optional personal Hermes
+integration (`hermes send --to <target> "<message>"`) for Hashim's own
+installation - not required for Classroom/Calendar/FAST sync or the
+reminder engine itself. A direct Telegram Bot API provider was built and
+verified working, then deliberately removed from the product direction in
+favor of Web Push/email as the planned next providers (see Planned Roadmap)
+- the interface was already provider-neutral, so nothing else needed to
+change when it was dropped.
 
 **WhatsApp** - one real, explicitly-approved test notification was sent
 through Hermes (a personal WhatsApp contact target) as a standalone connectivity test,
@@ -114,18 +132,19 @@ current documentation.
   execution has been unreliable for this project in practice.
 
 **What's implemented and verified so far, without needing any cloud
-account access:**
-- `ragra/adapters/telegram_notify.py` - a direct Telegram Bot API
-  notification path with zero dependency on Hermes, its gateway, or any
-  local executable (Hermes' own `hermes send` shells out to a Windows
-  binary reading local session files, which a remote worker cannot use for
-  WhatsApp specifically). This is additive, not a replacement - the
-  existing Hermes path is unchanged and still used locally. Confirmed live
-  against Telegram's real API: the HTTP mechanics work correctly and
-  errors are reported without ever leaking the bot token; the specific
-  chat id must still be independently confirmed by the account owner
-  (Hermes' own cached value did not resolve directly via a raw Bot API
-  call) before a real message will deliver.
+account access:** the notification layer itself is now provider-neutral
+(`ragra/adapters/notify.py`'s `NotificationProvider` protocol -
+`ragra/reminders/dispatch.py`/`ragra/health.py` only ever depend on
+`send(message)`), which is what actually matters for remote execution:
+Hermes' own `hermes send` shells out to a Windows binary reading local
+session files, which a remote worker cannot use. A direct Telegram Bot API
+provider was built and verified live (HTTP mechanics worked, errors
+reported without leaking the bot token) as a proof that a remote-capable,
+non-Hermes provider is straightforward to add - then deliberately removed
+from the product direction (see "Notifications (optional)" above). The
+open problem it demonstrated a solution shape for is unchanged: a remote
+worker still needs a non-Hermes provider, which is now Web Push/email's
+job once either is actually implemented, not Telegram's.
 
 **Explicitly not done yet, and why:** actual Cloud Run/Scheduler
 deployment needs three things this environment doesn't have: the `gcloud`
@@ -224,9 +243,11 @@ text for `ragra plan` / `ragra brief --ai` to print.
 - **Windows Task Scheduler**, not a custom daemon - simplest reliable
   option for a single-user Windows machine.
 - **Notification delivery is pluggable and optional**; Ragra never hard-
-  depends on any one messaging client - Telegram is called directly over
-  HTTPS, and Hermes (an optional personal provider) is only ever shelled
-  out to via `hermes send`, never imported.
+  depends on any one messaging client - `ragra/reminders/dispatch.py` and
+  `ragra/health.py` depend only on `NotificationProvider.send(message)`,
+  never on Hermes/WhatsApp/Web Push/email specifically. Hermes (an
+  optional, advanced-personal provider) is only ever shelled out to via
+  `hermes send`, never imported.
 - **AI is never the source of truth** for deadlines, task existence, or
   completion/reminder state - those remain deterministic, by design.
 - **No invented semester/term classification.** Investigated whether
@@ -294,20 +315,21 @@ Verified against the actual code, not assumed:
    billing on the Google Cloud project. Then: package `ragra tick` behind
    a thin Cloud-Storage download/upload wrapper around the existing SQLite
    file (no rewrite of `ragra/db/repo.py`), store the 4 existing
-   credentials plus the Telegram bot token in Secret Manager, wire one
-   Cloud Scheduler job, and validate real idempotent execution with the
-   Windows scheduled task paused (to rule out a dual-writer conflict while
-   this is unproven).
-2. Confirm the correct Telegram chat id for `RAGRA_TELEGRAM_CHAT_ID`
-   (Hermes' own cached value did not resolve via a raw Bot API call) and
-   send one real end-to-end test message through the new adapter.
+   credentials in Secret Manager, wire one Cloud Scheduler job, and
+   validate real idempotent execution with the Windows scheduled task
+   paused (to rule out a dual-writer conflict while this is unproven).
 
 ### P1 (core academic-manager features)
 1. Class-aware reminders (built on the FAST timetable, now that it syncs)
 2. Richer task detail views (attachments, materials list)
 3. Snooze/cancel workflow on the dashboard
 4. Automatic morning brief delivery (send `ragra brief` on a schedule)
-5. Notification fallback channel
+5. **Notification fallback channel** - the multi-provider mechanism itself
+   is now built and tested (every configured `NotificationProvider` is
+   attempted per send; delivered if at least one succeeds - see
+   `ragra/adapters/notify.py`); still only ever has one real provider
+   (Hermes) configured in practice, since Web Push/email aren't
+   implemented yet. Genuine redundancy needs a second real provider.
 6. Course-code matching (wire in Hermes' registration/matching data)
 7. A minimal schema migration mechanism, before the next schema change
 

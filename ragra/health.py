@@ -1,7 +1,13 @@
 """Self-alerting: tracks consecutive failures per pipeline component
 (classroom, calendar, reminders, tick) and sends ONE notification through
-the existing Hermes adapter when a persisting failure streak crosses a
-threshold - never repeatedly for the same ongoing outage.
+whichever notification provider(s) are configured (see
+ragra/adapters/notify.py's NotificationProvider protocol - this module
+never knows Hermes, WhatsApp, Web Push, or email specifically) when a
+persisting failure streak crosses a threshold - never repeatedly for the
+same ongoing outage. Uses the same multi-provider fan-out as
+ragra/reminders/dispatch.py deliberately: this is the "something is wrong"
+channel, so it shouldn't share a single point of failure with the thing
+it's alerting about.
 
 This is not a general monitoring system - it is a single small table
 (pipeline_health) plus two functions. A healthy run resets a component's
@@ -15,9 +21,8 @@ again.
 from __future__ import annotations
 
 import sqlite3
-from pathlib import Path
 
-from ragra.adapters.notify import send_notification
+from ragra.adapters.notify import NotificationProvider, send_to_all_providers
 from ragra.db import repo
 
 # Three consecutive failed 15-minute ticks (~45 minutes) before alerting -
@@ -57,13 +62,13 @@ def record_result(conn: sqlite3.Connection, *, component: str, success: bool, er
     return row["consecutive_failures"]
 
 
-def check_and_alert(conn: sqlite3.Connection, *, hermes_bin: Path | None, notify_target: str | None) -> list[str]:
+def check_and_alert(conn: sqlite3.Connection, *, providers: list[NotificationProvider]) -> list[str]:
     """Sends at most one combined alert for every component that just
     crossed the threshold and hasn't already been alerted for this streak.
     Returns the component names actually alerted (empty if nothing crossed
-    the threshold, nothing configured, or the alert send itself failed -
-    in which case it is retried on a future call, not lost)."""
-    if not hermes_bin or not notify_target:
+    the threshold, no provider is configured, or every configured provider's
+    send failed - in which case it is retried on a future call, not lost)."""
+    if not providers:
         return []
 
     rows = conn.execute(
@@ -79,10 +84,11 @@ def check_and_alert(conn: sqlite3.Connection, *, hermes_bin: Path | None, notify
     ]
     message = "Ragra health alert - needs attention:\n" + "\n".join(lines)
 
-    result = send_notification(hermes_bin=hermes_bin, target=notify_target, message=message)
-    if not result.ok:
-        # Couldn't deliver the alert itself - leave last_alert_sent_at unset
-        # so the next check tries again, rather than silently losing it.
+    delivered, _errors = send_to_all_providers(providers, message)
+    if not delivered:
+        # Couldn't deliver the alert through any configured provider - leave
+        # last_alert_sent_at unset so the next check tries again, rather
+        # than silently losing it.
         return []
 
     now = repo.now_iso()

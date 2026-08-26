@@ -35,13 +35,23 @@ or any other personal/optional tooling, and must work with none of it
 installed. `ragra tick` - the unattended entrypoint - only ever runs these
 core stages; it never imports `ragra/ai/`.
 
-Notification layer: due reminders are delivered through pluggable providers
-(`ragra/adapters/*_notify.py`) behind a common `send_notification()` interface.
-A provider going unconfigured or failing never affects Classroom/Calendar/FAST
-sync or the reminder engine's own state - reminders simply stay pending until a
-provider is available. Current providers: direct Telegram Bot API delivery, and
-an optional personal Hermes provider (for Hashim's own installation only,
-shelling out to `hermes send`, never importing Hermes internals).
+Notification layer: due reminders are delivered through whichever
+`NotificationProvider`s (`ragra/adapters/notify.py`) are configured, behind
+one interface: `send(message) -> NotifyResult`. `ragra/reminders/dispatch.py`
+and `ragra/health.py` depend only on that - they never import or know about
+Hermes, WhatsApp, Web Push, or email specifically; `ragra/cli.py`'s
+`_build_providers()` is the only place a concrete provider gets constructed.
+Every configured provider is attempted per send (deliberate redundancy, not
+just a config choice), and a message is considered delivered if at least one
+succeeds. An empty provider list is a normal, fully-supported state -
+reminders simply stay pending until one is configured; a provider going
+unconfigured or failing never affects Classroom/Calendar/FAST sync or the
+reminder engine's own state. Current provider: `HermesProvider`, an optional,
+advanced-personal-integration provider (for an installation that already runs
+Hermes, e.g. for WhatsApp delivery), shelling out to `hermes send`, never
+importing Hermes internals - never required by Ragra core. Web Push and
+email are planned future providers, not yet implemented; they would
+implement the same interface with no change to `dispatch.py`/`health.py`.
 
 Optional features: the AI advisor (`ragra/ai/advisor.py`, via
 `ragra/adapters/ai.py`) is invoked only through its own explicit entrypoints
