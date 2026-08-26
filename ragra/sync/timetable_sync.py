@@ -24,7 +24,6 @@ from ragra.adapters.fast_timetable import (
     FastTimetableAdapterError,
     FastTimetableClient,
     SheetInfo,
-    discover_weekday_tabs,
     extract_classes_from_grid,
 )
 from ragra.db import repo
@@ -76,8 +75,7 @@ def sync_timetable(
     repo.record_sync_start(conn, source="timetable")
 
     try:
-        sheets = client.list_sheets()
-        weekday_tabs = discover_weekday_tabs(sheets)
+        weekday_tabs = client.discover_tabs()
     except (FastTimetableAdapterError, AmbiguousTimetableStructureError) as exc:
         repo.record_sync_error(conn, source="timetable", error=str(exc))
         raise TimetableSyncError(str(exc)) from exc
@@ -152,7 +150,7 @@ def sync_timetable(
                 section=section,
                 status=status,
                 source_spreadsheet_id=spreadsheet_id,
-                source_sheet_gid=str(sheet.sheet_id),
+                source_sheet_gid=str(sheet.sheet_id) if sheet.sheet_id is not None else None,
                 source_sheet_title=sheet.title,
             )
             if result.created:

@@ -1,6 +1,11 @@
 import pytest
 
-from ragra.adapters.fast_timetable import AmbiguousTimetableStructureError, FastTimetableAdapterError, SheetInfo
+from ragra.adapters.fast_timetable import (
+    AmbiguousTimetableStructureError,
+    FastTimetableAdapterError,
+    SheetInfo,
+    discover_weekday_tabs,
+)
 from ragra.db import repo
 from ragra.sync.timetable_sync import TimetableSyncError, sync_timetable
 from ragra.timetable.enrollment import REGULAR, REPEAT, EnrolledCourse
@@ -26,6 +31,9 @@ class FakeFastTimetableClient:
 
     def list_sheets(self):
         return self._sheets
+
+    def discover_tabs(self):
+        return discover_weekday_tabs(self._sheets)
 
     def get_values(self, sheet_title: str):
         return self._grids[sheet_title]
@@ -159,8 +167,8 @@ def test_missing_weekday_tabs_raises_and_preserves_existing_data(conn):
     assert before_count > 0
 
     class BrokenClient:
-        def list_sheets(self):
-            return [SheetInfo(title="WELCOME", sheet_id=1)]  # no weekday tabs at all
+        def discover_tabs(self):
+            return discover_weekday_tabs([SheetInfo(title="WELCOME", sheet_id=1)])  # no weekday tabs at all
 
         def get_values(self, sheet_title):
             raise AssertionError("should never be called - discovery must fail first")
@@ -177,8 +185,10 @@ def test_ambiguous_weekday_tabs_raises_and_preserves_existing_data(conn):
     before_count = conn.execute("SELECT COUNT(*) AS c FROM timetable_events").fetchone()["c"]
 
     class AmbiguousClient:
-        def list_sheets(self):
-            return [SheetInfo(title="Monday A", sheet_id=1), SheetInfo(title="Monday B", sheet_id=2)]
+        def discover_tabs(self):
+            return discover_weekday_tabs(
+                [SheetInfo(title="Monday A", sheet_id=1), SheetInfo(title="Monday B", sheet_id=2)]
+            )
 
         def get_values(self, sheet_title):
             raise AssertionError("should never be called - discovery must fail first")
@@ -195,8 +205,8 @@ def test_adapter_failure_mid_scrape_preserves_existing_data(conn):
     before_count = conn.execute("SELECT COUNT(*) AS c FROM timetable_events").fetchone()["c"]
 
     class FlakyClient:
-        def list_sheets(self):
-            return BASE_SHEETS
+        def discover_tabs(self):
+            return discover_weekday_tabs(BASE_SHEETS)
 
         def get_values(self, sheet_title):
             raise FastTimetableAdapterError("simulated network failure")
