@@ -1,3 +1,5 @@
+import pytest
+
 from ragra.sync.classroom_sync import sync_classroom
 
 
@@ -102,6 +104,74 @@ def test_archived_course_is_skipped(conn):
     summary = sync_classroom(conn, client)
     assert summary.courses_seen == 0
     assert conn.execute("SELECT COUNT(*) AS c FROM tasks").fetchone()["c"] == 0
+
+
+@pytest.mark.parametrize(
+    "non_eligible_state",
+    [
+        "ARCHIVED",
+        "DECLINED",
+        "SUSPENDED",
+        "COURSE_STATE_UNSPECIFIED",
+        # HIDDEN is not a real Classroom courseState value - verified
+        # directly against the official Classroom API v1 discovery document
+        # (schemas.Course.properties.courseState.enum), which lists exactly
+        # ACTIVE/ARCHIVED/PROVISIONED/DECLINED/SUSPENDED/
+        # COURSE_STATE_UNSPECIFIED and nothing else. The student-facing
+        # "hide this class" toggle in Classroom's own UI is a client-side
+        # preference the API never returns, so there's nothing to filter on
+        # for it specifically. This value is included anyway as a
+        # forward-compatible check: the sync loop's ACTIVE/PROVISIONED
+        # allow-list (see classroom_sync.py) excludes ANY state it doesn't
+        # explicitly recognize, so it would already correctly exclude a
+        # "HIDDEN" state too, with zero code change, if Google ever adds one.
+        "HIDDEN",
+    ],
+)
+def test_non_active_or_provisioned_course_states_never_generate_reminders(conn, non_eligible_state):
+    from ragra.db import repo
+
+    course = dict(COURSE)
+    course["courseState"] = non_eligible_state
+    client = FakeClient([course], coursework={"course-1": [ASSIGNMENT_V1]})
+
+    summary = sync_classroom(conn, client)
+
+    assert summary.courses_seen == 0
+    assert conn.execute("SELECT COUNT(*) AS c FROM tasks").fetchone()["c"] == 0
+    due = repo.due_pending_reminders(conn, now="2026-12-31T00:00:00+00:00")
+    assert due == []
+
+
+def test_previously_active_course_going_archived_updates_stored_state(conn):
+    # Distinct from test_archived_course_is_skipped: this course was ACTIVE
+    # on a prior sync (with a real task and reminder already created), and
+    # only goes ARCHIVED on a later sync - the stored course state must
+    # reflect that so due_pending_reminders can exclude its tasks, and no
+    # existing history should be deleted.
+    client_active = FakeClient([COURSE], coursework={"course-1": [ASSIGNMENT_V1]})
+    sync_classroom(conn, client_active)
+
+    course_row = conn.execute("SELECT state FROM courses WHERE external_id = 'course-1'").fetchone()
+    assert course_row["state"] == "ACTIVE"
+    task_count_before = conn.execute("SELECT COUNT(*) AS c FROM tasks").fetchone()["c"]
+    assert task_count_before == 1
+
+    archived = dict(COURSE)
+    archived["courseState"] = "ARCHIVED"
+    client_archived = FakeClient([archived], coursework={"course-1": [ASSIGNMENT_V1]})
+    summary = sync_classroom(conn, client_archived)
+
+    assert summary.courses_seen == 0
+    course_row_after = conn.execute("SELECT state FROM courses WHERE external_id = 'course-1'").fetchone()
+    assert course_row_after["state"] == "ARCHIVED"
+    # History preserved - the task row is untouched, not deleted.
+    assert conn.execute("SELECT COUNT(*) AS c FROM tasks").fetchone()["c"] == task_count_before
+
+    from ragra.db import repo
+
+    due = repo.due_pending_reminders(conn, now="2026-12-31T00:00:00+00:00")
+    assert due == []  # the archived course's task must not generate a normal reminder
 
 
 def test_course_group_email_is_never_used_as_course_code(conn):

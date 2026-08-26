@@ -61,7 +61,28 @@ def sync_classroom(conn: sqlite3.Connection, client: ClassroomClient) -> SyncSum
     try:
         courses = client.list_courses()
         for course in courses:
-            if course.get("courseState") not in ("ACTIVE", "PROVISIONED"):
+            course_state = course.get("courseState", "ACTIVE")
+            # Deliberately an allow-list (only ACTIVE/PROVISIONED proceed),
+            # not a deny-list of known-bad states - so it correctly excludes
+            # every other state Classroom's Course.courseState enum actually
+            # defines (ARCHIVED, DECLINED, SUSPENDED, COURSE_STATE_UNSPECIFIED)
+            # without needing to enumerate each one, and stays correct if
+            # Google ever adds a new state. Investigated directly against the
+            # official Classroom API v1 discovery document: there is no
+            # separate "hidden" course state exposed anywhere in the API -
+            # the student-facing "hide this class" toggle in Classroom's own
+            # UI is a client-side-only preference Google does not return
+            # through the API at all, so there is nothing for Ragra to read
+            # or filter on for it specifically. If Google ever does expose
+            # such a state as a courseState value, this same allow-list
+            # excludes it automatically, with zero code change needed.
+            if course_state not in ("ACTIVE", "PROVISIONED"):
+                # Keep a previously-known course's stored state accurate even
+                # though Ragra stops discovering new items for it - this is
+                # what lets due_pending_reminders exclude tasks tied to a
+                # since-archived course, without deleting any history and
+                # without ever creating a row for a course never seen before.
+                repo.update_course_state_if_known(conn, external_id=course["id"], state=course_state)
                 continue
             summary.courses_seen += 1
             course_id = repo.upsert_course(
@@ -86,7 +107,7 @@ def sync_classroom(conn: sqlite3.Connection, client: ClassroomClient) -> SyncSum
                 # name (see due_pending_reminders' COALESCE and the
                 # dashboard template's `course_code or course_name`).
                 course_code=None,
-                state=course.get("courseState", "ACTIVE"),
+                state=course_state,
             )
 
             seen_coursework = _sync_coursework(conn, client, course_id, course["id"], summary)
@@ -105,6 +126,11 @@ def sync_classroom(conn: sqlite3.Connection, client: ClassroomClient) -> SyncSum
 
         summary.backlog_reminders_suppressed = repo.cancel_backlog_reminders_for_already_overdue_tasks(conn)
         summary.tasks_marked_missed = len(repo.mark_overdue_tasks_as_missed(conn, now=repo.now_iso()))
+        # Self-healing safety net (idempotent, safe every sync): cleans up
+        # any PENDING reminder left behind on an already-terminal task by
+        # data written before a given state-transition call site paired
+        # itself with cancel_pending_reminders.
+        repo.cancel_stray_reminders_for_terminal_tasks(conn)
 
         repo.record_sync_success(conn, source="classroom")
     except Exception as exc:  # noqa: BLE001 - sync must never crash the process

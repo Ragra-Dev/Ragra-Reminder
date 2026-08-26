@@ -223,6 +223,55 @@ def test_cancelled_task_reminder_is_never_dispatched(conn, monkeypatch):
     assert sends == []
 
 
+def test_missed_task_reminder_is_never_dispatched(conn, monkeypatch):
+    # A task already past its deadline (MISSED) must never fire a "due
+    # soon"/"due in 1 hour" reminder for a deadline that has already
+    # passed - that would misrepresent historical/past work as current
+    # actionable work.
+    task_id = _make_task_with_reminder(conn, scheduled_for=PAST, status="MISSED")
+    sends = []
+    monkeypatch.setattr(
+        dispatch_module, "send_notification",
+        lambda **kw: (sends.append(1), NotifyResult(ok=True))[1],
+    )
+
+    summary = dispatch_due_reminders(conn, hermes_bin=Path("hermes.exe"), notify_target="telegram", now=NOW)
+
+    assert summary.sent == 0
+    assert sends == []
+
+
+def test_archived_course_reminder_is_never_dispatched(conn, monkeypatch):
+    # A task whose course has gone ARCHIVED at the source must not generate
+    # a normal reminder - only currently active/enrolled courses are
+    # eligible.
+    course_id = repo.upsert_course(
+        conn, external_id="course-1", name="OOP", section="BCS-3C",
+        teacher="Dr. Smith", course_code="CS1004", state="ARCHIVED",
+    )
+    result = repo.upsert_task_from_source(
+        conn, course_id=course_id, source_type="coursework", external_id="cw-1",
+        title="Assignment 2", description=None, link=None, kind="ACTIONABLE",
+        actual_deadline="2026-09-10T23:59:00+00:00",
+        source_published_at="2026-08-20T00:00:00+00:00",
+        source_updated_at="2026-08-20T00:00:00+00:00",
+    )
+    repo.insert_reminder_if_absent(
+        conn, task_id=result.task_id, reminder_type="T_MINUS_1D",
+        scheduled_for=PAST, idempotency_key=f"{result.task_id}:T_MINUS_1D:v1",
+    )
+    sends = []
+    monkeypatch.setattr(
+        dispatch_module, "send_notification",
+        lambda **kw: (sends.append(1), NotifyResult(ok=True))[1],
+    )
+
+    summary = dispatch_due_reminders(conn, hermes_bin=Path("hermes.exe"), notify_target="telegram", now=NOW)
+
+    assert summary.sent == 0
+    assert sends == []
+
+
 def test_personal_deadline_change_does_not_touch_reminders(conn):
     task_id = _make_task_with_reminder(conn, scheduled_for=PAST)
     before = conn.execute("SELECT id, status, scheduled_for FROM reminders").fetchall()

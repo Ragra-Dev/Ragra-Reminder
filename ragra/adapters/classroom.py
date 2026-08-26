@@ -11,13 +11,29 @@ also used by the Calendar adapter) purely so the existing, already-granted
 authorization keeps working without a new consent flow - that default is a
 file-location convenience, not a code dependency on anything else.
 
-One real-world wrinkle this module works around: for this Google Cloud
-project, Google's consent screen only ever grants 4 of the 5 requested
-Classroom scopes (classroom.coursework.me.readonly is a "restricted" scope
-that Google's Console has not made grantable here - a Console-side
-configuration limitation, not a code bug). RFC 6749 SS3.3 explicitly allows
-a server to grant a scope subset; the client is expected to adapt, not
-treat it as fatal. Two concrete adaptations follow from that:
+One real-world wrinkle this module works around: classroom.coursework.me.readonly
+IS actually granted on this project and IS genuinely required - it's one of
+the scopes courses().courseWork().list() accepts, the exact call Ragra's
+sync depends on to discover assignments, and real syncs return real
+coursework data with it. The wrinkle is that Google's OAuth refresh
+endpoint doesn't reliably echo it back in a refresh-grant response's
+"scope" field (investigated directly: forcing a real refresh reproduces the
+warning even though the token's own recorded scopes, and live API calls,
+both confirm it's actually granted) - a quirk of the token-refresh
+response, not an actual permission gap. The underlying google-auth library
+treats any such gap as WARNING-worthy ("Not all requested scopes were
+granted..."), and since nothing in this process configures a handler for
+its logger, that warning would otherwise hit the console raw on every
+silent refresh - once per tick, forever. A logging filter scoped to this
+exact, already-verified-harmless message (see
+_SuppressKnownBenignScopeRefreshWarning below) drops only it; any other
+warning from that logger - a genuinely missing/broken scope - still
+surfaces normally.
+
+RFC 6749 SS3.3 separately allows a server to grant a scope subset in
+general; the client is expected to adapt, not treat it as fatal. Two
+concrete adaptations follow from that (independent of the refresh-warning
+quirk above, for the general case where a scope truly isn't granted):
 
 1. The ONE-TIME interactive authorization (get_classroom_client(...,
    interactive=True)) sets OAUTHLIB_RELAX_TOKEN_SCOPE=1 - oauthlib's own
@@ -39,10 +55,31 @@ load-or-refresh.
 from __future__ import annotations
 
 import json
+import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
+
+
+class _SuppressKnownBenignScopeRefreshWarning(logging.Filter):
+    """Drops exactly one already-investigated, harmless message from
+    google-auth's Credentials logger: its refresh-grant response not
+    echoing back classroom.coursework.me.readonly, even though the scope is
+    genuinely granted and working (see the module docstring above for the
+    investigation). Matches on the specific scope name, not just the
+    generic "not all requested scopes" prefix, so a real, different scope
+    gap - Calendar's, or a future Classroom scope - still surfaces."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage()
+        return not (
+            "Not all requested scopes were granted" in message
+            and "classroom.coursework.me.readonly" in message
+        )
+
+
+logging.getLogger("google.oauth2.credentials").addFilter(_SuppressKnownBenignScopeRefreshWarning())
 
 
 CLASSROOM_SCOPES: tuple[str, ...] = (
