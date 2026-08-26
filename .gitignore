@@ -15,6 +15,7 @@ dist/
 *.db-wal
 *.db-shm
 *.sqlite3
+the local development guide
 data/
 logs/
 *.log
