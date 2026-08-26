@@ -18,9 +18,16 @@ What actually works end-to-end today:
 - A deterministic reminder engine computes a reminder cadence per task,
   persists it, and dispatches through Hermes with bounded retry.
 - Syncs Ragra-owned events onto Hashim's real Google Calendar, idempotently.
-- Runs unattended via a 15-minute Windows Task Scheduler task, with
-  per-component health tracking and a self-alert if something breaks
-  repeatedly.
+- Syncs the FAST timetable from its public spreadsheet source, matching
+  scraped classes against a small enrollment config to distinguish regular
+  and repeat courses (independently, including independent theory/lab
+  sections for repeats) - never by color, never by hardcoded section
+  letters.
+- Runs unattended via a 15-minute Windows Task Scheduler task (hidden, no
+  console window, allowed on battery, wakes from sleep if due), with
+  per-component health tracking, a self-alert if something breaks
+  repeatedly, and a structured 48-hour tick-session diagnostic log
+  (separate from application data, auto-purged).
 - A small FastAPI + Jinja2 dashboard shows overdue/missed/due-today/due-soon
   tasks, lets you mark a task complete or set a personal target, and has a
   per-task detail view.
@@ -56,10 +63,22 @@ rows. Delivery reported successful (`NotifyResult(ok=True)`). No reminder
 has been dispatched through the real pipeline yet - nothing has been due
 at a moment real sends were enabled.
 
+**FAST timetable** - synced from its public spreadsheet source (a Google
+Sheet, not a university API) via the public gviz endpoint for values and
+an optional Sheets API key for true tab discovery (a zero-credential
+name-guessing fallback exists if no key is configured). Enrollment
+(regular vs. repeat, including independent theory/lab sections for
+repeats) lives in `ragra/timetable/enrollment.py` as plain configuration,
+never inferred from sheet color or section letters. Verified live against
+the real spreadsheet: 13 real enrolled classes, idempotent across repeated
+syncs, zero duplicates.
+
 **Windows Task Scheduler** - a task named `Ragra Tick` is registered,
-running `ragra tick` every 15 minutes plus at logon, confirmed via
-`Get-ScheduledTaskInfo` and by observing its own log entries accumulate
-automatically in the background throughout this development session.
+running `ragra tick` every 15 minutes plus at logon; hidden (no visible
+console window), allowed to run on battery, wakes the machine from sleep
+if a run is due, and rejects overlapping instances. This is a **local
+fallback only** - it does nothing when the machine is fully powered off,
+which is the actual long-term problem (see "Remote Execution" below).
 
 **Vercel OAuth branding site** - a separate site (outside this repository,
 at `D:\RAGRA-OAUTH-SITE`) was used earlier to satisfy Google's OAuth
@@ -67,26 +86,77 @@ consent-screen branding/domain requirements so the Classroom scope could be
 granted. It was not built or modified as part of Ragra's codebase and is
 intentionally excluded from this repository.
 
+## Remote Execution (laptop-off problem) - investigated, not yet deployed
+
+The local Windows scheduler cannot run while the laptop is powered off.
+The intended fix is **Google Cloud Run Jobs + Cloud Scheduler +
+Cloud-Storage-backed SQLite + Secret Manager**, in the same Google Cloud
+project already used for Classroom/Calendar/FAST - chosen after verifying
+(not assuming) the actual free-tier terms directly against Google's own
+current documentation.
+
+**Verified, not assumed:**
+- Cloud Run's Always Free tier (2M requests, 180K vCPU-s, 360K GiB-s per
+  month) comfortably covers this workload (a ~45s job every 15 minutes),
+  but a **Cloud Billing account with a payment method must be linked to
+  the project** to use Cloud Run/Scheduler at all, even to stay at $0.
+  Budget alerts are notification-only by default - there is no automatic
+  hard spending cap without extra, riskier automation (a budget-triggered
+  billing-disable, which turns off the *entire* project, not just the
+  overage).
+- Cloud Scheduler's free tier (3 jobs/billing account/month) easily covers
+  the 1 job needed.
+- GitHub Actions was evaluated and rejected as the primary scheduler: its
+  free-minutes tier for a private repo (2,000 min/month) is smaller than
+  what a 15-minute cadence actually needs (~2,880 runs/month), and
+  execution has been unreliable for this project in practice.
+
+**What's implemented and verified so far, without needing any cloud
+account access:**
+- `ragra/adapters/telegram_notify.py` - a direct Telegram Bot API
+  notification path with zero dependency on Hermes, its gateway, or any
+  local executable (Hermes' own `hermes send` shells out to a Windows
+  binary reading local session files, which a remote worker cannot use for
+  WhatsApp specifically). This is additive, not a replacement - the
+  existing Hermes path is unchanged and still used locally. Confirmed live
+  against Telegram's real API: the HTTP mechanics work correctly and
+  errors are reported without ever leaking the bot token; the specific
+  chat id must still be independently confirmed by the account owner
+  (Hermes' own cached value did not resolve directly via a raw Bot API
+  call) before a real message will deliver.
+
+**Explicitly not done yet, and why:** actual Cloud Run/Scheduler
+deployment needs three things this environment doesn't have: the `gcloud`
+CLI (not installed), a working local Docker daemon (Docker Desktop
+installed but not running, needed to build/verify the container image
+locally first), and billing enabled on the Google Cloud project (a
+financial/account action only the account owner can take). Rather than
+fake a deployment, this was left as a clearly-scoped next milestone - see
+Planned Roadmap.
+
 ## Current Verification
 
-Last verified **2026-08-25**, directly from the running system (not
+Last verified **2026-08-26**, directly from the running system (not
 estimated):
 
-- **108/108 tests passing**
+- **186/186 tests passing**
 - **8** Classroom courses synced
-- **168** persisted tasks
-- **15** Calendar events (note: this was 17 earlier in the same session;
-  the count changed as task states changed during dashboard testing, e.g.
-  completions removing their linked event - 15 is the current, freshly
-  re-queried number, not the earlier one)
-- **53** reminder records
-- **15** tasks currently in `MISSED` status, shown on the dashboard via a
+- **175** persisted tasks
+- **18** Calendar events
+- **56** reminder records
+- **18** tasks currently in `MISSED` status, shown on the dashboard via a
   capped preview plus a full `/missed` page
+- **13** FAST timetable events, verified idempotent across two consecutive
+  real syncs (0 new/0 updated on the second run)
 - SQLite running in **WAL** mode (confirmed via `PRAGMA journal_mode`)
 - Real WhatsApp test notification delivered successfully (see above)
-- Windows scheduled task `Ragra Tick` confirmed running every 15 minutes
+- Windows scheduled task `Ragra Tick` confirmed running every 15 minutes,
+  hidden, allowed on battery, with no duplicate/overlapping runs
 - Classroom and Calendar OAuth credentials confirmed to persist and refresh
   silently, with no browser interaction, across repeated `tick` runs
+- Structured tick-session diagnostics (start/end/duration/per-stage
+  result/errors) recorded per tick with an automatic 48-hour retention
+  purge, verified to never touch application data
 
 ## Architecture
 
@@ -168,9 +238,12 @@ text for `ragra plan` / `ragra brief --ai` to print.
 
 Verified against the actual code, not assumed:
 
-- **FAST timetable/class schedule** - not implemented. `timetable_events`
-  exists as an empty table in the schema; no sync code populates it, no
-  class reminders exist.
+- **Remote/always-on execution** - investigated and designed, not deployed
+  (see "Remote Execution" above). Ragra still stops entirely when the
+  laptop is off.
+- **Class-aware reminders** - not implemented. The timetable is synced and
+  persisted, but nothing yet reasons about "class starting soon" or
+  cross-references it against task deadlines.
 - **Task detail pages** - implemented, but basic: title, course, both
   deadlines, status, description (if Classroom provided one), a link back
   to the Classroom post (if present), reminder state, and history. No
@@ -210,21 +283,29 @@ Verified against the actual code, not assumed:
 ## Planned Roadmap
 
 ### P0 (before relying on Ragra daily again)
-- Nothing new identified as of this checkpoint beyond what was already
-  fixed this session (WAL, bounded retry, health alerting, missed-task
-  wiring, notification-config clarity - all done). Re-verify these are
-  still true before resuming heavy use, since real-world time will have
-  passed.
+1. **Deploy the Cloud Run Jobs + Cloud Scheduler remote execution
+   path** - the actual laptop-off fix. Concrete blockers to clear first:
+   install/authenticate the `gcloud` CLI, start Docker Desktop (needed to
+   build/verify the container image locally before deploying), and enable
+   billing on the Google Cloud project. Then: package `ragra tick` behind
+   a thin Cloud-Storage download/upload wrapper around the existing SQLite
+   file (no rewrite of `ragra/db/repo.py`), store the 4 existing
+   credentials plus the Telegram bot token in Secret Manager, wire one
+   Cloud Scheduler job, and validate real idempotent execution with the
+   Windows scheduled task paused (to rule out a dual-writer conflict while
+   this is unproven).
+2. Confirm the correct Telegram chat id for `RAGRA_TELEGRAM_CHAT_ID`
+   (Hermes' own cached value did not resolve via a raw Bot API call) and
+   send one real end-to-end test message through the new adapter.
 
 ### P1 (core academic-manager features)
-1. FAST timetable/class schedule integration
-2. Class-aware reminders (built on the timetable once it exists)
-3. Richer task detail views (attachments, materials list)
-4. Snooze/cancel workflow on the dashboard
-5. Automatic morning brief delivery (send `ragra brief` on a schedule)
-6. Notification fallback channel
-7. Course-code matching (wire in Hermes' registration/matching data)
-8. A minimal schema migration mechanism, before the next schema change
+1. Class-aware reminders (built on the FAST timetable, now that it syncs)
+2. Richer task detail views (attachments, materials list)
+3. Snooze/cancel workflow on the dashboard
+4. Automatic morning brief delivery (send `ragra brief` on a schedule)
+5. Notification fallback channel
+6. Course-code matching (wire in Hermes' registration/matching data)
+7. A minimal schema migration mechanism, before the next schema change
 
 ### P2 (future intelligence/polish)
 1. Improved deadline-risk reasoning (structured, not just prose)

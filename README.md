@@ -35,24 +35,19 @@ are never committed.
   task that runs Ragra every 15 minutes
 - `docs/` — product/domain/architecture context and the project status
   handoff document
-- `.claude/` — Claude Code project configuration (operating rules, secret-
-  protection hooks) used during development of this project
+- `.claude/` — project rules and secret-scanning hooks used by this repo's
+  local development tooling
 
-## Development configuration
-
-This repository was developed with Claude Code, and `.claude/` contains the
-operating rules and hooks used during that process:
+## Repository conventions and safety tooling
 
 - `CLAUDE.md` / `.claude/rules/` — project operating rules (domain,
   security, testing)
-- `.claude/hooks/protect-secrets.py` — a `PreToolUse` guard that blocks
-  writing real secret-shaped material or writing directly into a known
-  credential file
+- `.claude/hooks/protect-secrets.py` — a guard that blocks writing
+  real secret-shaped material or writing directly into a known credential
+  file
 - `.claude/hooks/scan-staged-secrets.py` — a staged-diff secret scanner
 - `.claude/install-git-secret-hook.ps1` — optional local pre-commit
   installer for the scanner above
 
 These hooks are a safety net, not a substitute for `.gitignore` and
-least-privilege credential handling. If you're resuming this project,
-re-check that your Claude Code version still accepts the hook syntax
-before relying on them.
+least-privilege credential handling.
