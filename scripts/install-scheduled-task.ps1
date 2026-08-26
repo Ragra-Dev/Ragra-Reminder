@@ -71,20 +71,30 @@ $triggerLogon = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
 # (interactive-token based) - confirmed to register successfully - which
 # means the task runs while the user is logged on, which the existing
 # AtLogOn trigger already accounts for.
+# -Hidden: python.exe is a console-subsystem executable, so without this,
+# Task Scheduler can surface a visible console window for it during a
+# normal run (most noticeable since this task's principal is
+# logon-session-based, not a windowless batch/service session - see the
+# principal note above). Hidden only affects whether Task Scheduler shows
+# that window; it does not touch stdout/stderr or the process's own
+# logging in any way - `ragra tick` still writes the same detailed log
+# file, and a manually-run `ragra tick` in an open terminal still shows
+# live output exactly as before.
 $settings = New-ScheduledTaskSettingsSet `
     -MultipleInstances IgnoreNew `
     -StartWhenAvailable `
     -RestartCount 3 `
     -RestartInterval (New-TimeSpan -Minutes 5) `
     -ExecutionTimeLimit (New-TimeSpan -Minutes 10) `
-    -DontStopOnIdleEnd
+    -DontStopOnIdleEnd `
+    -Hidden
 
 Register-ScheduledTask `
     -TaskName $TaskName `
     -Action $action `
     -Trigger @($triggerRecurring, $triggerLogon) `
     -Settings $settings `
-    -Description "Runs 'ragra tick' (Classroom sync, Calendar sync, reminder dispatch) every 15 minutes." `
+    -Description "Runs 'ragra tick' (Classroom sync, Calendar sync, reminder dispatch, FAST timetable sync) every 15 minutes." `
     -Force | Out-Null
 
 Write-Host "Installed scheduled task '$TaskName' - runs every 15 minutes, and at logon."
