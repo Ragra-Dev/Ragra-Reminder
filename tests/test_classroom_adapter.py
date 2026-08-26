@@ -6,6 +6,7 @@ obviously-fake token files.
 """
 
 import json
+import logging
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -100,6 +101,61 @@ def test_load_and_refresh_raises_cleanly_when_no_token_exists(tmp_path):
     )
     with pytest.raises(ClassroomAdapterError):
         _load_and_refresh(paths)
+
+
+class _RecordingHandler(logging.Handler):
+    def __init__(self):
+        super().__init__()
+        self.records: list[logging.LogRecord] = []
+
+    def emit(self, record):
+        self.records.append(record)
+
+
+@pytest.fixture
+def _google_credentials_logger():
+    """Importing ragra.adapters.classroom (already done at module import
+    time above) registers the scope-warning filter on this shared,
+    third-party logger once per process - these tests attach their own
+    handler to observe what actually gets through it."""
+    logger = logging.getLogger("google.oauth2.credentials")
+    handler = _RecordingHandler()
+    logger.addHandler(handler)
+    previous_level = logger.level
+    logger.setLevel(logging.DEBUG)
+    yield logger, handler
+    logger.removeHandler(handler)
+    logger.setLevel(previous_level)
+
+
+def test_known_benign_classroom_scope_refresh_warning_is_suppressed(_google_credentials_logger):
+    logger, handler = _google_credentials_logger
+    logger.warning(
+        "Not all requested scopes were granted by the authorization server, "
+        "missing scopes https://www.googleapis.com/auth/classroom.coursework.me.readonly."
+    )
+    assert handler.records == []
+
+
+def test_a_different_scope_warning_on_the_same_logger_still_surfaces(_google_credentials_logger):
+    # Defense against over-broad suppression: a genuinely different missing
+    # scope (e.g. Calendar's) must never be silently dropped just because it
+    # shares the same logger and the same generic message prefix.
+    logger, handler = _google_credentials_logger
+    logger.warning(
+        "Not all requested scopes were granted by the authorization server, "
+        "missing scopes https://www.googleapis.com/auth/calendar.events."
+    )
+    assert len(handler.records) == 1
+    assert "calendar.events" in handler.records[0].getMessage()
+
+
+def test_an_unrelated_error_on_the_same_logger_still_surfaces(_google_credentials_logger):
+    # A genuine, real auth failure must never be silently dropped.
+    logger, handler = _google_credentials_logger
+    logger.error("Some completely different real auth error.")
+    assert len(handler.records) == 1
+    assert handler.records[0].levelno == logging.ERROR
 
 
 def test_load_and_refresh_raises_cleanly_on_unrefreshable_expired_credential(tmp_path):

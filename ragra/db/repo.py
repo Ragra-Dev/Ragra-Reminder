@@ -53,6 +53,20 @@ def upsert_course(
     return row["id"]
 
 
+def update_course_state_if_known(conn: sqlite3.Connection, *, external_id: str, state: str) -> None:
+    """Keep a previously-synced course's stored state accurate even after
+    Ragra stops actively syncing it (e.g. it goes ARCHIVED at the source and
+    the sync loop stops discovering new items for it). Update-only - never
+    creates a course row, since a course Ragra has never held data for is
+    simply irrelevant. This is what lets due_pending_reminders exclude tasks
+    tied to a since-archived course without deleting any of their history."""
+    conn.execute(
+        "UPDATE courses SET state = ?, updated_at = ? WHERE external_id = ?",
+        (state, now_iso(), external_id),
+    )
+    conn.commit()
+
+
 # ---------------------------------------------------------------------------
 # Tasks
 # ---------------------------------------------------------------------------
@@ -217,7 +231,13 @@ def mark_overdue_tasks_as_missed(conn: sqlite3.Connection, *, now: str) -> list[
     completed, cancelled, or already missed transitions to MISSED. Excludes
     already-MISSED tasks explicitly (not just relying on mark_missed's own
     guard) so repeated calls - every sync/tick - never re-touch missed_at or
-    append duplicate history rows for a task already marked missed."""
+    append duplicate history rows for a task already marked missed.
+
+    Also cancels the task's own PENDING reminders at the same call site -
+    the same pairing already used for completion (see web/app.py) and
+    source-side cancellation (see cancel_tasks_missing_from_source) - so a
+    task that only just became overdue this tick can never fire a
+    now-nonsensical "due soon"/"due in 1 hour" reminder after the fact."""
     rows = conn.execute(
         """SELECT id FROM tasks
            WHERE actual_deadline IS NOT NULL AND actual_deadline < ?
@@ -227,6 +247,7 @@ def mark_overdue_tasks_as_missed(conn: sqlite3.Connection, *, now: str) -> list[
     missed_task_ids = []
     for row in rows:
         mark_missed(conn, task_id=row["id"])
+        cancel_pending_reminders(conn, task_id=row["id"])
         missed_task_ids.append(row["id"])
     return missed_task_ids
 
@@ -418,6 +439,33 @@ def cancel_backlog_reminders_for_already_overdue_tasks(conn: sqlite3.Connection)
     return total_cancelled
 
 
+def cancel_stray_reminders_for_terminal_tasks(conn: sqlite3.Connection) -> int:
+    """Safety net, not a one-off migration (same style as
+    cancel_backlog_reminders_for_already_overdue_tasks above): a task that is
+    COMPLETED, CANCELLED, or MISSED must never carry a PENDING reminder - the
+    normal state-transition call sites are supposed to cancel it already
+    (see mark_overdue_tasks_as_missed, cancel_task, and web/app.py's complete
+    handler), but this self-heals anything written before that pairing
+    existed at a given call site, or by any path this doesn't yet cover.
+    Idempotent and safe to run on every sync. Only cancels PENDING rows -
+    SENT history is never touched or deleted. Returns the number of reminder
+    rows actually cancelled."""
+    rows = conn.execute(
+        """SELECT reminders.id FROM reminders
+           JOIN tasks ON tasks.id = reminders.task_id
+           WHERE reminders.status = 'PENDING'
+           AND tasks.status IN ('COMPLETED', 'CANCELLED', 'MISSED')"""
+    ).fetchall()
+    if not rows:
+        return 0
+    conn.executemany(
+        "UPDATE reminders SET status = 'CANCELLED' WHERE id = ?",
+        [(row["id"],) for row in rows],
+    )
+    conn.commit()
+    return len(rows)
+
+
 def insert_reminder_if_absent(
     conn: sqlite3.Connection,
     *,
@@ -439,7 +487,15 @@ def insert_reminder_if_absent(
 
 def due_pending_reminders(conn: sqlite3.Connection, *, now: str) -> list[sqlite3.Row]:
     """PENDING reminders due to fire, including ones currently waiting out a
-    bounded retry backoff (excluded until next_retry_at passes)."""
+    bounded retry backoff (excluded until next_retry_at passes).
+
+    Two eligibility guards, both defense-in-depth on top of the state
+    transitions that are supposed to cancel a reminder proactively: a task
+    already MISSED must never fire a "due soon" reminder for a deadline
+    that's already passed (mirrors the existing COMPLETED/CANCELLED
+    exclusion), and a task whose course is no longer ACTIVE/PROVISIONED
+    (archived at the source) must never generate a normal reminder either -
+    only currently active/enrolled courses are eligible."""
     return conn.execute(
         """SELECT reminders.*, tasks.title AS task_title, tasks.status AS task_status,
                   COALESCE(courses.course_code, courses.name) AS course_code
@@ -448,7 +504,8 @@ def due_pending_reminders(conn: sqlite3.Connection, *, now: str) -> list[sqlite3
            JOIN courses ON courses.id = tasks.course_id
            WHERE reminders.status = 'PENDING' AND reminders.scheduled_for <= ?
            AND (reminders.next_retry_at IS NULL OR reminders.next_retry_at <= ?)
-           AND tasks.status NOT IN ('COMPLETED', 'CANCELLED')
+           AND tasks.status NOT IN ('COMPLETED', 'CANCELLED', 'MISSED')
+           AND courses.state IN ('ACTIVE', 'PROVISIONED')
            ORDER BY reminders.scheduled_for ASC""",
         (now, now),
     ).fetchall()

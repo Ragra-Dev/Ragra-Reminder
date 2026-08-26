@@ -39,6 +39,36 @@ def test_overdue_task_transitions_to_missed(conn):
     assert len(history) == 1
 
 
+def test_overdue_task_transition_cancels_its_pending_reminders(conn):
+    # A task that only just became overdue this tick may still carry a
+    # PENDING pre-deadline reminder (e.g. a FINAL_1H reminder that never
+    # got a chance to fire) - transitioning it to MISSED must cancel that
+    # reminder too, so it never fires a now-nonsensical "due in 1 hour"
+    # notification for a deadline that has already passed.
+    course_id = _make_course(conn)
+    past = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+    result = repo.upsert_task_from_source(
+        conn, course_id=course_id, source_type="coursework", external_id="cw-stray",
+        title="Just Missed It", description=None, link=None, kind="ACTIONABLE",
+        actual_deadline=past, source_published_at=repo.now_iso(), source_updated_at=repo.now_iso(),
+    )
+    repo.insert_reminder_if_absent(
+        conn, task_id=result.task_id, reminder_type="FINAL_1H",
+        scheduled_for=past, idempotency_key=f"{result.task_id}:FINAL_1H:v1",
+    )
+    pending_before = conn.execute(
+        "SELECT COUNT(*) AS c FROM reminders WHERE task_id = ? AND status = 'PENDING'", (result.task_id,)
+    ).fetchone()["c"]
+    assert pending_before == 1
+
+    repo.mark_overdue_tasks_as_missed(conn, now=datetime.now(timezone.utc).isoformat())
+
+    reminder = conn.execute(
+        "SELECT status FROM reminders WHERE task_id = ? AND reminder_type = 'FINAL_1H'", (result.task_id,)
+    ).fetchone()
+    assert reminder["status"] == "CANCELLED"
+
+
 def test_completed_task_is_not_marked_missed(conn):
     course_id = _make_course(conn)
     past = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()
@@ -186,3 +216,56 @@ def test_wired_into_real_sync_flow(conn):
 
     task = conn.execute("SELECT status FROM tasks WHERE external_id = 'cw-real'").fetchone()
     assert task["status"] == "MISSED"
+
+
+def test_cancel_stray_reminders_for_terminal_tasks_cleans_up_each_terminal_status(conn):
+    """Safety net (same style as cancel_backlog_reminders_for_already_overdue_tasks):
+    a task that is already COMPLETED, CANCELLED, or MISSED must never carry
+    a PENDING reminder, regardless of how it got left behind. Idempotent,
+    only ever cancels PENDING rows, and never touches a legitimately-current
+    task's reminder."""
+    course_id = _make_course(conn)
+    now = datetime.now(timezone.utc)
+
+    def _task_with_pending_reminder(external_id, title):
+        result = repo.upsert_task_from_source(
+            conn, course_id=course_id, source_type="coursework", external_id=external_id,
+            title=title, description=None, link=None, kind="ACTIONABLE",
+            actual_deadline=(now + timedelta(days=5)).isoformat(),
+            source_published_at=repo.now_iso(), source_updated_at=repo.now_iso(),
+        )
+        repo.insert_reminder_if_absent(
+            conn, task_id=result.task_id, reminder_type="T_MINUS_1D",
+            scheduled_for=(now + timedelta(days=4)).isoformat(),
+            idempotency_key=f"{result.task_id}:T_MINUS_1D:v1",
+        )
+        return result.task_id
+
+    completed_id = _task_with_pending_reminder("cw-completed", "Will Complete")
+    cancelled_id = _task_with_pending_reminder("cw-cancelled", "Will Cancel")
+    missed_id = _task_with_pending_reminder("cw-missed", "Will Miss")
+    current_id = _task_with_pending_reminder("cw-current", "Still Current")
+
+    # Simulate stray PENDING rows left behind by data written before a given
+    # call site paired itself with cancel_pending_reminders - the state
+    # transition happens WITHOUT also cancelling the reminder here.
+    conn.execute("UPDATE tasks SET status = 'COMPLETED' WHERE id = ?", (completed_id,))
+    conn.execute("UPDATE tasks SET status = 'CANCELLED' WHERE id = ?", (cancelled_id,))
+    conn.execute("UPDATE tasks SET status = 'MISSED' WHERE id = ?", (missed_id,))
+    conn.commit()
+
+    cancelled_count = repo.cancel_stray_reminders_for_terminal_tasks(conn)
+    assert cancelled_count == 3
+
+    def _status(task_id):
+        return conn.execute(
+            "SELECT status FROM reminders WHERE task_id = ?", (task_id,)
+        ).fetchone()["status"]
+
+    assert _status(completed_id) == "CANCELLED"
+    assert _status(cancelled_id) == "CANCELLED"
+    assert _status(missed_id) == "CANCELLED"
+    assert _status(current_id) == "PENDING"  # legitimately-current task untouched
+
+    # Idempotent: nothing left to cancel on a second pass.
+    assert repo.cancel_stray_reminders_for_terminal_tasks(conn) == 0
