@@ -1,0 +1,413 @@
+# Ragra Project Context
+
+This is a clean, portable project handoff document — not a raw chat
+transcript. It is written so another developer, or another Claude Code
+session with zero prior context, can read it once and understand what
+Ragra is, why it's built the way it is, and what to do next. It merges
+history going back to Ragra's original founding session with everything
+decided and built since.
+
+## Project Purpose
+
+Ragra Personal Edition is a personal academic operating system, initially
+built for one user: Hashim (FAST-NUCES Islamabad). It is not a SaaS product
+yet, and was deliberately not over-engineered as one from day one.
+
+Purpose:
+- Reduce the amount of academic information Hashim has to manually track.
+- Automatically collect academic information from its real sources.
+- Convert that information into tasks, deadlines, and a personal plan.
+- Synchronize timetable/calendar so schedule and deadlines live in one place.
+- Provide reminders and one reliable dashboard for "what do I need to do."
+
+Founding product rule (from the original brief, still the test every
+feature is measured against): "Does this reduce the amount of academic
+information Hashim has to manually track? If yes, build it. If no,
+question it." Optimize for speed, reliability, simplicity, usefulness, low
+cost, low maintenance, understandable code — not for thousands of users,
+multi-tenancy, billing, enterprise infrastructure, or distributed systems,
+until a concrete need for that actually appears.
+
+Integrations:
+- FAST timetable (public spreadsheet source, no university API)
+- Google Classroom (read-only, authoritative for academic deadlines)
+- Google Calendar (Ragra-owned events, separate narrow credential)
+- Deterministic reminder engine
+- Notification providers (pluggable; Hermes is one optional provider)
+
+## Current Architecture
+
+```
+Google Classroom ─┐
+FAST Timetable   ─┼─→ Academic relevance layer* ─→ Reminder engine ─→ Notification providers
+Google Calendar  ─┘
+```
+
+\* The academic relevance layer (course/section/content eligibility
+filtering) is architecturally planned and has an approved implementation
+plan (see "Planned Next Milestones" below) but is **not yet implemented**.
+Today, course-level eligibility exists (active/enrolled courses only, via
+Classroom's own `courseState`), but there is no section-aware content
+filtering yet.
+
+Ragra core must work independently of every optional layer:
+- **Core** (no dependency on Hermes, AI, or any specific notification
+  provider, must work with none of them installed): Classroom sync, FAST
+  timetable sync, Calendar sync, the deterministic reminder engine.
+- **Optional layers**: the AI advisor (`ragra/ai/advisor.py`, via
+  `ragra/adapters/ai.py`) and Hermes (`ragra/adapters/notify.py`'s
+  `HermesProvider`). Both are invoked only through explicit entrypoints or
+  explicit configuration, never automatically required by `ragra tick`.
+
+`ragra tick` (the unattended entrypoint, run every 15 minutes via Windows
+Task Scheduler) runs only core stages: Classroom sync, Calendar sync,
+reminder dispatch, FAST timetable sync — each isolated so one stage's
+failure never blocks the others.
+
+## Major Architectural Decisions
+
+### Hermes
+
+- Hermes is NOT the foundation of Ragra. Core Ragra (Classroom/FAST/
+  Calendar sync, the reminder engine) must work with Hermes completely
+  absent — this is enforced by actual tests (`tests/test_ai_isolation.py`
+  and the notification-provider tests), not just documentation.
+- **Historical note, important for continuity**: this wasn't true from day
+  one. Ragra originally imported `hermes_cli.classroom.{oauth,
+  google_client}` directly (a deliberate, reasoned reuse of Hermes' already
+  clean, already-decoupled-from-Hermes'-Kanban-DB Classroom OAuth code, to
+  avoid reimplementing Google OAuth from scratch). This was later fully
+  removed — Ragra now has its own independent `ragra/adapters/classroom.py`
+  with zero Hermes import, so a broken/upgraded/uninstalled Hermes can
+  never affect Classroom sync. The refactor commit is literally titled
+  "remove Hermes dependency from core Classroom integration."
+- Hermes is optional and personal-only. Hashim's own installation may use
+  it (for WhatsApp delivery via `hermes send`, and for AI completions via
+  `hermes -z "<prompt>"`). Future users should never require it.
+- Hermes can provide optional AI assistance (summarization, explanation,
+  prioritization — advisory only, never authoritative) and optional
+  notification delivery (one interchangeable `NotificationProvider`, not a
+  privileged one).
+- The repository may contain the Hermes provider adapter/interface — it
+  demonstrates the pluggable-provider architecture and lets advanced users
+  who already run Hermes connect it. What must never happen: pushing
+  Hashim's personal Hermes configuration, WhatsApp sessions, tokens, or
+  local machine paths. Verified this session: `.env` is untracked and
+  gitignored, `.gitignore` already covers `*token*.json`,
+  `*credential*.json`, `*client_secret*.json`, `.env*` variants, and a
+  repo-wide search found zero real local Hermes paths anywhere in tracked
+  files.
+
+### Notification Architecture
+
+`ragra/adapters/notify.py` defines a `NotificationProvider` protocol:
+`send(message: str) -> NotifyResult`. This is the *entire* contract
+`ragra/reminders/dispatch.py` and `ragra/health.py` depend on — neither
+module imports or knows about Hermes, WhatsApp, Web Push, or email
+specifically. Every configured provider is attempted per send (deliberate
+redundancy: a message is considered delivered if at least one provider
+succeeds), so one channel breaking doesn't silently take down all
+notification delivery, including the "something is wrong" self-alert
+channel.
+
+`ragra/cli.py`'s `_build_providers()` is the one place a concrete provider
+gets constructed. An empty provider list is a normal, fully-supported
+state — reminders simply stay pending until one is configured.
+
+Providers:
+- **Hermes** — the current, only implemented provider. Optional,
+  advanced/personal integration, for installations that already run
+  Hermes. Never required.
+- **Web Push** — planned, future main user-facing provider. Not
+  implemented yet.
+- **Email** — planned, future provider. Not implemented yet.
+
+**Telegram was built, verified working (real HTTP calls against Telegram's
+Bot API succeeded), and then deliberately removed from the product
+direction** in favor of Web Push/email as the intended next providers.
+Because the interface was already provider-neutral, removing it required
+no change to `dispatch.py`/`health.py` — only deleting the adapter file and
+its config fields. Do not reintroduce it without being explicitly asked.
+
+Do not make WhatsApp/Hermes mandatory for any future user.
+
+### Google Classroom
+
+- Read-only integration by construction: `ClassroomGoogleClient` has zero
+  insert/update/delete/patch method for any Classroom resource.
+- Never modify Classroom. Never enroll/unenroll users — structurally true,
+  not just a rule, since no such method exists to call.
+- Only process currently relevant, active/enrolled courses. Course
+  eligibility today: `courseState` allow-list (only `ACTIVE`/`PROVISIONED`
+  proceed — deliberately an allow-list, not a deny-list, so it correctly
+  excludes `ARCHIVED`/`DECLINED`/`SUSPENDED`/anything else automatically).
+  Google's own OAuth/API access already guarantees a student's
+  `courses.list()` only returns courses they're actually enrolled in.
+- Investigated directly (this session) against the official Classroom API
+  v1 discovery document: there is **no "hidden course" state** exposed by
+  the API at all. The student-facing "hide this class" toggle in
+  Classroom's own UI is a client-side-only preference Google never returns
+  through the public API. The existing allow-list design already handles
+  this correctly (excludes anything it doesn't explicitly recognize) with
+  zero code needed specifically for "hidden."
+- Deterministic filtering preferred over AI or fragile text parsing
+  wherever real structured data exists. Where it doesn't (see "Academic
+  relevance engine" below), the fallback is deterministic regex/keyword
+  matching that **fails open** (never suppresses on uncertainty) — never an
+  AI judgment call.
+- AI must not control academic decisions: enrollment, course relevance,
+  section matching, and official deadlines are all database/rule-based,
+  never AI-decided. This is enforced today by the isolation between
+  `ragra/ai/` and every core sync/reminder module (verified by tests that
+  simulate the AI package being entirely unavailable and confirm core
+  behavior is unaffected).
+
+**Correction to an early assumption, discovered this session**: the
+original architecture doc claimed "FAST-NUCES already separates sections
+into distinct Classroom courses... so no NLP/LLM parsing is needed for
+section detection." Real data disproves this for some courses — e.g.
+`DLD LAB FALL'26` bundles 9 sections into one Classroom course, with
+section identity communicated only via free text in each item's title
+("Lab 02 Section C", "Sec G", etc.). Investigated directly: Classroom's
+`assigneeMode`/`individualStudentsOptions` fields (which *would* have
+solved this deterministically) are absent — defaulted to `ALL_STUDENTS` —
+on every real item checked, meaning teachers aren't using Classroom's
+native per-student assignment feature for section differentiation. This is
+why the Academic Relevance Engine milestone (see below) needs a
+free-text-based Tier 2, not just database-driven Tier 1 matching. See
+`docs/ARCHITECTURE.md`'s "Stack decision" section, which still has the
+stale claim as of this writing — needs correcting when that milestone is
+actually implemented.
+
+## Current Implementation State
+
+**Completed:**
+- SQLite database foundation (WAL mode, idempotent schema application via
+  `ragra/db/connection.py`, targeted column migrations for pre-existing
+  DBs — no general migration framework yet).
+- Deterministic reminder engine (`ragra/reminders/engine.py`) — compresses
+  cadence for short-deadline tasks, never generates reminders for a task
+  already overdue when first discovered (historical-backlog suppression).
+- Reminder dispatch (`ragra/reminders/dispatch.py`) — idempotent, bounded
+  retry (3 attempts, 15-minute backoff), terminal `FAILED` state, now
+  provider-neutral with multi-provider fan-out.
+- Dashboard foundation (FastAPI + Jinja2, single-user, no auth,
+  localhost-only) — today view, missed-tasks view (capped preview + full
+  page), task detail view, mark-complete, set-personal-deadline.
+- Classroom sync foundation — idempotent, stable-ID deduplication, deadline
+  change detection (recomputes reminders, does not yet send an explicit
+  "deadline changed" notification — see Planned Next Milestones), course
+  archival tracking (a course that goes non-active gets its stored state
+  kept accurate, not left stale forever).
+- Notification adapter foundation — `NotificationProvider` protocol,
+  `HermesProvider`, multi-provider redundant fan-out, self-alerting
+  (`ragra/health.py`, 3-consecutive-failure threshold, one alert per
+  streak).
+- Tests passing: **211/211** as of the last commit this session
+  (`827900b`).
+- OAuth investigation results: `classroom.coursework.me.readonly` was
+  originally not appearing in the Google Cloud Console's Data Access scope
+  picker despite extensive investigation (a Vercel-hosted OAuth branding
+  site was built specifically to try to resolve it — see
+  `docs/PROJECT_STATUS.md`'s "Vercel OAuth branding site" note). This is
+  now resolved: the scope is genuinely granted (confirmed via live
+  `courses.courseWork.list` calls returning real data), and manually
+  reverified this session across repeated `sync`/`tick` runs with no
+  re-authentication required. A separate, cosmetic issue was found and
+  fixed this session: Google's OAuth refresh-grant response doesn't always
+  echo that scope back in its `scope` field (a quirk of the token-refresh
+  response, not a real permission gap), which produced a harmless but
+  recurring library warning on every silent token refresh. Now suppressed
+  at its exact source via a logging filter scoped to that one message only
+  — any other/real scope or auth problem still surfaces normally.
+- Hermes integration boundaries: fully isolated. `ragra/adapters/ai.py` (a
+  thin `hermes -z "<prompt>"` subprocess wrapper) and
+  `ragra/adapters/notify.py`'s `HermesProvider` are the only two places
+  Hermes is ever invoked, both optional, both gated on explicit config,
+  neither imported by core sync/reminder modules.
+
+**Mentioned for continuity:**
+- Hermes' Classroom OAuth code (`hermes_cli/classroom/oauth.py`,
+  `google_client.py`) is real, stable, and was safely reusable early on —
+  it has since been fully replaced by Ragra's own independent adapter, but
+  the original reuse was a sound decision at the time, not a mistake.
+- Calendar deliberately does **not** share Hermes' broader Google Workspace
+  credential (which exists separately in Hermes, bundling
+  gmail.send/gmail.modify/full-calendar/full-drive/contacts/sheets/docs
+  scopes for its general agent tool loop) — that credential is broad,
+  AI-agent-controlled, and entangling Ragra's academic calendar with it
+  would violate least-privilege and mix trust boundaries. Calendar instead
+  gets its own separate, narrow `calendar.events`-only credential, reusing
+  only the same underlying OAuth *client registration* (not a new Google
+  Cloud app) that Classroom already uses.
+- Avoid broad Google Workspace permissions anywhere in Ragra — every scope
+  requested must be justified by an actual API call Ragra makes.
+
+## Product Direction
+
+**Personal Ragra first:**
+Hashim's installation = Ragra core + personal configuration (FAST
+enrollment, Classroom relevance config, notify target) + optional Hermes
+(both for notification delivery and optional AI assistance) + local
+Windows Task Scheduler execution. This is the priority right now — no
+multi-user, no cloud deployment, no public launch until personal Ragra is
+proven reliable over real, sustained daily use.
+
+**Future users:**
+Same core engine. Different configuration only — every personal value
+(enrollment, relevance config, notification provider choice) is already
+designed as an injected parameter with a personal default (mirroring
+`ragra/timetable/enrollment.py`'s proven `MY_ENROLLMENT` pattern), not a
+hardcoded import inside core logic. This is what lets a future multi-user
+version become "load config per-user" instead of a core rewrite. No Hermes
+requirement for future users — the `NotificationProvider` abstraction
+exists specifically so Web Push/email can be a normal user's default with
+zero core code change.
+
+## Planned Next Milestones
+
+Architecture and detailed implementation plans for these are already
+approved (this session) — implementation has not started yet.
+
+### 1. Google Classroom academic relevance engine
+
+- **Course relevance**: an opt-out exclude-list (`MY_EXCLUDED_COURSES`) for
+  enrolled-but-irrelevant Classroom spaces (e.g. a "Buddy Program" course)
+  — defaults to including everything, since Google's own enrollment-scoped
+  API access already guarantees course-level relevance in the normal case.
+- **Content relevance (the real complexity)**: Tier 1 course-level section
+  config (`MY_CLASSROOM_SECTIONS`, only for courses known to bundle
+  multiple sections) plus Tier 2 deterministic free-text pattern matching
+  ("Section C", "Sec G", "CS-C", "all sections"/"all batches" bypass
+  phrases) against title/description (topic-name matching is blocked for
+  now — `courses.topics.list` needs a scope Ragra doesn't currently have).
+- **Safety rule, non-negotiable**: if uncertain, never hide the assignment.
+  Only a confident, unambiguous match to a *different* section suppresses
+  a *notification* — the task row itself is never hidden from the
+  dashboard/data model either way. Prefer an extra notification over a
+  silently missed one.
+- Database changes needed are minimal: `tasks.content_relevance` (TEXT,
+  default `RELEVANT`), `tasks.content_relevance_detail` (nullable, human-
+  readable trace), `courses.relevant` (INTEGER, default 1). No new tables,
+  no user_id, no premature multi-user schema.
+- FAST-specific handling: real observed title patterns include
+  inconsistent phrasing within a single course/teacher ("Section C" vs
+  "Sec G" vs "(Sec G)") and multi-section mentions ("Section C & D" — a
+  real, already-synced example, task id 177). The matcher must handle
+  both.
+
+### 2. NotificationProvider abstraction
+
+**Already implemented this session** (commit `827900b`). Listed here for
+completeness since it was originally planned alongside the relevance
+engine: separates delivery from core logic via the protocol described
+above; Hermes is the only real provider today; Web Push and email are the
+planned next ones.
+
+### 3. Deadline model
+
+Two task types, both already partly anticipated in the schema:
+
+**Official Classroom tasks** (`source_type IN ('coursework', 'announcement',
+'material')`): teacher-controlled, read-only, `actual_deadline` is
+authoritative. Deadline changes are already detected
+(`_apply_upsert`'s `result.deadline_changed`); what's still missing is an
+*immediate* notification (a new `DEADLINE_CHANGED` reminder type,
+scheduled for "now" rather than a future offset) — today a deadline change
+only gets logged to the tick log, not proactively sent to the user.
+
+**Personal tasks** (`source_type = 'manual'`, already reserved in
+`schema.sql`'s own comment but never implemented): user-created, custom
+deadlines (stored in `personal_deadline`, never `actual_deadline` — keeps
+the actual/personal distinction from `.claude/rules/deadline-engine.md`
+intact), user can edit/reschedule/delete/complete, reuses existing
+`cancel_task`/`mark_completed`/`cancel_pending_reminders` functions. Never
+writes to Classroom — structurally guaranteed, since a manual task never
+touches `ClassroomGoogleClient` at all. Needs a sentinel "Personal"
+pseudo-course row (`courses.external_id = '__personal__'`) so
+`tasks.course_id NOT NULL` stays satisfied without a schema change or
+touching every existing `tasks JOIN courses` query.
+
+### 4. Announcement workflow
+
+**Without AI** (deterministic, always available): every `INFORMATIONAL`
+task gets the same three dashboard actions — Open (existing `link`),
+Create personal task (promotes `kind` from `INFORMATIONAL` to
+`ACTIONABLE`, reuses the existing personal-deadline route), Ignore
+(`status → 'ARCHIVED'`, already reserved in the schema, never implemented
+until this milestone). No "is this ambiguous" detector — uniform actions
+on everything, so there's no fragile heuristic to get wrong.
+
+**With Hermes** (optional, additive only): summarize, explain, suggest,
+prioritize — layered on top of the same three buttons. Hermes never
+auto-executes an action; it only ever proposes. The workflow's actual
+execution is 100% deterministic and human-triggered either way.
+
+## Deferred Features
+
+Explicitly not being built yet, and why: personal Ragra reliability comes
+first, and none of these are needed to get there.
+
+- Web Push implementation (planned provider, not yet built)
+- Email implementation (planned provider, not yet built)
+- WhatsApp Cloud API (Hermes already covers personal WhatsApp delivery;
+  this would be for a future non-Hermes multi-user path)
+- Multi-user deployment
+- PostgreSQL migration
+- Cloud deployment (Cloud Run Jobs + Cloud Scheduler was investigated in
+  detail — see `docs/PROJECT_STATUS.md`'s "Remote Execution" section — and
+  deliberately deferred until personal Ragra is proven reliable)
+- Public launch
+- Apple Calendar / ICS feed
+
+## Development Rules
+
+- Do not introduce Hermes as a required dependency, anywhere, for any
+  future user.
+- Do not rewrite stable architecture unnecessarily — inspect real data and
+  real code before assuming something needs to change (this caught the
+  stale "sections always separate into distinct courses" claim above).
+- Prefer deterministic rules before AI, everywhere a real structured
+  signal exists. Fall back to deterministic-but-imperfect (fail-open)
+  heuristics before ever reaching for AI to decide something authoritative.
+- AI should assist (summarize, explain, prioritize, suggest), not decide
+  (enrollment, relevance, deadlines, completion state).
+- Never push secrets, tokens, credentials, WhatsApp sessions, or personal
+  machine paths. `.env` stays untracked; `.gitignore` and the
+  `protect-secrets.py` hook are the enforcement mechanisms — verified, not
+  assumed, each time this matters.
+- Keep personal configurations (enrollment, relevance config, notify
+  target) as injected parameters with personal defaults, never hardcoded
+  imports inside core logic — this is what keeps a future multi-user
+  version a config swap, not a rewrite.
+- Inspect before changing architecture — real Classroom data, the real
+  schema, the real current code. Several corrections this session (the
+  section-separation claim, the OAuth scope warning's true cause, whether
+  "hidden courses" are even a real API concept) came directly from doing
+  this rather than assuming.
+- Test after changes. Run the smallest relevant test set after each
+  change, the full suite before declaring a milestone complete.
+
+## Current Status
+
+- **Tests**: 211/211 passing (`.venv\Scripts\python -m pytest`), as of
+  commit `827900b` ("refactor: introduce a provider-neutral notification
+  abstraction").
+- **Blockers**: none active. The one item flagged as worth resolving before
+  a multi-day soak test (Google OAuth consent-screen publishing status —
+  risk of 7-day refresh-token expiry if still in "Testing" mode) was
+  manually verified resolved this session (repeated real `sync`/`tick`
+  runs, no re-authentication required).
+- **Not yet proven**: a real due reminder has never fired through the full
+  reminder pipeline in production — only a standalone connectivity test
+  (bypassing the pipeline entirely) has been verified delivered to real
+  WhatsApp. This will happen naturally once real Classroom data has a
+  genuinely due, non-completed actionable item — don't force it with fake
+  data.
+- **Exact next action**: implement the Academic Relevance Engine (Planned
+  Next Milestones #1) — the investigation and detailed implementation plan
+  are already approved; start with the database changes described above,
+  following the existing `ragra/timetable/enrollment.py` pattern exactly.
+- **How to resume**: see `docs/PROJECT_STATUS.md` for exact commands
+  (`.venv\Scripts\activate`, `python -m pytest`, `python -m ragra.cli tick`,
+  `python -m ragra.cli serve`) and full current verification numbers.

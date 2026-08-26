@@ -15,6 +15,7 @@ dist/
 *.db-wal
 *.db-shm
 *.sqlite3
+CLAUDE.md
 data/
 logs/
 *.log
@@ -28,6 +29,13 @@ secrets/
 .pytest_cache/
 
 # Conversation/session exports - never source, may contain private context
-ragra-session.txt
 *-session.txt
 *.session.txt
+raw-chats/
+# ragra-session.txt is the exception: a curated, public project handoff
+# doc (not a raw export) - explicitly tracked despite matching the
+# wildcard above.
+!ragra-session.txt
+
+# Private developer diary - personal notes, never for the public repo
+ragra-dev-diary.txt
