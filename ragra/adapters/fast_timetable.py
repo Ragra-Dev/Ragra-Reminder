@@ -44,6 +44,16 @@ from ragra.timetable.normalize import WEEKDAYS, normalize_weekday_name, parse_co
 
 _TIME_RANGE_ONLY_PATTERN = re.compile(r"^\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}$")
 
+_API_KEY_QUERY_PARAM_PATTERN = re.compile(r"([?&]key=)[^&\s\"']+", re.IGNORECASE)
+
+
+def redact_api_key(message: str) -> str:
+    """The Sheets API client library's own errors sometimes echo the full
+    request URL, which includes the API key as a query parameter. Every
+    error message this adapter raises goes through this first, so the key
+    can never end up in a log line, a tick summary, or a test failure."""
+    return _API_KEY_QUERY_PARAM_PATTERN.sub(r"\1[REDACTED]", message)
+
 
 class FastTimetableAdapterError(RuntimeError):
     """Raised when the FAST timetable source cannot be read at all (missing
@@ -295,7 +305,9 @@ class FastTimetableClient:
                 .execute()
             )
         except Exception as exc:
-            raise FastTimetableAdapterError(f"Failed to read FAST spreadsheet metadata: {exc}") from exc
+            raise FastTimetableAdapterError(
+                f"Failed to read FAST spreadsheet metadata: {redact_api_key(str(exc))}"
+            ) from exc
 
         return [
             SheetInfo(title=sheet["properties"]["title"], sheet_id=sheet["properties"]["sheetId"])

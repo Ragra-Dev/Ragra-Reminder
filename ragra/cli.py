@@ -6,12 +6,14 @@ explicit `classroom-auth` / `calendar-auth` subcommands, and only when you
 run them yourself.
 
 `tick` is the one entrypoint meant to run unattended (Windows Task
-Scheduler): it runs Classroom sync, Calendar sync, and reminder dispatch in
-sequence, with each step isolated so a transient failure in one (e.g. a
-network blip talking to Google) never blocks the others, logs to a
-rotating file since nothing is watching stdout when it runs unattended, and
-tracks each step's health so a persisting failure eventually raises one
-notification instead of failing silently forever (see ragra/health.py).
+Scheduler): it runs Classroom sync, Calendar sync, reminder dispatch, and
+FAST timetable sync in sequence, with each step isolated so a transient
+failure in one (e.g. a network blip talking to Google) never blocks the
+others, logs to a rotating file since nothing is watching stdout when it
+runs unattended, and tracks each step's health so a persisting failure
+eventually raises one notification instead of failing silently forever
+(see ragra/health.py). FAST timetable sync is independent of every other
+step and of Hermes - it never requires the Hermes gateway to be running.
 """
 
 from __future__ import annotations
@@ -63,10 +65,9 @@ def cmd_classroom_auth(args: argparse.Namespace) -> int:
 
 
 def cmd_timetable_sync(args: argparse.Namespace) -> int:
-    """Manual, standalone invocation - deliberately NOT wired into `tick`
-    yet (see docs/PROJECT_STATUS.md): the timetable pipeline needs to prove
-    itself reliable against the real source first."""
-    from ragra.adapters.fast_timetable import FastTimetableAdapterError, FastTimetableClient
+    """Manual, standalone invocation for on-demand runs/troubleshooting -
+    `tick` also runs this same sync automatically every cycle."""
+    from ragra.adapters.fast_timetable import FastTimetableAdapterError, FastTimetableClient, redact_api_key
     from ragra.sync.timetable_sync import TimetableSyncError, sync_timetable
 
     config = load_config()
@@ -85,7 +86,7 @@ def cmd_timetable_sync(args: argparse.Namespace) -> int:
         try:
             summary = sync_timetable(conn, client, spreadsheet_id=config.fast_timetable_spreadsheet_id)
         except (TimetableSyncError, FastTimetableAdapterError) as exc:
-            print(f"Timetable sync failed - existing data left untouched: {exc}")
+            print(f"Timetable sync failed - existing data left untouched: {redact_api_key(str(exc))}")
             return 1
 
     print(
@@ -216,6 +217,41 @@ def _run_reminders_dispatch(conn, config: Config, log) -> tuple[int, str | None]
     return 0, None
 
 
+def _run_timetable_sync(conn, config: Config, log) -> tuple[int, str | None]:
+    if not config.fast_timetable_spreadsheet_id:
+        log("Timetable sync skipped - RAGRA_FAST_TIMETABLE_SPREADSHEET_ID not set. See .env.example.")
+        return 0, None
+
+    from ragra.adapters.fast_timetable import FastTimetableAdapterError, FastTimetableClient, redact_api_key
+    from ragra.sync.timetable_sync import TimetableSyncError, sync_timetable
+
+    client = FastTimetableClient(config.fast_timetable_spreadsheet_id, config.sheets_api_key)
+    try:
+        summary = sync_timetable(conn, client, spreadsheet_id=config.fast_timetable_spreadsheet_id)
+    except (TimetableSyncError, FastTimetableAdapterError) as exc:
+        # Defense in depth: the adapter already redacts the key at its own
+        # raise sites, but this also sanitizes here so nothing this
+        # function ever logs can carry it, regardless of where an
+        # exception's message originated.
+        safe_message = redact_api_key(str(exc))
+        log(f"Timetable sync failed - existing data left untouched: {safe_message}")
+        return 1, safe_message
+    except Exception as exc:  # noqa: BLE001 - a transient failure must not abort the tick
+        safe_message = redact_api_key(str(exc))
+        log(f"Timetable sync failed unexpectedly: {safe_message}")
+        return 1, safe_message
+
+    log(
+        f"Timetable sync: {summary.classes_found} class(es) found, "
+        f"{summary.classes_created} new, {summary.classes_updated} updated, "
+        f"{summary.classes_unchanged} unchanged, {summary.classes_cancelled} cancelled"
+    )
+    for issue in summary.unmatched_ambiguous:
+        log(f"  ambiguous match: {issue}")
+
+    return 0, None
+
+
 def cmd_sync(args: argparse.Namespace) -> int:
     config = load_config()
     with connect_closing(config.db_path) as conn:
@@ -251,13 +287,15 @@ def cmd_reminders(args: argparse.Namespace) -> int:
 
 def cmd_tick(args: argparse.Namespace) -> int:
     """The one entrypoint meant to run unattended (Windows Task Scheduler).
-    Each step is isolated: Classroom sync, Calendar sync, and reminder
-    dispatch each catch their own failures and continue, so e.g. Google
-    being briefly unreachable never prevents already-synced reminders from
-    still being dispatched. Logs to RAGRA_HOME/logs/ragra.log. Tracks each
-    step's health (ragra/health.py) and sends at most one notification if a
-    component has been failing for FAILURE_ALERT_THRESHOLD consecutive
-    ticks - re-armed automatically the next time that component succeeds."""
+    Each step is isolated: Classroom sync, Calendar sync, reminder
+    dispatch, and FAST timetable sync each catch their own failures and
+    continue, so e.g. Google being briefly unreachable never prevents
+    already-synced reminders from still being dispatched, and a FAST
+    source hiccup never touches the other three. Logs to
+    RAGRA_HOME/logs/ragra.log. Tracks each step's health (ragra/health.py)
+    and sends at most one notification if a component has been failing for
+    FAILURE_ALERT_THRESHOLD consecutive ticks - re-armed automatically the
+    next time that component succeeds."""
     from ragra import health
     from ragra.logging_setup import configure_logging
 
@@ -273,6 +311,7 @@ def cmd_tick(args: argparse.Namespace) -> int:
                 ("classroom", _run_classroom_sync),
                 ("calendar", _run_calendar_sync),
                 ("reminders", _run_reminders_dispatch),
+                ("timetable", _run_timetable_sync),
             ):
                 rc, error = runner(conn, config, logger.info)
                 health.record_result(conn, component=component, success=(rc == 0), error=error)
