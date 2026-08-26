@@ -3,10 +3,14 @@
 A single-user, local-first academic manager. Pulls real Google Classroom
 coursework into a local database, tracks deadlines (separating the
 authoritative Classroom deadline from your own intended completion time),
-schedules deterministic reminders, delivers them through a pluggable
-notification provider (Telegram, or an optional personal messaging
-integration), mirrors deadlines onto Google Calendar, and runs unattended
-via a Windows scheduled task.
+schedules deterministic reminders, mirrors deadlines onto Google Calendar,
+and runs unattended via a Windows scheduled task.
+
+Ragra core works independently of any notification provider - reminders
+simply stay pending until one is configured. Delivery goes through a
+pluggable `NotificationProvider` interface (`send(message)`); Hermes is one
+optional, advanced-personal-integration provider for users who already run
+it, never a requirement.
 
 See **[docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md)** for the full,
 up-to-date state of the project: what's actually working, what's

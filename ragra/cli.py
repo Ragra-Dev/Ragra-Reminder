@@ -27,11 +27,24 @@ from dotenv import load_dotenv
 
 from ragra.adapters import calendar as calendar_adapter
 from ragra.adapters import classroom as classroom_adapter
+from ragra.adapters.notify import HermesProvider, NotificationProvider
 from ragra.config import Config, load_config
 from ragra.db.connection import connect_closing
 from ragra.reminders.dispatch import dispatch_due_reminders, preview_due_reminders
 from ragra.sync.calendar_sync import sync_all_task_events
 from ragra.sync.classroom_sync import sync_classroom
+
+
+def _build_providers(config: Config) -> list[NotificationProvider]:
+    """Builds the list of currently-configured notification providers.
+    Hermes is an optional, advanced-personal integration - included only
+    when both HERMES_BIN and RAGRA_NOTIFY_TARGET are set. An empty list is
+    normal and fully supported: core Ragra (Classroom/Calendar/FAST sync,
+    the reminder engine) never requires any provider to be configured."""
+    providers: list[NotificationProvider] = []
+    if config.hermes_bin and config.notify_target:
+        providers.append(HermesProvider(hermes_bin=config.hermes_bin, target=config.notify_target))
+    return providers
 
 
 def cmd_classroom_status(args: argparse.Namespace) -> int:
@@ -181,10 +194,9 @@ def _run_calendar_sync(conn, config: Config, log) -> tuple[int, str | None]:
 
 def _run_reminders_dispatch(conn, config: Config, log) -> tuple[int, str | None]:
     now = datetime.now(timezone.utc).isoformat()
+    providers = _build_providers(config)
     try:
-        summary = dispatch_due_reminders(
-            conn, hermes_bin=config.hermes_bin, notify_target=config.notify_target, now=now
-        )
+        summary = dispatch_due_reminders(conn, providers=providers, now=now)
     except Exception as exc:  # noqa: BLE001
         log(f"Reminder dispatch failed unexpectedly: {exc}")
         return 1, str(exc)
@@ -193,11 +205,12 @@ def _run_reminders_dispatch(conn, config: Config, log) -> tuple[int, str | None]
         f"Reminders: {summary.sent} sent, {summary.retrying} retrying, "
         f"{summary.permanently_failed} permanently failed, {summary.skipped_not_configured} skipped (not configured)"
     )
-    if summary.skipped_not_configured and not (config.hermes_bin and config.notify_target):
+    if summary.skipped_not_configured and not providers:
         log(
-            "  NOTE: RAGRA_NOTIFY_TARGET and/or HERMES_BIN are not configured, so due reminders "
-            "are not being delivered anywhere. This is safe (nothing invented, nothing lost - they "
-            "stay PENDING) but not useful until configured. See .env.example."
+            "  NOTE: no notification provider is configured (e.g. RAGRA_NOTIFY_TARGET and/or HERMES_BIN "
+            "for the optional Hermes integration), so due reminders are not being delivered anywhere. "
+            "This is safe (nothing invented, nothing lost - they stay PENDING) but not useful until "
+            "configured. See .env.example."
         )
     for error in summary.errors:
         log(f"  reminder error: {error}")
@@ -264,11 +277,12 @@ def cmd_reminders(args: argparse.Namespace) -> int:
                 print(f"  [{p['reminder_type']}] due {p['scheduled_for']}: {p['message']!r}")
             return 0
 
-        if not (config.hermes_bin and config.notify_target):
+        if not _build_providers(config):
             print(
-                "RAGRA_NOTIFY_TARGET and/or HERMES_BIN are not configured - reminders will stay "
-                "PENDING rather than being sent nowhere. See .env.example. (Use --dry-run to preview "
-                "what would be sent once configured.)"
+                "No notification provider is configured (e.g. RAGRA_NOTIFY_TARGET and/or HERMES_BIN "
+                "for the optional Hermes integration) - reminders will stay PENDING rather than being "
+                "sent nowhere. See .env.example. (Use --dry-run to preview what would be sent once "
+                "configured.)"
             )
 
         rc, _ = _run_reminders_dispatch(conn, config, print)
@@ -332,7 +346,7 @@ def cmd_tick(args: argparse.Namespace) -> int:
                     if error:
                         tick_errors.append(f"{component}: {error}")
 
-            alerted = health.check_and_alert(conn, hermes_bin=config.hermes_bin, notify_target=config.notify_target)
+            alerted = health.check_and_alert(conn, providers=_build_providers(config))
             if alerted:
                 logger.info("health alert sent for: %s", ", ".join(alerted))
 
@@ -431,7 +445,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("calendar-status", help="Show Calendar credential status (no browser, no secrets printed)").set_defaults(func=cmd_calendar_status)
     sub.add_parser("calendar-auth", help="Interactively authorize Ragra's Calendar access (opens a browser)").set_defaults(func=cmd_calendar_auth)
     sub.add_parser("sync", help="Sync Classroom -> database -> Calendar (never opens a browser)").set_defaults(func=cmd_sync)
-    reminders_parser = sub.add_parser("reminders", help="Dispatch any due reminders through Hermes")
+    reminders_parser = sub.add_parser(
+        "reminders", help="Dispatch any due reminders through the configured notification provider(s)"
+    )
     reminders_parser.add_argument(
         "--dry-run", action="store_true",
         help="Preview what would be sent without sending anything or changing reminder state",

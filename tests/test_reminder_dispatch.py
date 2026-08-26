@@ -1,17 +1,34 @@
 """Tests for ragra.reminders.dispatch - the piece that turns a PENDING,
 due reminder row into an actual (or attempted) notification, with a
 bounded retry policy for genuine delivery failures.
+
+Uses FakeProvider (a NotificationProvider test double) rather than
+monkeypatching Hermes specifics - dispatch.py never imports Hermes, so
+these tests exercise the real provider-neutral contract.
 """
 
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
-
-import pytest
+from typing import Callable
 
 from ragra.adapters.notify import NotifyResult
 from ragra.db import repo
-from ragra.reminders import dispatch as dispatch_module
 from ragra.reminders.dispatch import MAX_ATTEMPTS, RETRY_DELAY, dispatch_due_reminders
+
+
+@dataclass
+class FakeProvider:
+    """Test double satisfying NotificationProvider. `result` may be a fixed
+    NotifyResult or a zero-arg callable for behavior that varies across
+    calls (e.g. fails once, then succeeds). Records every message passed to
+    send() so a test can assert exactly how many real attempts happened."""
+
+    result: NotifyResult | Callable[[], NotifyResult]
+    calls: list[str] = field(default_factory=list)
+
+    def send(self, message: str) -> NotifyResult:
+        self.calls.append(message)
+        return self.result() if callable(self.result) else self.result
 
 
 def _make_task_with_reminder(conn, *, scheduled_for, status="ACTION_REQUIRED"):
@@ -44,7 +61,7 @@ FUTURE = "2026-12-01T00:00:00+00:00"
 
 def test_not_configured_leaves_reminder_pending_and_is_reported(conn):
     _make_task_with_reminder(conn, scheduled_for=PAST)
-    summary = dispatch_due_reminders(conn, hermes_bin=None, notify_target=None, now=NOW)
+    summary = dispatch_due_reminders(conn, providers=[], now=NOW)
 
     assert summary.sent == 0
     assert summary.skipped_not_configured == 1
@@ -52,11 +69,11 @@ def test_not_configured_leaves_reminder_pending_and_is_reported(conn):
     assert row["status"] == "PENDING"
 
 
-def test_successful_send_marks_reminder_sent(conn, monkeypatch):
+def test_successful_send_marks_reminder_sent(conn):
     _make_task_with_reminder(conn, scheduled_for=PAST)
-    monkeypatch.setattr(dispatch_module, "send_notification", lambda **kw: NotifyResult(ok=True))
+    provider = FakeProvider(NotifyResult(ok=True))
 
-    summary = dispatch_due_reminders(conn, hermes_bin=Path("hermes.exe"), notify_target="telegram", now=NOW)
+    summary = dispatch_due_reminders(conn, providers=[provider], now=NOW)
 
     assert summary.sent == 1
     row = conn.execute("SELECT status, sent_at FROM reminders").fetchone()
@@ -64,35 +81,28 @@ def test_successful_send_marks_reminder_sent(conn, monkeypatch):
     assert row["sent_at"] is not None
 
 
-def test_dispatch_is_idempotent_never_resends_a_sent_reminder(conn, monkeypatch):
+def test_dispatch_is_idempotent_never_resends_a_sent_reminder(conn):
     _make_task_with_reminder(conn, scheduled_for=PAST)
-    calls = []
-    monkeypatch.setattr(
-        dispatch_module, "send_notification",
-        lambda **kw: (calls.append(1), NotifyResult(ok=True))[1],
-    )
+    provider = FakeProvider(NotifyResult(ok=True))
 
-    first = dispatch_due_reminders(conn, hermes_bin=Path("hermes.exe"), notify_target="telegram", now=NOW)
-    second = dispatch_due_reminders(conn, hermes_bin=Path("hermes.exe"), notify_target="telegram", now=NOW)
-    third = dispatch_due_reminders(conn, hermes_bin=Path("hermes.exe"), notify_target="telegram", now=NOW)
+    first = dispatch_due_reminders(conn, providers=[provider], now=NOW)
+    second = dispatch_due_reminders(conn, providers=[provider], now=NOW)
+    third = dispatch_due_reminders(conn, providers=[provider], now=NOW)
 
     assert first.sent == 1
     assert second.sent == 0
     assert third.sent == 0
-    assert len(calls) == 1  # the actual send only ever happened once
+    assert len(provider.calls) == 1  # the actual send only ever happened once
 
     count = conn.execute("SELECT COUNT(*) AS c FROM reminders WHERE status = 'SENT'").fetchone()["c"]
     assert count == 1
 
 
-def test_failed_send_retries_rather_than_failing_immediately(conn, monkeypatch):
+def test_failed_send_retries_rather_than_failing_immediately(conn):
     _make_task_with_reminder(conn, scheduled_for=PAST)
-    monkeypatch.setattr(
-        dispatch_module, "send_notification",
-        lambda **kw: NotifyResult(ok=False, error="platform rejected the message"),
-    )
+    provider = FakeProvider(NotifyResult(ok=False, error="platform rejected the message"))
 
-    first = dispatch_due_reminders(conn, hermes_bin=Path("hermes.exe"), notify_target="telegram", now=NOW)
+    first = dispatch_due_reminders(conn, providers=[provider], now=NOW)
 
     assert first.sent == 0
     assert first.retrying == 1
@@ -104,39 +114,35 @@ def test_failed_send_retries_rather_than_failing_immediately(conn, monkeypatch):
     assert row["last_error"] == "platform rejected the message"
 
 
-def test_retrying_reminder_is_not_picked_up_again_before_its_backoff_elapses(conn, monkeypatch):
+def test_retrying_reminder_is_not_picked_up_again_before_its_backoff_elapses(conn):
     _make_task_with_reminder(conn, scheduled_for=PAST)
-    calls = []
-    monkeypatch.setattr(
-        dispatch_module, "send_notification",
-        lambda **kw: (calls.append(1), NotifyResult(ok=False, error="transient"))[1],
-    )
+    provider = FakeProvider(NotifyResult(ok=False, error="transient"))
 
-    dispatch_due_reminders(conn, hermes_bin=Path("hermes.exe"), notify_target="telegram", now=NOW)
+    dispatch_due_reminders(conn, providers=[provider], now=NOW)
     # Re-running immediately (before the retry backoff elapses) must not
     # attempt again - that would be a duplicate send attempt.
-    again = dispatch_due_reminders(conn, hermes_bin=Path("hermes.exe"), notify_target="telegram", now=NOW)
+    again = dispatch_due_reminders(conn, providers=[provider], now=NOW)
 
     assert again.retrying == 0
     assert again.sent == 0
-    assert len(calls) == 1
+    assert len(provider.calls) == 1
 
 
-def test_retry_eventually_succeeds_once_backoff_elapses(conn, monkeypatch):
+def test_retry_eventually_succeeds_once_backoff_elapses(conn):
     _make_task_with_reminder(conn, scheduled_for=PAST)
     attempts = {"n": 0}
 
-    def fake_send(**kw):
+    def fake_result():
         attempts["n"] += 1
         if attempts["n"] == 1:
             return NotifyResult(ok=False, error="transient network error")
         return NotifyResult(ok=True)
 
-    monkeypatch.setattr(dispatch_module, "send_notification", fake_send)
+    provider = FakeProvider(fake_result)
 
-    dispatch_due_reminders(conn, hermes_bin=Path("hermes.exe"), notify_target="telegram", now=NOW)
+    dispatch_due_reminders(conn, providers=[provider], now=NOW)
     later = (datetime.fromisoformat(NOW) + RETRY_DELAY + timedelta(minutes=1)).isoformat()
-    result = dispatch_due_reminders(conn, hermes_bin=Path("hermes.exe"), notify_target="telegram", now=later)
+    result = dispatch_due_reminders(conn, providers=[provider], now=later)
 
     assert result.sent == 1
     assert attempts["n"] == 2  # exactly one retry attempt, not more
@@ -145,25 +151,19 @@ def test_retry_eventually_succeeds_once_backoff_elapses(conn, monkeypatch):
     assert row["attempt_count"] == 1  # only the failed attempt counted; the success didn't increment it
 
 
-def test_retry_exhausted_becomes_permanently_failed_and_stops(conn, monkeypatch):
+def test_retry_exhausted_becomes_permanently_failed_and_stops(conn):
     _make_task_with_reminder(conn, scheduled_for=PAST)
-    calls = []
-    monkeypatch.setattr(
-        dispatch_module, "send_notification",
-        lambda **kw: (calls.append(1), NotifyResult(ok=False, error="platform rejected the message"))[1],
-    )
+    provider = FakeProvider(NotifyResult(ok=False, error="platform rejected the message"))
 
     now_dt = datetime.fromisoformat(NOW)
     last_summary = None
-    for attempt in range(MAX_ATTEMPTS):
-        last_summary = dispatch_due_reminders(
-            conn, hermes_bin=Path("hermes.exe"), notify_target="telegram", now=now_dt.isoformat()
-        )
+    for _attempt in range(MAX_ATTEMPTS):
+        last_summary = dispatch_due_reminders(conn, providers=[provider], now=now_dt.isoformat())
         now_dt = now_dt + RETRY_DELAY + timedelta(minutes=1)
 
     # Exactly MAX_ATTEMPTS real send attempts happened - no duplicates, no
     # extra attempts beyond the bound.
-    assert len(calls) == MAX_ATTEMPTS
+    assert len(provider.calls) == MAX_ATTEMPTS
     assert last_summary.permanently_failed == 1
     row = conn.execute("SELECT status, attempt_count, last_error FROM reminders").fetchone()
     assert row["status"] == "FAILED"
@@ -173,75 +173,63 @@ def test_retry_exhausted_becomes_permanently_failed_and_stops(conn, monkeypatch)
     # A FAILED reminder is never picked up again, even long after the
     # backoff window - it is a genuinely terminal, surfaced failure.
     far_future = (now_dt + timedelta(days=1)).isoformat()
-    final = dispatch_due_reminders(conn, hermes_bin=Path("hermes.exe"), notify_target="telegram", now=far_future)
+    final = dispatch_due_reminders(conn, providers=[provider], now=far_future)
     assert final.sent == 0
     assert final.retrying == 0
     assert final.permanently_failed == 0
-    assert len(calls) == MAX_ATTEMPTS  # no further attempts
+    assert len(provider.calls) == MAX_ATTEMPTS  # no further attempts
 
 
-def test_future_reminder_is_not_dispatched_yet(conn, monkeypatch):
+def test_future_reminder_is_not_dispatched_yet(conn):
     _make_task_with_reminder(conn, scheduled_for=FUTURE)
-    monkeypatch.setattr(dispatch_module, "send_notification", lambda **kw: NotifyResult(ok=True))
+    provider = FakeProvider(NotifyResult(ok=True))
 
-    summary = dispatch_due_reminders(conn, hermes_bin=Path("hermes.exe"), notify_target="telegram", now=NOW)
+    summary = dispatch_due_reminders(conn, providers=[provider], now=NOW)
 
     assert summary.sent == 0
     row = conn.execute("SELECT status FROM reminders").fetchone()
     assert row["status"] == "PENDING"
 
 
-def test_completed_task_reminder_is_never_dispatched(conn, monkeypatch):
+def test_completed_task_reminder_is_never_dispatched(conn):
     task_id = _make_task_with_reminder(conn, scheduled_for=PAST)
     repo.mark_completed(conn, task_id=task_id)
     # Even if a PENDING row somehow still exists (defense in depth - the
     # normal path also calls cancel_pending_reminders on completion).
-    sends = []
-    monkeypatch.setattr(
-        dispatch_module, "send_notification",
-        lambda **kw: (sends.append(1), NotifyResult(ok=True))[1],
-    )
+    provider = FakeProvider(NotifyResult(ok=True))
 
-    summary = dispatch_due_reminders(conn, hermes_bin=Path("hermes.exe"), notify_target="telegram", now=NOW)
+    summary = dispatch_due_reminders(conn, providers=[provider], now=NOW)
 
     assert summary.sent == 0
-    assert sends == []
+    assert provider.calls == []
 
 
-def test_cancelled_task_reminder_is_never_dispatched(conn, monkeypatch):
+def test_cancelled_task_reminder_is_never_dispatched(conn):
     task_id = _make_task_with_reminder(conn, scheduled_for=PAST)
     repo.cancel_task(conn, task_id=task_id)
-    sends = []
-    monkeypatch.setattr(
-        dispatch_module, "send_notification",
-        lambda **kw: (sends.append(1), NotifyResult(ok=True))[1],
-    )
+    provider = FakeProvider(NotifyResult(ok=True))
 
-    summary = dispatch_due_reminders(conn, hermes_bin=Path("hermes.exe"), notify_target="telegram", now=NOW)
+    summary = dispatch_due_reminders(conn, providers=[provider], now=NOW)
 
     assert summary.sent == 0
-    assert sends == []
+    assert provider.calls == []
 
 
-def test_missed_task_reminder_is_never_dispatched(conn, monkeypatch):
+def test_missed_task_reminder_is_never_dispatched(conn):
     # A task already past its deadline (MISSED) must never fire a "due
     # soon"/"due in 1 hour" reminder for a deadline that has already
     # passed - that would misrepresent historical/past work as current
     # actionable work.
     task_id = _make_task_with_reminder(conn, scheduled_for=PAST, status="MISSED")
-    sends = []
-    monkeypatch.setattr(
-        dispatch_module, "send_notification",
-        lambda **kw: (sends.append(1), NotifyResult(ok=True))[1],
-    )
+    provider = FakeProvider(NotifyResult(ok=True))
 
-    summary = dispatch_due_reminders(conn, hermes_bin=Path("hermes.exe"), notify_target="telegram", now=NOW)
+    summary = dispatch_due_reminders(conn, providers=[provider], now=NOW)
 
     assert summary.sent == 0
-    assert sends == []
+    assert provider.calls == []
 
 
-def test_archived_course_reminder_is_never_dispatched(conn, monkeypatch):
+def test_archived_course_reminder_is_never_dispatched(conn):
     # A task whose course has gone ARCHIVED at the source must not generate
     # a normal reminder - only currently active/enrolled courses are
     # eligible.
@@ -260,16 +248,45 @@ def test_archived_course_reminder_is_never_dispatched(conn, monkeypatch):
         conn, task_id=result.task_id, reminder_type="T_MINUS_1D",
         scheduled_for=PAST, idempotency_key=f"{result.task_id}:T_MINUS_1D:v1",
     )
-    sends = []
-    monkeypatch.setattr(
-        dispatch_module, "send_notification",
-        lambda **kw: (sends.append(1), NotifyResult(ok=True))[1],
-    )
+    provider = FakeProvider(NotifyResult(ok=True))
 
-    summary = dispatch_due_reminders(conn, hermes_bin=Path("hermes.exe"), notify_target="telegram", now=NOW)
+    summary = dispatch_due_reminders(conn, providers=[provider], now=NOW)
 
     assert summary.sent == 0
-    assert sends == []
+    assert provider.calls == []
+
+
+def test_delivers_via_any_successful_provider_when_others_fail(conn):
+    # Deliberate redundancy: every configured provider is attempted, and
+    # the reminder is marked SENT if at least one succeeds - so one channel
+    # breaking (e.g. Hermes) doesn't silently take down delivery as long as
+    # a second provider is configured.
+    _make_task_with_reminder(conn, scheduled_for=PAST)
+    failing = FakeProvider(NotifyResult(ok=False, error="channel A down"))
+    succeeding = FakeProvider(NotifyResult(ok=True))
+
+    summary = dispatch_due_reminders(conn, providers=[failing, succeeding], now=NOW)
+
+    assert summary.sent == 1
+    assert len(failing.calls) == 1  # it was attempted, not skipped
+    assert len(succeeding.calls) == 1
+    row = conn.execute("SELECT status FROM reminders").fetchone()
+    assert row["status"] == "SENT"
+
+
+def test_retries_when_every_configured_provider_fails(conn):
+    _make_task_with_reminder(conn, scheduled_for=PAST)
+    provider_a = FakeProvider(NotifyResult(ok=False, error="channel A down"))
+    provider_b = FakeProvider(NotifyResult(ok=False, error="channel B down"))
+
+    summary = dispatch_due_reminders(conn, providers=[provider_a, provider_b], now=NOW)
+
+    assert summary.sent == 0
+    assert summary.retrying == 1
+    row = conn.execute("SELECT status, last_error FROM reminders").fetchone()
+    assert row["status"] == "PENDING"
+    assert "channel A down" in row["last_error"]
+    assert "channel B down" in row["last_error"]
 
 
 def test_personal_deadline_change_does_not_touch_reminders(conn):
@@ -282,14 +299,13 @@ def test_personal_deadline_change_does_not_touch_reminders(conn):
     assert [dict(r) for r in before] == [dict(r) for r in after]
 
 
-def test_restart_recovery_reminder_state_persists_across_reconnect(tmp_path, monkeypatch):
+def test_restart_recovery_reminder_state_persists_across_reconnect(tmp_path):
     from ragra.db.connection import connect
 
     db_path = tmp_path / "restart-test.db"
     conn1 = connect(db_path)
     task_id = _make_task_with_reminder(conn1, scheduled_for=PAST)
-    monkeypatch.setattr(dispatch_module, "send_notification", lambda **kw: NotifyResult(ok=True))
-    dispatch_due_reminders(conn1, hermes_bin=Path("hermes.exe"), notify_target="telegram", now=NOW)
+    dispatch_due_reminders(conn1, providers=[FakeProvider(NotifyResult(ok=True))], now=NOW)
     conn1.close()
 
     # Simulate a process restart: fresh connection to the same database file.
@@ -298,12 +314,8 @@ def test_restart_recovery_reminder_state_persists_across_reconnect(tmp_path, mon
     assert row["status"] == "SENT"
 
     # And dispatch again after "restart" - still no resend.
-    sends = []
-    monkeypatch.setattr(
-        dispatch_module, "send_notification",
-        lambda **kw: (sends.append(1), NotifyResult(ok=True))[1],
-    )
-    summary = dispatch_due_reminders(conn2, hermes_bin=Path("hermes.exe"), notify_target="telegram", now=NOW)
+    provider = FakeProvider(NotifyResult(ok=True))
+    summary = dispatch_due_reminders(conn2, providers=[provider], now=NOW)
     assert summary.sent == 0
-    assert sends == []
+    assert provider.calls == []
     conn2.close()
