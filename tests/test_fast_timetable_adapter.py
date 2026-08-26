@@ -7,6 +7,7 @@ from ragra.adapters.fast_timetable import (
     SheetInfo,
     discover_weekday_tabs,
     discover_weekday_tabs_via_public_names,
+    redact_api_key,
 )
 
 
@@ -99,3 +100,25 @@ def test_client_falls_back_to_public_discovery_without_an_api_key(monkeypatch):
     assert not client.has_metadata_access
     tabs = client.discover_tabs()
     assert tabs[1].title == "Tuesday"
+
+
+# --- API key redaction ---
+
+
+def test_redact_api_key_strips_the_key_query_parameter():
+    message = "HttpError 400 when requesting https://sheets.googleapis.com/v4/spreadsheets/X?key=abcDEF123 returned"
+    redacted = redact_api_key(message)
+    assert "abcDEF123" not in redacted
+    assert "key=[REDACTED]" in redacted
+
+
+def test_redact_api_key_handles_key_as_a_non_final_query_param():
+    message = "...?fields=sheets&key=abcDEF123&alt=json failed"
+    redacted = redact_api_key(message)
+    assert "abcDEF123" not in redacted
+    assert "&alt=json" in redacted
+
+
+def test_redact_api_key_leaves_ordinary_messages_untouched():
+    message = "Failed to read FAST tab 'Monday' via the public endpoint."
+    assert redact_api_key(message) == message
