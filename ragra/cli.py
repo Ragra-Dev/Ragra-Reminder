@@ -297,33 +297,86 @@ def cmd_tick(args: argparse.Namespace) -> int:
     FAILURE_ALERT_THRESHOLD consecutive ticks - re-armed automatically the
     next time that component succeeds."""
     from ragra import health
+    from ragra.db import repo
     from ragra.logging_setup import configure_logging
 
     config = load_config()
     logger = configure_logging(config.ragra_home)
     started = time.monotonic()
+    started_at = datetime.now(timezone.utc).isoformat()
     logger.info("tick start")
+
+    # Structured, short-retention diagnostics (separate table from the text
+    # log): captures each stage's own summary line without changing what
+    # any runner logs or returns - see ragra/db/repo.py's tick_sessions.
+    stage_results: dict[str, str | None] = {
+        "classroom": None, "calendar": None, "reminders": None, "timetable": None,
+    }
+    tick_errors: list[str] = []
+
+    def _capturing_log(component: str):
+        def log(message: str) -> None:
+            stage_results[component] = message if stage_results[component] is None else (
+                stage_results[component] + "\n" + message
+            )
+            logger.info(message)
+
+        return log
 
     exit_code = 0
     try:
         with connect_closing(config.db_path) as conn:
+            cutoff = (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
+            repo.purge_old_tick_sessions(conn, older_than_iso=cutoff)
+
             for component, runner in (
                 ("classroom", _run_classroom_sync),
                 ("calendar", _run_calendar_sync),
                 ("reminders", _run_reminders_dispatch),
                 ("timetable", _run_timetable_sync),
             ):
-                rc, error = runner(conn, config, logger.info)
+                rc, error = runner(conn, config, _capturing_log(component))
                 health.record_result(conn, component=component, success=(rc == 0), error=error)
                 if rc:
                     exit_code = 1
+                    if error:
+                        tick_errors.append(f"{component}: {error}")
 
             alerted = health.check_and_alert(conn, hermes_bin=config.hermes_bin, notify_target=config.notify_target)
             if alerted:
                 logger.info("health alert sent for: %s", ", ".join(alerted))
+
+            repo.record_tick_session(
+                conn,
+                started_at=started_at,
+                finished_at=datetime.now(timezone.utc).isoformat(),
+                duration_seconds=time.monotonic() - started,
+                exit_code=exit_code,
+                classroom_result=stage_results["classroom"],
+                calendar_result=stage_results["calendar"],
+                reminders_result=stage_results["reminders"],
+                timetable_result=stage_results["timetable"],
+                error="; ".join(tick_errors) if tick_errors else None,
+            )
     except Exception as exc:  # noqa: BLE001 - last-resort guard; a tick must never leave a hung/corrupt process
         logger.error("tick failed unexpectedly: %s", exc)
         exit_code = 1
+        try:
+            with connect_closing(config.db_path) as conn:
+                repo.record_tick_session(
+                    conn,
+                    started_at=started_at,
+                    finished_at=datetime.now(timezone.utc).isoformat(),
+                    duration_seconds=time.monotonic() - started,
+                    exit_code=exit_code,
+                    classroom_result=stage_results["classroom"],
+                    calendar_result=stage_results["calendar"],
+                    reminders_result=stage_results["reminders"],
+                    timetable_result=stage_results["timetable"],
+                    error=f"tick failed unexpectedly: {exc}",
+                )
+        except Exception:  # noqa: BLE001 - recording the diagnostic must never mask the real failure
+            pass
 
     logger.info("tick end (%.1fs, exit=%d)", time.monotonic() - started, exit_code)
     return exit_code

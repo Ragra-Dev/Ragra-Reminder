@@ -111,6 +111,27 @@ CREATE TABLE IF NOT EXISTS pipeline_health (
     last_alert_sent_at TEXT
 );
 
+-- Structured, short-retention operational diagnostics for `ragra tick` -
+-- deliberately separate from application data (courses/tasks/reminders/
+-- timetable_events), which is never expired. Rows older than ~48 hours are
+-- purged automatically at the start of every tick (see ragra/cli.py) so
+-- this never grows without bound; it exists purely to let a human diagnose
+-- a recent problem, not as a permanent audit trail.
+CREATE TABLE IF NOT EXISTS tick_sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    started_at TEXT NOT NULL,
+    finished_at TEXT,
+    duration_seconds REAL,
+    exit_code INTEGER,
+    classroom_result TEXT,
+    calendar_result TEXT,
+    reminders_result TEXT,
+    timetable_result TEXT,
+    error TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_tick_sessions_started_at ON tick_sessions(started_at);
+
 -- One row per weekly class meeting derived from the FAST timetable source,
 -- matched against the user's own enrollment config (see
 -- ragra/timetable/enrollment.py) - never against sheet color/formatting.
