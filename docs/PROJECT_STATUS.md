@@ -16,7 +16,8 @@ What actually works end-to-end today:
 - Distinguishes `actual_deadline` (authoritative, from Classroom) from
   `personal_deadline` (the developer's own intended completion time) throughout.
 - A deterministic reminder engine computes a reminder cadence per task,
-  persists it, and dispatches through Hermes with bounded retry.
+  persists it, and dispatches through a notification provider with bounded
+  retry.
 - Syncs Ragra-owned events onto the developer's real Google Calendar, idempotently.
 - Syncs the FAST timetable from its public spreadsheet source, matching
   scraped classes against a small enrollment config to distinguish regular
@@ -32,29 +33,30 @@ What actually works end-to-end today:
   tasks, lets you mark a task complete or set a personal target, and has a
   per-task detail view.
 - A deterministic daily brief (`ragra brief`) and an optional AI priority
-  narrative (`ragra plan`, via Hermes' one-shot completion mode) sit on top
-  of the deterministic data - the AI never writes back to task/deadline
-  state.
+  narrative (`ragra plan`, via an optional Hermes one-shot completion call)
+  sit on top of the deterministic data - the AI never writes back to
+  task/deadline state.
 
 ## Verified Integrations
 
-**Google Classroom** - reuses `hermes_cli.classroom.{oauth,google_client}`
-directly (not reimplemented). 5 read-only scopes requested; after a Google
-Cloud Console branding/scope fix partway through development, all 5 are
-now actually granted, confirmed via live `courses.courseWork.list` calls
-returning real assignment data. Credential refreshes silently - verified
-across many non-interactive `tick` runs with no browser prompt.
+**Google Classroom** - Ragra's own OAuth client and read-only Classroom API
+wrapper (`ragra/adapters/classroom.py`), no Hermes dependency. 5 read-only
+scopes requested; after a Google Cloud Console branding/scope fix partway
+through development, all 5 are now actually granted, confirmed via live
+`courses.courseWork.list` calls returning real assignment data. Credential
+refreshes silently - verified across many non-interactive `tick` runs with
+no browser prompt.
 
-**Google Calendar** - a separate, Ragra-owned OAuth credential (not shared
-with Classroom or with Hermes' broader Workspace integration), scoped to
+**Google Calendar** - a separate, Ragra-owned OAuth credential, scoped to
 `calendar.events` only. Silent refresh confirmed. Real events were verified
 to exist on Google's side (read back via the API, not just recorded
 locally).
 
-**Hermes** - two narrow, process-boundary integration points, no direct
-import of Hermes' internals: `hermes send --to <target> "<message>"` for
-notification delivery, and `hermes -z "<prompt>"` for the one-shot AI
-advisory call. Both go through Hermes' existing CLI, not a rebuilt client.
+**Notifications (optional)** - reminders dispatch through a pluggable
+provider: direct Telegram Bot API delivery, or an optional personal Hermes
+provider (`hermes send --to <target> "<message>"`) for the developer's own
+installation. Neither is required for Classroom/Calendar/FAST sync or the
+reminder engine itself.
 
 **WhatsApp** - one real, explicitly-approved test notification was sent
 through Hermes (a personal WhatsApp contact target) as a standalone connectivity test,
@@ -221,8 +223,10 @@ text for `ragra plan` / `ragra brief --ai` to print.
   routinely touching the database concurrently.
 - **Windows Task Scheduler**, not a custom daemon - simplest reliable
   option for a single-user Windows machine.
-- **Hermes owns message delivery**; Ragra never reimplements a messaging
-  client, only shells out to `hermes send`.
+- **Notification delivery is pluggable and optional**; Ragra never hard-
+  depends on any one messaging client - Telegram is called directly over
+  HTTPS, and Hermes (an optional personal provider) is only ever shelled
+  out to via `hermes send`, never imported.
 - **AI is never the source of truth** for deadlines, task existence, or
   completion/reminder state - those remain deterministic, by design.
 - **No invented semester/term classification.** Investigated whether
@@ -353,9 +357,8 @@ python -m venv .venv
 .venv\Scripts\pip install pytest fastapi uvicorn jinja2 httpx python-multipart python-dotenv google-api-python-client google-auth google-auth-oauthlib
 ```
 
-Copy `.env.example` to `.env` and fill in the real local paths
-(`HERMES_REPO_PATH`, `HERMES_BIN`) before running anything that talks to
-Classroom, Calendar, or Hermes. No secrets belong in `.env.example` or in
-this repository - real credentials/tokens live outside the project
-directory entirely (under `<LOCAL_APPDATA>\hermes` and
+Copy `.env.example` to `.env` and fill in the real local paths before
+running anything that talks to Classroom or Calendar. No secrets belong in
+`.env.example` or in this repository - real credentials/tokens live outside
+the project directory entirely (under `<LOCAL_APPDATA>\hermes` and
 `<LOCAL_APPDATA>\ragra`), and were never part of what's committed here.

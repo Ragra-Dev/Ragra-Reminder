@@ -10,6 +10,7 @@ import pytest
 
 from ragra import cli
 from ragra.adapters.calendar import CalendarTokenPaths
+from ragra.adapters.classroom import ClassroomTokenPaths
 from ragra.adapters.fast_timetable import FastTimetableAdapterError, SheetInfo
 from ragra.config import Config
 from ragra.sync.timetable_sync import TimetableSyncError
@@ -19,12 +20,14 @@ def _make_config(tmp_path: Path, *, spreadsheet_id: str | None, sheets_api_key: 
     return Config(
         ragra_home=tmp_path,
         db_path=tmp_path / "ragra.db",
-        hermes_repo_path=None,
         hermes_bin=None,
         notify_target=None,
         fast_student_id=None,
         calendar_id="primary",
         calendar_paths=CalendarTokenPaths(tmp_path / "client.json", tmp_path / "token.json"),
+        classroom_paths=ClassroomTokenPaths(
+            tmp_path / "client.json", tmp_path / "no-such-token.json", tmp_path / "no-such-legacy-token.json"
+        ),
         web_host="127.0.0.1",
         web_port=8731,
         sheets_api_key=sheets_api_key,
@@ -189,12 +192,12 @@ def test_api_key_never_appears_in_a_failure_log_line(conn, tmp_path, monkeypatch
 def test_tick_includes_timetable_step_and_isolates_its_failure(tmp_path, monkeypatch):
     monkeypatch.setenv("RAGRA_HOME", str(tmp_path))
     monkeypatch.setenv("RAGRA_FAST_TIMETABLE_SPREADSHEET_ID", "fake-id")
-    # Must NOT fall back to the real <LOCAL_APPDATA>\hermes\hermes-agent
-    # default - combined with a real Classroom credential on this machine,
-    # that would make this "unit" test perform real live API calls.
-    monkeypatch.setenv("HERMES_REPO_PATH", str(tmp_path / "no-such-hermes-checkout"))
+    # Must NOT resolve to any real Google credential on this machine - a
+    # missing file here forces a clean, fast, deterministic failure instead
+    # of this "unit" test making real live Classroom/Calendar API calls.
     monkeypatch.setenv("RAGRA_GOOGLE_CALENDAR_CREDENTIAL_FILE", str(tmp_path / "missing_calendar_token.json"))
     monkeypatch.setenv("RAGRA_GOOGLE_OAUTH_CLIENT_FILE", str(tmp_path / "missing_client.json"))
+    monkeypatch.setenv("RAGRA_GOOGLE_CLASSROOM_TOKEN_DIR", str(tmp_path / "no-such-classroom-token-dir"))
 
     monkeypatch.setattr(
         "ragra.adapters.fast_timetable.FastTimetableClient",
@@ -234,16 +237,12 @@ def argparse_namespace():
 def _tick_env(tmp_path, monkeypatch):
     monkeypatch.setenv("RAGRA_HOME", str(tmp_path))
     monkeypatch.setenv("RAGRA_FAST_TIMETABLE_SPREADSHEET_ID", "fake-id")
-    # Must point somewhere that does NOT resolve to the real Hermes install:
-    # leaving this unset falls back to the real <LOCAL_APPDATA>\hermes\hermes-agent
-    # default, which - combined with a real, valid Classroom credential
-    # already present on this machine - would make these "unit" tests
-    # perform real live Classroom API calls and real writes. Pointing it at
-    # a nonexistent directory forces a clean, fast, deterministic failure
-    # instead (caught by _run_classroom_sync's own exception handling).
-    monkeypatch.setenv("HERMES_REPO_PATH", str(tmp_path / "no-such-hermes-checkout"))
+    # Must NOT resolve to any real Google credential on this machine - a
+    # missing file here forces a clean, fast, deterministic failure instead
+    # of these "unit" tests making real live Classroom/Calendar API calls.
     monkeypatch.setenv("RAGRA_GOOGLE_CALENDAR_CREDENTIAL_FILE", str(tmp_path / "missing_calendar_token.json"))
     monkeypatch.setenv("RAGRA_GOOGLE_OAUTH_CLIENT_FILE", str(tmp_path / "missing_client.json"))
+    monkeypatch.setenv("RAGRA_GOOGLE_CLASSROOM_TOKEN_DIR", str(tmp_path / "no-such-classroom-token-dir"))
 
 
 def test_tick_records_a_structured_session_for_a_successful_stage(tmp_path, monkeypatch):
