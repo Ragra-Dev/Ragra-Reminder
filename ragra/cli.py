@@ -62,6 +62,39 @@ def cmd_classroom_auth(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_timetable_sync(args: argparse.Namespace) -> int:
+    """Manual, standalone invocation - deliberately NOT wired into `tick`
+    yet (see docs/PROJECT_STATUS.md): the timetable pipeline needs to prove
+    itself reliable against the real source first."""
+    from ragra.adapters.fast_timetable import FastTimetableAdapterError, FastTimetableClient
+    from ragra.sync.timetable_sync import TimetableSyncError, sync_timetable
+
+    config = load_config()
+    if not config.sheets_api_key or not config.fast_timetable_spreadsheet_id:
+        print(
+            "FAST timetable sync is not configured - set RAGRA_SHEETS_API_KEY and "
+            "RAGRA_FAST_TIMETABLE_SPREADSHEET_ID. See .env.example."
+        )
+        return 1
+
+    client = FastTimetableClient(config.fast_timetable_spreadsheet_id, config.sheets_api_key)
+    with connect_closing(config.db_path) as conn:
+        try:
+            summary = sync_timetable(conn, client, spreadsheet_id=config.fast_timetable_spreadsheet_id)
+        except (TimetableSyncError, FastTimetableAdapterError) as exc:
+            print(f"Timetable sync failed - existing data left untouched: {exc}")
+            return 1
+
+    print(
+        f"Timetable sync: {summary.classes_found} class(es) found, "
+        f"{summary.classes_created} new, {summary.classes_updated} updated, "
+        f"{summary.classes_unchanged} unchanged, {summary.classes_cancelled} cancelled"
+    )
+    for issue in summary.unmatched_ambiguous:
+        print(f"  ambiguous match: {issue}")
+    return 0
+
+
 def cmd_calendar_status(args: argparse.Namespace) -> int:
     config = load_config()
     status = calendar_adapter.calendar_auth_status(config.calendar_paths)
@@ -324,6 +357,11 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser(
         "plan", help="Ask the AI advisor for a prioritized plan from current deterministic data (advisory only)"
     ).set_defaults(func=cmd_plan)
+
+    sub.add_parser(
+        "timetable-sync",
+        help="Sync the FAST timetable (public spreadsheet, no OAuth) - manual only, not yet in `tick`",
+    ).set_defaults(func=cmd_timetable_sync)
 
     return parser
 
