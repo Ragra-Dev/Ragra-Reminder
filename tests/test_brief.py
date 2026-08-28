@@ -14,7 +14,10 @@ def _make_course(conn):
 
 
 def test_brief_is_deterministic_and_reflects_real_state(conn):
-    now = datetime.now(timezone.utc)
+    # Fixed midday UTC so `now + 3h` and `now - 1d` can never cross a UTC
+    # calendar-day boundary - a real wall-clock `now()` here made this test
+    # flaky for ~3 hours a day near UTC midnight (see docs/PROJECT_STATUS.md).
+    now = datetime(2026, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
     course_id = _make_course(conn)
     repo.upsert_task_from_source(
         conn, course_id=course_id, source_type="coursework", external_id="cw-overdue",
