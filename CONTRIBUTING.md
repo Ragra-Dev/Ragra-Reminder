@@ -66,6 +66,7 @@ cp .env.example .env
 - Read `ROADMAP.md` at the start of a session to understand the current phase and where a change fits in it.
 - Run the full test suite after meaningful changes: `python -m pytest`.
 - Inspect the codebase before changing architecture — read `docs/ARCHITECTURE.md` for context.
+- **Git commits:** Use concise, professional messages that describe the logical engineering change. The code, tests, documentation, and PR descriptions carry the technical detail — commit messages should not. Never include personal information, credentials, internal debugging history, or excessive implementation details.
 
 ## Database Backups
 
