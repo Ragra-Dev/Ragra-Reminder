@@ -5,10 +5,22 @@ can be resumed months later without re-deriving context. Numbers below are
 marked "last verified" with the date they were actually queried from the
 running system - not assumed.
 
+**Two-document model:** ROADMAP.md defines the product direction, phase
+order, and implementation plan (the authoritative "what we are building and
+why"). PROJECT_STATUS.md reports what is actually implemented and verified
+right now (the factual snapshot). Both are required context; read ROADMAP.md
+first to understand the plan, then PROJECT_STATUS.md to understand current
+progress.
+
 ## Current State
 
-Ragra is a single-user, local-first academic manager for the developer (FAST-NUCES
-Islamabad). It is currently a working foundation, not a finished product.
+**Architecture (current phase, Phase 0):** Ragra is a single-user, local-first
+academic manager for the developer (FAST-NUCES Islamabad), built on SQLite and
+Windows Task Scheduler. This is the foundation implementation, not the final
+product architecture. A multi-user, hosted version is planned for Phase 3+
+(see ROADMAP.md).
+
+**Status:** Currently a working foundation, not a finished product.
 
 What actually works end-to-end today:
 - Pulls real Google Classroom courses, coursework, announcements, and
@@ -106,61 +118,33 @@ consent-screen branding/domain requirements so the Classroom scope could be
 granted. It was not built or modified as part of Ragra's codebase and is
 intentionally excluded from this repository.
 
-## Remote Execution (laptop-off problem) - investigated, not yet deployed
+## Remote Execution (laptop-off problem) — Phase 4 milestone
 
 The local Windows scheduler cannot run while the laptop is powered off.
-The intended fix is **Google Cloud Run Jobs + Cloud Scheduler +
-Cloud-Storage-backed SQLite + Secret Manager**, in the same Google Cloud
-project already used for Classroom/Calendar/FAST - chosen after verifying
-(not assuming) the actual free-tier terms directly against Google's own
-current documentation.
+This is a Phase 4 milestone (Hosted Backend: Postgres + Remote Execution),
+scheduled after the single-user product (Phase 2) and user isolation (Phase 3)
+are complete.
 
-**Verified, not assumed:**
-- Cloud Run's Always Free tier (2M requests, 180K vCPU-s, 360K GiB-s per
-  month) comfortably covers this workload (a ~45s job every 15 minutes),
-  but a **Cloud Billing account with a payment method must be linked to
-  the project** to use Cloud Run/Scheduler at all, even to stay at $0.
-  Budget alerts are notification-only by default - there is no automatic
-  hard spending cap without extra, riskier automation (a budget-triggered
-  billing-disable, which turns off the *entire* project, not just the
-  overage).
-- Cloud Scheduler's free tier (3 jobs/billing account/month) easily covers
-  the 1 job needed.
-- GitHub Actions was evaluated and rejected as the primary scheduler: its
-  free-minutes tier for a private repo (2,000 min/month) is smaller than
-  what a 15-minute cadence actually needs (~2,880 runs/month), and
-  execution has been unreliable for this project in practice.
+**Recommended architecture (Phase 4):** PostgreSQL managed database + hosted
+container (Fly.io or Railway) + in-process scheduler (APScheduler) initially.
+Rationale: one deployment artifact, one log stream, predictable costs, no
+billing cliff. See ROADMAP.md §4 for full reasoning and alternatives (Cloud Run
+retained only if bundling into existing Google Cloud project is chosen).
 
-**What's implemented and verified so far, without needing any cloud
-account access:** the notification layer itself is now provider-neutral
-(`ragra/adapters/notify.py`'s `NotificationProvider` protocol -
-`ragra/reminders/dispatch.py`/`ragra/health.py` only ever depend on
-`send(message)`), which is what actually matters for remote execution:
-Hermes' own `hermes send` shells out to a Windows binary reading local
-session files, which a remote worker cannot use. A direct Telegram Bot API
-provider was built and verified live (HTTP mechanics worked, errors
-reported without leaking the bot token) as a proof that a remote-capable,
-non-Hermes provider is straightforward to add - then deliberately removed
-from the product direction (see "Notifications (optional)" above). The
-open problem it demonstrated a solution shape for is unchanged: a remote
-worker still needs a non-Hermes provider, which is now Web Push/email's
-job once either is actually implemented, not Telegram's.
-
-**Explicitly not done yet, and why:** actual Cloud Run/Scheduler
-deployment needs three things this environment doesn't have: the `gcloud`
-CLI (not installed), a working local Docker daemon (Docker Desktop
-installed but not running, needed to build/verify the container image
-locally first), and billing enabled on the Google Cloud project (a
-financial/account action only the account owner can take). Rather than
-fake a deployment, this was left as a clearly-scoped next milestone - see
-Planned Roadmap.
+**Notification layer readiness:** The notification system is already
+provider-neutral (`ragra/adapters/notify.py`'s `NotificationProvider` protocol;
+`ragra/reminders/dispatch.py`/`ragra/health.py` depend only on `send(message)`).
+This is a hard requirement for remote execution: Hermes' `hermes send` shells
+out to a Windows binary reading local session files, which a remote worker
+cannot use. Web Push and email providers are planned for Phase 1 and Phase 5
+respectively; a remote worker will use one of those, not Hermes.
 
 ## Current Verification
 
-Last verified **2026-08-26**, directly from the running system (not
+Last verified **2026-08-29**, directly from the running system (not
 estimated):
 
-- **186/186 tests passing**
+- **211/211 tests passing**
 - **8** Classroom courses synced
 - **175** persisted tasks
 - **18** Calendar events
@@ -199,9 +183,9 @@ Ragra tasks (actual_deadline) --> ragra/sync/calendar_sync.py --> Google Calenda
 ```
 
 `ragra/cli.py`'s `tick` command is the single unattended entrypoint,
-running Classroom sync, Calendar sync, and reminder dispatch in sequence,
-each isolated from the others' failures, invoked by the Windows Scheduled
-Task every 15 minutes.
+running Classroom sync, Calendar sync, reminder dispatch, and FAST timetable
+sync in sequence, each isolated from the others' failures, invoked by the
+Windows Scheduled Task every 15 minutes.
 
 **Deterministic:** course/task discovery, deadline tracking, the reminder
 cadence and its retry/backoff, missed-task transitions, Calendar event
@@ -280,8 +264,11 @@ Verified against the actual code, not assumed:
 - **Snooze/cancel actions** - not on the dashboard. `repo.cancel_task()`
   exists at the code level but has no UI entry point; there is no snooze
   concept at all.
-- **Notification fallback channels** - not implemented; `notify.py` takes
-  exactly one target string, no primary/fallback chain.
+- **Notification fallback channels** - multi-provider mechanism is built and
+  tested (`ragra/adapters/notify.py`; every configured `NotificationProvider`
+  is attempted per send); but only one real provider (Hermes) is currently
+  configured in practice. Genuine redundancy needs a second real provider,
+  planned for Phase 1 (Email) and Phase 5 (Web Push).
 - **Automatic morning brief delivery** - not implemented; `ragra brief`
   exists as a CLI command and `/brief` as a web endpoint, but nothing
   schedules or sends it automatically.
@@ -290,9 +277,10 @@ Verified against the actual code, not assumed:
   `matching.py`/`registration.py` (which could derive one) was never
   wired in. The dashboard/reminders correctly fall back to full course
   names everywhere, so this is cosmetic, not a bug.
-- **Schema migrations** - no general framework. Only one targeted, one-off
-  idempotent column-add exists (for the reminder retry columns). Adding
-  the next new column will need the same manual treatment.
+- **Schema migrations** - a general migration framework is planned for Phase 1
+  (numbered append-only `.sql` files, applied from `connect()`). Until then,
+  targeted one-off idempotent column-adds (as used for reminder retry columns)
+  remain the pattern.
 - **Dashboard pagination** - only the Missed section has a preview/full-page
   split (added this session). Due Soon, Recently Completed, and Scheduled
   Reminders have no limit and will grow unbounded over time.
@@ -305,42 +293,34 @@ Verified against the actual code, not assumed:
 - **Semester analytics** - not implemented (completion rate, per-course
   stats, etc.).
 
-## Planned Roadmap
+## Roadmap
 
-### P0 (before relying on Ragra daily again)
-1. **Deploy the Cloud Run Jobs + Cloud Scheduler remote execution
-   path** - the actual laptop-off fix. Concrete blockers to clear first:
-   install/authenticate the `gcloud` CLI, start Docker Desktop (needed to
-   build/verify the container image locally before deploying), and enable
-   billing on the Google Cloud project. Then: package `ragra tick` behind
-   a thin Cloud-Storage download/upload wrapper around the existing SQLite
-   file (no rewrite of `ragra/db/repo.py`), store the 4 existing
-   credentials in Secret Manager, wire one Cloud Scheduler job, and
-   validate real idempotent execution with the Windows scheduled task
-   paused (to rule out a dual-writer conflict while this is unproven).
+**ROADMAP.md is the authoritative product roadmap and development plan.**
+**PROJECT_STATUS.md is this factual implementation snapshot.**
 
-### P1 (core academic-manager features)
-1. Class-aware reminders (built on the FAST timetable, now that it syncs)
-2. Richer task detail views (attachments, materials list)
-3. Snooze/cancel workflow on the dashboard
-4. Automatic morning brief delivery (send `ragra brief` on a schedule)
-5. **Notification fallback channel** - the multi-provider mechanism itself
-   is now built and tested (every configured `NotificationProvider` is
-   attempted per send; delivered if at least one succeeds - see
-   `ragra/adapters/notify.py`); still only ever has one real provider
-   (Hermes) configured in practice, since Web Push/email aren't
-   implemented yet. Genuine redundancy needs a second real provider.
-6. Course-code matching (wire in Hermes' registration/matching data)
-7. A minimal schema migration mechanism, before the next schema change
+The roadmap defines nine phases (P0–P8). Current status:
 
-### P2 (future intelligence/polish)
-1. Improved deadline-risk reasoning (structured, not just prose)
-2. AI chat / multi-turn planning ("what should I work on now," "move X to
-   tomorrow")
-3. Semester analytics (completion rate, per-course stats)
-4. ICS/Apple Calendar feed
-5. Dashboard pagination for the sections that will grow unbounded
-6. General UI/product polish
+| Phase | Duration | Milestone | Status |
+|-------|----------|-----------|--------|
+| **P0** | 1–2 days | Repository Hygiene / Clean Clone | In progress |
+| **P1** | 1.5–3 wk | Core Academic Intelligence (M1) | Planned |
+| **P2** | 3–6 wk | Complete Single-User Product (M2) | Planned |
+| **P3** | 3–5 wk | Identity + User Isolation (local) | Planned |
+| **P4** | 3–6 wk | Hosted Backend: Postgres + Remote Execution | Planned |
+| **P5** | 2–4 wk | Web Push + Notification Preferences | Planned |
+| **P6** | 3–5 wk | Pilot: 1–3 Real Users | Planned |
+| **P7** | 4–8 wk | Production Hardening + V1 Launch | Planned |
+| **P8** | Ongoing | Post-V1 (optional features) | Planned |
+
+**Key milestones:**
+- End of P1: Deterministic relevance filtering + Email provider
+- End of P2: Ragra is genuinely useful for personal daily use
+- End of P4: Remote execution; laptop can stay off
+- End of P6: 1–3 real users live with Ragra
+- End of P7: Public v1 launch (Google-verified, 14 success criteria met)
+
+See ROADMAP.md for detailed phase breakdowns, feature lists, allocation,
+estimates, and architectural decisions.
 
 ## How To Resume
 

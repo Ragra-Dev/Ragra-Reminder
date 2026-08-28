@@ -7,15 +7,12 @@ build/
 dist/
 
 # Ragra local data - never commit tokens, credentials, or the personal DB
-.env
-.env.local
-.env.production
+.env*
 *.db
 *.db-journal
 *.db-wal
 *.db-shm
 *.sqlite3
-the local development guide
 data/
 logs/
 *.log
@@ -27,3 +24,5 @@ logs/
 secrets/
 
 .pytest_cache/
+
+

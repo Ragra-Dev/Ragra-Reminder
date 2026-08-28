@@ -469,7 +469,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser(
         "timetable-sync",
-        help="Sync the FAST timetable (public spreadsheet, no OAuth) - manual only, not yet in `tick`",
+        help="Sync the FAST timetable (public spreadsheet, no OAuth) - runs automatically in `tick` every 15 minutes",
     ).set_defaults(func=cmd_timetable_sync)
 
     return parser
