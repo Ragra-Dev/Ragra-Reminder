@@ -302,15 +302,15 @@ The roadmap defines nine phases (P0–P8). Current status:
 
 | Phase | Duration | Milestone | Status |
 |-------|----------|-----------|--------|
-| **P0** | 1–2 days | Repository Hygiene / Clean Clone | In progress |
-| **P1** | 1.5–3 wk | Core Academic Intelligence (M1) | Planned |
-| **P2** | 3–6 wk | Complete Single-User Product (M2) | Planned |
-| **P3** | 3–5 wk | Identity + User Isolation (local) | Planned |
-| **P4** | 3–6 wk | Hosted Backend: Postgres + Remote Execution | Planned |
-| **P5** | 2–4 wk | Web Push + Notification Preferences | Planned |
-| **P6** | 3–5 wk | Pilot: 1–3 Real Users | Planned |
-| **P7** | 4–8 wk | Production Hardening + V1 Launch | Planned |
-| **P8** | Ongoing | Post-V1 (optional features) | Planned |
+| **P0** | 1–2 days | Repository Hygiene / Clean Clone | COMPLETED|
+| **P1** | 1.5–3 wk | Core Academic Intelligence (M1) | IN PROGRESS |
+| **P2** | 3–6 wk | Complete Single-User Product (M2) | PLANNED |
+| **P3** | 3–5 wk | Identity + User Isolation (local) | PLANNED |
+| **P4** | 3–6 wk | Hosted Backend: Postgres + Remote Execution | PLANNED |
+| **P5** | 2–4 wk | Web Push + Notification Preferences | PLANNED |
+| **P6** | 3–5 wk | Pilot: 1–3 Real Users | PLANNED |
+| **P7** | 4–8 wk | Production Hardening + V1 Launch | PLANNED |
+| **P8** | Ongoing | Post-V1 (optional features) | PLANNED |
 
 **Key milestones:**
 - End of P1: Deterministic relevance filtering + Email provider
