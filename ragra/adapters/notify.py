@@ -4,14 +4,15 @@ reminder engine and however a message actually gets delivered.
 ragra/reminders/dispatch.py and ragra/health.py depend only on the
 NotificationProvider protocol below (`send(notification) -> NotifyResult`) -
 they never import or know about Hermes, WhatsApp, Web Push, or email
-specifically. HermesProvider is the one concrete implementation that ships
-today: an optional, advanced-personal-integration provider wrapping Hermes'
-`hermes send` CLI. This is a pure process-boundary call - Ragra never
-imports Hermes' messaging/gateway internals, so a broken or upgraded Hermes
-install cannot corrupt Ragra state or break Ragra's imports. Future
-providers (email, Web Push) implement the same protocol and get added to
-ragra/cli.py's _build_providers() only - the reminder/health code that
-calls them never changes, and never needs to know which providers exist.
+specifically. HermesProvider and EmailProvider are the concrete
+implementations that ship today. HermesProvider wraps Hermes' `hermes send`
+CLI as a pure process-boundary call - Ragra never imports Hermes'
+messaging/gateway internals, so a broken or upgraded Hermes install cannot
+corrupt Ragra state or break Ragra's imports. EmailProvider speaks SMTP
+directly via the standard library. Future providers (Web Push) implement the
+same protocol and get added to ragra/cli.py's _build_providers() only - the
+reminder/health code that calls them never changes, and never needs to know
+which providers exist.
 
 Idempotency is the caller's responsibility (see ragra/reminders/dispatch.py):
 a provider only performs a single delivery attempt and reports success or
@@ -20,8 +21,10 @@ failure - it never decides whether a message has already been sent.
 
 from __future__ import annotations
 
+import smtplib
 import subprocess
 from dataclasses import dataclass
+from email.message import EmailMessage
 from pathlib import Path
 from typing import Protocol
 
@@ -49,7 +52,7 @@ class Notification:
 
 class NotificationProvider(Protocol):
     """The entire contract the reminder engine and health self-alert depend
-    on. Any provider - Hermes today, email/Web Push later - only ever needs
+    on. Any provider - Hermes, email today, Web Push later - only ever needs
     to implement this one method."""
 
     def send(self, notification: Notification) -> NotifyResult: ...
@@ -120,3 +123,59 @@ class HermesProvider:
 
     def send(self, notification: Notification) -> NotifyResult:
         return send_notification(hermes_bin=self.hermes_bin, target=self.target, message=notification.text)
+
+
+def _redact(text: str, *secrets: str | None) -> str:
+    """Defense-in-depth: strip any configured secret value out of an error
+    string before it can ever reach NotifyResult.error, storage, or logs -
+    even though smtplib exceptions don't normally echo back the password.
+    See docs/INTERFACES.md contract #1: providers report failure, they never
+    get to leak what they were configured with."""
+    redacted = text
+    for secret in secrets:
+        if secret:
+            redacted = redacted.replace(secret, "***")
+    return redacted
+
+
+@dataclass(frozen=True)
+class EmailProvider:
+    """Optional email provider, speaking SMTP directly via the standard
+    library - no third-party dependency. Constructed only by
+    ragra/cli.py's _build_providers(), only when SMTP host/from/to are all
+    configured (see ragra/config.py's RAGRA_SMTP_* / RAGRA_EMAIL_TO). Ragra
+    core works fully without it, same as HermesProvider."""
+
+    host: str
+    port: int
+    from_address: str
+    to_address: str
+    username: str | None = None
+    password: str | None = None
+    use_ssl: bool = False
+    base_url: str | None = None  # optional deep link to the dashboard, appended to the body
+
+    def send(self, notification: Notification) -> NotifyResult:
+        subject = f"Ragra: {notification.category}" if notification.category else "Ragra notification"
+        body = notification.text
+        if self.base_url:
+            body = f"{body}\n\nView in Ragra: {self.base_url}"
+
+        message = EmailMessage()
+        message["Subject"] = subject
+        message["From"] = self.from_address
+        message["To"] = self.to_address
+        message.set_content(body)
+
+        try:
+            smtp_class = smtplib.SMTP_SSL if self.use_ssl else smtplib.SMTP
+            with smtp_class(self.host, self.port, timeout=30) as smtp:
+                if not self.use_ssl:
+                    smtp.starttls()
+                if self.username and self.password:
+                    smtp.login(self.username, self.password)
+                smtp.send_message(message)
+        except (smtplib.SMTPException, OSError) as exc:
+            return NotifyResult(ok=False, error=_redact(str(exc), self.password))
+
+        return NotifyResult(ok=True)

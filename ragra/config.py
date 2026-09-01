@@ -55,6 +55,14 @@ class Config:
     web_port: int
     sheets_api_key: str | None
     fast_timetable_spreadsheet_id: str | None
+    smtp_host: str | None
+    smtp_port: int
+    smtp_username: str | None
+    smtp_password: str | None
+    smtp_use_ssl: bool
+    email_from: str | None
+    email_to: str | None
+    web_base_url: str | None
 
 
 def load_config() -> Config:
@@ -106,4 +114,17 @@ def load_config() -> Config:
         web_port=int(os.environ.get("RAGRA_WEB_PORT", "8731")),
         sheets_api_key=os.environ.get("RAGRA_SHEETS_API_KEY") or None,
         fast_timetable_spreadsheet_id=os.environ.get("RAGRA_FAST_TIMETABLE_SPREADSHEET_ID") or None,
+        # Email is an optional provider only, same as Hermes - RAGRA_SMTP_HOST,
+        # RAGRA_EMAIL_FROM, and RAGRA_EMAIL_TO must all be set for
+        # _build_providers() (ragra/cli.py) to construct an EmailProvider.
+        smtp_host=os.environ.get("RAGRA_SMTP_HOST") or None,
+        smtp_port=int(os.environ.get("RAGRA_SMTP_PORT", "587")),
+        smtp_username=os.environ.get("RAGRA_SMTP_USERNAME") or None,
+        smtp_password=os.environ.get("RAGRA_SMTP_PASSWORD") or None,
+        smtp_use_ssl=os.environ.get("RAGRA_SMTP_USE_SSL", "").strip().lower() in ("1", "true", "yes"),
+        email_from=os.environ.get("RAGRA_EMAIL_FROM") or None,
+        email_to=os.environ.get("RAGRA_EMAIL_TO") or None,
+        # Optional deep link appended to email bodies (see EmailProvider) -
+        # not required for email to work at all.
+        web_base_url=os.environ.get("RAGRA_WEB_BASE_URL") or None,
     )

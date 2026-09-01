@@ -27,7 +27,7 @@ from dotenv import load_dotenv
 
 from ragra.adapters import calendar as calendar_adapter
 from ragra.adapters import classroom as classroom_adapter
-from ragra.adapters.notify import HermesProvider, NotificationProvider
+from ragra.adapters.notify import EmailProvider, HermesProvider, NotificationProvider
 from ragra.config import Config, load_config
 from ragra.db.connection import connect_closing
 from ragra.reminders.dispatch import dispatch_due_reminders, preview_due_reminders
@@ -37,13 +37,28 @@ from ragra.sync.classroom_sync import sync_classroom
 
 def _build_providers(config: Config) -> list[NotificationProvider]:
     """Builds the list of currently-configured notification providers.
-    Hermes is an optional, advanced-personal integration - included only
-    when both HERMES_BIN and RAGRA_NOTIFY_TARGET are set. An empty list is
-    normal and fully supported: core Ragra (Classroom/Calendar/FAST sync,
-    the reminder engine) never requires any provider to be configured."""
+    Hermes and email are both optional - Hermes included only when
+    HERMES_BIN and RAGRA_NOTIFY_TARGET are set, email only when
+    RAGRA_SMTP_HOST, RAGRA_EMAIL_FROM, and RAGRA_EMAIL_TO are all set. An
+    empty list is normal and fully supported: core Ragra (Classroom/
+    Calendar/FAST sync, the reminder engine) never requires any provider to
+    be configured."""
     providers: list[NotificationProvider] = []
     if config.hermes_bin and config.notify_target:
         providers.append(HermesProvider(hermes_bin=config.hermes_bin, target=config.notify_target))
+    if config.smtp_host and config.email_from and config.email_to:
+        providers.append(
+            EmailProvider(
+                host=config.smtp_host,
+                port=config.smtp_port,
+                from_address=config.email_from,
+                to_address=config.email_to,
+                username=config.smtp_username,
+                password=config.smtp_password,
+                use_ssl=config.smtp_use_ssl,
+                base_url=config.web_base_url,
+            )
+        )
     return providers
 
 

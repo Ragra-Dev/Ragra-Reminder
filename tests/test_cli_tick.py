@@ -32,6 +32,14 @@ def _make_config(tmp_path: Path, *, spreadsheet_id: str | None, sheets_api_key: 
         web_port=8731,
         sheets_api_key=sheets_api_key,
         fast_timetable_spreadsheet_id=spreadsheet_id,
+        smtp_host=None,
+        smtp_port=587,
+        smtp_username=None,
+        smtp_password=None,
+        smtp_use_ssl=False,
+        email_from=None,
+        email_to=None,
+        web_base_url=None,
     )
 
 
