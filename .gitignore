@@ -1,3 +1,5 @@
+.gitignore
+
 __pycache__/
 *.pyc
 .venv/
@@ -24,5 +26,3 @@ logs/
 secrets/
 
 .pytest_cache/
-
-
