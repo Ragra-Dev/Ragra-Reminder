@@ -6,7 +6,7 @@ whatever provider(s) would actually be configured.
 from dataclasses import dataclass, field
 
 from ragra import health
-from ragra.adapters.notify import NotifyResult
+from ragra.adapters.notify import Notification, NotifyResult
 
 
 @dataclass
@@ -14,8 +14,8 @@ class FakeProvider:
     result: NotifyResult
     calls: list[str] = field(default_factory=list)
 
-    def send(self, message: str) -> NotifyResult:
-        self.calls.append(message)
+    def send(self, notification: Notification) -> NotifyResult:
+        self.calls.append(notification.text)
         return self.result
 
 

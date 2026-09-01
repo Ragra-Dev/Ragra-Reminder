@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Callable
 
-from ragra.adapters.notify import NotifyResult
+from ragra.adapters.notify import Notification, NotifyResult
 from ragra.db import repo
 from ragra.reminders.dispatch import MAX_ATTEMPTS, RETRY_DELAY, dispatch_due_reminders
 
@@ -20,14 +20,15 @@ from ragra.reminders.dispatch import MAX_ATTEMPTS, RETRY_DELAY, dispatch_due_rem
 class FakeProvider:
     """Test double satisfying NotificationProvider. `result` may be a fixed
     NotifyResult or a zero-arg callable for behavior that varies across
-    calls (e.g. fails once, then succeeds). Records every message passed to
-    send() so a test can assert exactly how many real attempts happened."""
+    calls (e.g. fails once, then succeeds). Records the text of every
+    notification passed to send() so a test can assert exactly how many real
+    attempts happened."""
 
     result: NotifyResult | Callable[[], NotifyResult]
     calls: list[str] = field(default_factory=list)
 
-    def send(self, message: str) -> NotifyResult:
-        self.calls.append(message)
+    def send(self, notification: Notification) -> NotifyResult:
+        self.calls.append(notification.text)
         return self.result() if callable(self.result) else self.result
 
 

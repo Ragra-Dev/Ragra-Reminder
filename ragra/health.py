@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from ragra.adapters.notify import NotificationProvider, send_to_all_providers
+from ragra.adapters.notify import Notification, NotificationProvider, send_to_all_providers
 from ragra.db import repo
 
 # Three consecutive failed 15-minute ticks (~45 minutes) before alerting -
@@ -83,8 +83,9 @@ def check_and_alert(conn: sqlite3.Connection, *, providers: list[NotificationPro
         for r in rows
     ]
     message = "Ragra health alert - needs attention:\n" + "\n".join(lines)
+    notification = Notification(text=message, category="HEALTH_ALERT")
 
-    delivered, _errors = send_to_all_providers(providers, message)
+    delivered, _errors = send_to_all_providers(providers, notification)
     if not delivered:
         # Couldn't deliver the alert through any configured provider - leave
         # last_alert_sent_at unset so the next check tries again, rather

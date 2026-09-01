@@ -33,7 +33,7 @@ import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
-from ragra.adapters.notify import NotificationProvider, send_to_all_providers
+from ragra.adapters.notify import Notification, NotificationProvider, send_to_all_providers
 from ragra.db import repo
 from ragra.reminders.engine import reminder_message
 
@@ -100,7 +100,10 @@ def dispatch_due_reminders(
             summary.skipped_not_configured += 1
             continue
 
-        delivered, errors = send_to_all_providers(providers, message)
+        notification = Notification(
+            text=message, reminder_id=reminder["id"], category=reminder["reminder_type"]
+        )
+        delivered, errors = send_to_all_providers(providers, notification)
 
         if delivered:
             repo.mark_reminder_sent(conn, reminder_id=reminder["id"])

@@ -2,16 +2,16 @@
 reminder engine and however a message actually gets delivered.
 
 ragra/reminders/dispatch.py and ragra/health.py depend only on the
-NotificationProvider protocol below (`send(message) -> NotifyResult`) - they
-never import or know about Hermes, WhatsApp, Web Push, or email specifically.
-HermesProvider is the one concrete implementation that ships today: an
-optional, advanced-personal-integration provider wrapping Hermes' `hermes
-send` CLI. This is a pure process-boundary call - Ragra never imports
-Hermes' messaging/gateway internals, so a broken or upgraded Hermes install
-cannot corrupt Ragra state or break Ragra's imports. Future providers (Web
-Push, email) implement the same protocol and get added to
+NotificationProvider protocol below (`send(notification) -> NotifyResult`) -
+they never import or know about Hermes, WhatsApp, Web Push, or email
+specifically. HermesProvider is the one concrete implementation that ships
+today: an optional, advanced-personal-integration provider wrapping Hermes'
+`hermes send` CLI. This is a pure process-boundary call - Ragra never
+imports Hermes' messaging/gateway internals, so a broken or upgraded Hermes
+install cannot corrupt Ragra state or break Ragra's imports. Future
+providers (email, Web Push) implement the same protocol and get added to
 ragra/cli.py's _build_providers() only - the reminder/health code that
-calls them never changes, and never needs to know Hermes exists.
+calls them never changes, and never needs to know which providers exist.
 
 Idempotency is the caller's responsibility (see ragra/reminders/dispatch.py):
 a provider only performs a single delivery attempt and reports success or
@@ -36,15 +36,28 @@ class NotifyResult:
     error: str | None = None
 
 
+@dataclass(frozen=True)
+class Notification:
+    """What gets sent, independent of how. `reminder_id`/`category` exist
+    for delivery tracking and future per-category routing policy (e.g. email
+    vs push) - providers that don't need them simply ignore them."""
+
+    text: str
+    reminder_id: int | None = None
+    category: str | None = None
+
+
 class NotificationProvider(Protocol):
     """The entire contract the reminder engine and health self-alert depend
-    on. Any provider - Hermes today, Web Push/email later - only ever needs
+    on. Any provider - Hermes today, email/Web Push later - only ever needs
     to implement this one method."""
 
-    def send(self, message: str) -> NotifyResult: ...
+    def send(self, notification: Notification) -> NotifyResult: ...
 
 
-def send_to_all_providers(providers: list[NotificationProvider], message: str) -> tuple[bool, list[str]]:
+def send_to_all_providers(
+    providers: list[NotificationProvider], notification: Notification
+) -> tuple[bool, list[str]]:
     """Shared fan-out used by both ragra/reminders/dispatch.py and
     ragra/health.py: attempts every configured provider (no short-circuit
     on the first success) so a caller can tell whether at least one
@@ -54,7 +67,7 @@ def send_to_all_providers(providers: list[NotificationProvider], message: str) -
     errors: list[str] = []
     delivered = False
     for provider in providers:
-        result = provider.send(message)
+        result = provider.send(notification)
         if result.ok:
             delivered = True
         else:
@@ -105,5 +118,5 @@ class HermesProvider:
     hermes_bin: Path
     target: str
 
-    def send(self, message: str) -> NotifyResult:
-        return send_notification(hermes_bin=self.hermes_bin, target=self.target, message=message)
+    def send(self, notification: Notification) -> NotifyResult:
+        return send_notification(hermes_bin=self.hermes_bin, target=self.target, message=notification.text)
