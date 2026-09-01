@@ -6,6 +6,8 @@ import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 
+from ragra.db.migrator import apply_pending_migrations
+
 _SCHEMA_PATH = Path(__file__).parent / "schema.sql"
 
 
@@ -59,6 +61,10 @@ def connect(db_path: Path) -> sqlite3.Connection:
     _ensure_reminder_retry_columns(conn)
     _ensure_timetable_columns(conn)
     conn.commit()
+    # Runs after the schema/legacy fixes above so the numbered migration
+    # baseline (0001) always finds a database already in the same known
+    # state, whether this is a brand-new file or a real, years-old one.
+    apply_pending_migrations(conn)
     return conn
 
 

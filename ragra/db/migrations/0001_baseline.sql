@@ -1,0 +1,19 @@
+-- 0001_baseline
+--
+-- Marks the schema established by ragra/db/schema.sql (CREATE TABLE IF NOT
+-- EXISTS, applied on every connect()) plus the two legacy, hand-written
+-- column migrations in ragra/db/connection.py
+-- (_ensure_reminder_retry_columns, _ensure_timetable_columns) as the known
+-- starting point for this numbered migration system.
+--
+-- Deliberately contains no DDL of its own. Those two legacy fixes already
+-- ran, unconditionally and idempotently, before this file is ever reached
+-- (see connect()) - replaying their ALTER TABLE ADD COLUMN statements here
+-- would fail on every real database that already has those columns, since
+-- SQLite's ADD COLUMN has no IF NOT EXISTS guard. Re-deriving the current
+-- schema from a genuinely blank connection is exactly what schema.sql
+-- already does correctly; duplicating it here would only create a second
+-- place for the two to drift apart.
+--
+-- All migrations from 0002 onward are real, additive schema changes,
+-- applied by ragra/db/migrator.py and tracked in schema_migrations.
