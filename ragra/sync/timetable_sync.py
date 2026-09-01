@@ -27,7 +27,8 @@ from ragra.adapters.fast_timetable import (
     extract_classes_from_grid,
 )
 from ragra.db import repo
-from ragra.timetable.enrollment import MY_ENROLLMENT, TARGET_PROGRAM, EnrolledCourse
+from ragra.relevance.profile import load_profile
+from ragra.timetable.enrollment import EnrolledCourse
 from ragra.timetable.match import AmbiguousMatchError, match_cell
 from ragra.timetable.normalize import ParsedCell, normalize_course_text, normalize_section
 
@@ -70,8 +71,11 @@ def sync_timetable(
     client: FastTimetableClient,
     *,
     spreadsheet_id: str,
-    enrollment: tuple[EnrolledCourse, ...] = MY_ENROLLMENT,
+    enrollment: tuple[EnrolledCourse, ...] | None = None,
 ) -> TimetableSyncSummary:
+    profile = load_profile()
+    if enrollment is None:
+        enrollment = profile.enrollment_config["enrollment"]
     repo.record_sync_start(conn, source="timetable")
 
     try:
@@ -126,7 +130,7 @@ def sync_timetable(
         for occurrence_index, (sheet, matched) in enumerate(entries):
             summary.classes_found += 1
             external_id = _external_id(
-                program=TARGET_PROGRAM,
+                program=profile.program,
                 batch_year=enrolled.batch_year,
                 section=section,
                 course_name=course_name,
@@ -138,7 +142,7 @@ def sync_timetable(
                 conn,
                 external_id=external_id,
                 course_name=course_name,
-                program=TARGET_PROGRAM,
+                program=profile.program,
                 batch_year=enrolled.batch_year,
                 enrollment_type=enrollment_type,
                 day_of_week=matched.day_of_week,

@@ -102,26 +102,35 @@ This invariant is enforced by test: if a future edge case breaks it, the test fa
 
 ## 4. UserAcademicProfile
 
-**Location:** `ragra/timetable/profile.py` (to be created)
+**Location:** `ragra/relevance/profile.py` (to be created)
 
 **Proposed Signature:**
 ```python
 @dataclass
 class UserAcademicProfile:
     program: str                    # e.g., "CS", "SE", "EE"
-    current_semester: int           # e.g., 4
-    enrolled_courses: list[str]     # Course codes e.g. ["CS-1004", "MA-1000"]
-    section_labels: dict[str, str]  # {course_code: "A", "B", "C", ...}
+    expected_semester: int          # derived, descriptive only - see below
+    enrolled_courses: list[str]     # FAST enrollment course names, e.g. ["OOP Theory", "DLD"]
+    section_labels: dict[str, str]  # {course_name: "CS-A", "CS-B", "CS-C", ...}
     enrollment_config: dict         # Raw FAST enrollment rules (internal)
 
-def load_profile(user_id: str | None = None) -> UserAcademicProfile:
-    """Load the academic profile for this user (or the default user if None)."""
+def load_profile(user_id: str | None = None, *, today: date | None = None) -> UserAcademicProfile:
+    """Load the academic profile for this user (or the default user if None).
+    `today` is injectable for deterministic testing of expected_semester;
+    defaults to date.today()."""
 ```
 
 **Semantics:**
 - **Phase 0→1 (single-user):** `user_id` is accepted but ignored; returns hardcoded profile from `ragra/timetable/enrollment.py`.
 - **Phase 3 (multi-user):** `user_id` fetches a row from `user_profiles` table; same signature, different source.
 - No consumer ever imports `MY_ENROLLMENT` as a module constant again.
+- `enrolled_courses`/`section_labels` are keyed by FAST's own course names (`ragra/timetable/enrollment.py`), not Classroom course codes — no crosswalk between the two systems exists yet. An earlier draft of this contract illustrated Classroom-style codes here; corrected to match the only real, non-invented data source available in Phase 0→1.
+
+**`expected_semester` — naming and derivation (decided before implementation, this phase):**
+- Originally drafted as `current_semester`; renamed because "current" implies an authoritative, actual fact, and this value is neither. It is computed, at `load_profile()` time, from hand-edited `ENROLLMENT_START_YEAR` / `ENROLLMENT_START_TERM` constants in `ragra/timetable/enrollment.py` plus the current date — never hardcoded as a bare integer that goes stale.
+- **Purely descriptive/contextual metadata.** It means "the semester this student's cohort would nominally be in," not "the semester whose courses this student is actually taking."
+- **Hard constraint, enforced by test:** `expected_semester` is never read by `is_relevant()` and never used to filter, suppress, or decide eligibility for a Classroom-enrolled course or its content. A student may be enrolled in a course from an earlier catalog semester (frozen semester, repeat, delayed prerequisite, etc.), and that course remains fully relevant regardless of `expected_semester`.
+- Authoritative course eligibility remains, unchanged: (1) active Classroom enrollment (Ragra only ever sees courses Classroom returns for this account) plus an explicit opt-out exclude list, and (2) `is_relevant()`'s section-level matching for courses Classroom bundles into multiple sections. `expected_semester` is not a third eligibility signal and must never become one.
 
 **Contracts:**
 - Every sync stage calls `load_profile()` at the start; never reads enrollment from module-level state.

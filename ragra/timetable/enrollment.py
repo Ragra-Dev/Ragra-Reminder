@@ -49,6 +49,12 @@ class EnrolledCourse:
 TARGET_PROGRAM = "CS"
 TARGET_BATCH_YEAR = "2025"
 
+# Enrollment start term, used only to derive UserAcademicProfile.expected_semester
+# (ragra/relevance/profile.py) - purely descriptive metadata, never an
+# eligibility filter. See docs/INTERFACES.md contract #4 for why.
+ENROLLMENT_START_YEAR = int(TARGET_BATCH_YEAR)
+ENROLLMENT_START_TERM = "FALL"  # "FALL" or "SPRING"
+
 MY_ENROLLMENT: tuple[EnrolledCourse, ...] = (
     EnrolledCourse("Linear Algebra", "CS-G", REGULAR, batch_year=TARGET_BATCH_YEAR, aliases=("LA",)),
     EnrolledCourse("DLD", "CS-G", REGULAR, batch_year=TARGET_BATCH_YEAR, aliases=("Digital Logic",)),
