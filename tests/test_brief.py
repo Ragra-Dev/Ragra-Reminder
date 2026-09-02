@@ -40,6 +40,46 @@ def test_brief_is_deterministic_and_reflects_real_state(conn):
     assert "DUE TODAY (1):" in text
 
 
+def test_due_today_uses_the_campus_calendar_day_not_the_utc_day(conn):
+    # now = 17:00 PKT on 15 Jan (campus day 15 Jan).
+    # The task is due 20:00 UTC, which is still 15 Jan by UTC reckoning but
+    # is 01:00 on 16 Jan on campus. Under the old UTC-day boundary this was
+    # wrongly reported as due today; under the campus day it is not.
+    now = datetime(2026, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
+    course_id = _make_course(conn)
+    repo.upsert_task_from_source(
+        conn, course_id=course_id, source_type="coursework", external_id="cw-next-campus-day",
+        title="Next Campus Day Task", description=None, link=None, kind="ACTIONABLE",
+        actual_deadline=datetime(2026, 1, 15, 20, 0, 0, tzinfo=timezone.utc).isoformat(),
+        source_published_at=repo.now_iso(), source_updated_at=repo.now_iso(),
+    )
+
+    text = build_deterministic_brief(conn, now=now)
+
+    assert "DUE TODAY (0):" in text
+    # Fail-open: still fully visible, just not claimed to be due today.
+    assert "Next Campus Day Task" in text
+
+
+def test_brief_renders_deadlines_in_campus_time_with_a_zone_label(conn):
+    now = datetime(2026, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
+    course_id = _make_course(conn)
+    repo.upsert_task_from_source(
+        conn, course_id=course_id, source_type="coursework", external_id="cw-display",
+        title="Display Check", description=None, link=None, kind="ACTIONABLE",
+        actual_deadline="2026-01-16T23:59:00+00:00",
+        source_published_at=repo.now_iso(), source_updated_at=repo.now_iso(),
+    )
+
+    text = build_deterministic_brief(conn, now=now)
+
+    # 23:59 UTC is 04:59 the next campus morning - the raw UTC string would
+    # have shown the wrong day to the reader.
+    assert "17 Jan" in text
+    assert "PKT" in text
+    assert "2026-01-16T23:59:00+00:00" not in text
+
+
 def test_brief_never_invents_data_when_database_is_empty(conn):
     now = datetime.now(timezone.utc)
     text = build_deterministic_brief(conn, now=now)

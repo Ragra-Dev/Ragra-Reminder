@@ -123,7 +123,7 @@ def test_cancelled_task_removes_calendar_event(conn):
     client = FakeCalendarClient()
     sync_task_event(conn, client, calendar_id="primary", task_id=task_id)
 
-    repo.cancel_task(conn, task_id=task_id)
+    repo.cancel_task_from_source(conn, task_id=task_id)
     outcome = sync_task_event(conn, client, calendar_id="primary", task_id=task_id)
 
     assert outcome == "removed"

@@ -94,7 +94,7 @@ def test_cancelled_task_is_not_marked_missed(conn):
         title="Cancelled Assignment", description=None, link=None, kind="ACTIONABLE",
         actual_deadline=past, source_published_at=repo.now_iso(), source_updated_at=repo.now_iso(),
     )
-    repo.cancel_task(conn, task_id=result.task_id)
+    repo.cancel_task_from_source(conn, task_id=result.task_id)
 
     missed = repo.mark_overdue_tasks_as_missed(conn, now=datetime.now(timezone.utc).isoformat())
 

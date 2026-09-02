@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Ragra - Tasks</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 780px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
+  h1 { margin-bottom: 0.25rem; }
+  h2 { margin-top: 2rem; border-bottom: 1px solid #ddd; padding-bottom: 0.25rem; }
+  nav a { margin-right: 1rem; color: #1d4ed8; text-decoration: none; font-size: 0.9rem; }
+  .task { padding: 0.6rem 0; border-bottom: 1px solid #eee; }
+  .task .meta { color: #666; font-size: 0.85rem; }
+  .badge { font-size: 0.7rem; padding: 0.1rem 0.5rem; border-radius: 999px; font-weight: 600; }
+  .badge.actual { background: #e7f0ff; color: #1d4ed8; }
+  .badge.personal { background: #eafaf0; color: #147a3c; }
+  form.inline { display: inline; }
+  button { cursor: pointer; border: 1px solid #ccc; background: #fff; border-radius: 6px; padding: 0.25rem 0.6rem; font-size: 0.85rem; }
+  button:hover { background: #f0f0f0; }
+  .empty { color: #888; font-style: italic; }
+  .new-task { background: #f8f9fb; border: 1px solid #e3e6ee; border-radius: 8px; padding: 1rem; margin: 1rem 0; }
+  .new-task label { display: block; font-size: 0.8rem; color: #444; margin-top: 0.5rem; }
+  .new-task input, .new-task textarea { width: 100%; padding: 0.4rem; border: 1px solid #ccc; border-radius: 4px; font-family: inherit; }
+</style>
+</head>
+<body>
+<h1>Tasks</h1>
+<nav><a href="/">Today</a><a href="/missed">Missed</a><a href="/deliveries">Deliveries</a></nav>
+
+<div class="new-task">
+  <form method="post" action="/tasks/new">
+    <strong>New personal task</strong>
+    <label>Title <input type="text" name="title" required></label>
+    <label>Notes <textarea name="description" rows="2"></textarea></label>
+    <label>Due (YYYY-MM-DD or ISO date-time) <input type="text" name="actual_deadline" placeholder="2026-09-15"></label>
+    <label>I plan to do it by <input type="text" name="personal_deadline" placeholder="2026-09-14"></label>
+    <p><button type="submit">Add task</button></p>
+  </form>
+</div>
+
+<h2>Your tasks ({{ tasks|length }})</h2>
+{% if tasks %}
+  {% for task in tasks %}
+    <div class="task">
+      <div>
+        <strong>{{ task.title }}</strong>
+        {% if task.actual_deadline %}<span class="badge actual">due {{ task.actual_deadline }}</span>{% endif %}
+        {% if task.personal_deadline %}<span class="badge personal">plan {{ task.personal_deadline }}</span>{% endif %}
+      </div>
+      {% if task.description %}<div class="meta">{{ task.description }}</div>{% endif %}
+      <div class="meta">
+        {{ task.status }}
+        <form class="inline" method="post" action="/tasks/{{ task.id }}/complete">
+          <button type="submit">Complete</button>
+        </form>
+        <form class="inline" method="post" action="/tasks/{{ task.id }}/cancel">
+          <button type="submit">Cancel</button>
+        </form>
+      </div>
+      <form method="post" action="/tasks/{{ task.id }}/edit">
+        <input type="text" name="title" value="{{ task.title }}">
+        <input type="text" name="description" value="{{ task.description or '' }}">
+        <input type="text" name="actual_deadline" value="{{ task.actual_deadline or '' }}">
+        <button type="submit">Save</button>
+      </form>
+    </div>
+  {% endfor %}
+{% else %}
+  <p class="empty">No personal tasks yet.</p>
+{% endif %}
+
+</body>
+</html>

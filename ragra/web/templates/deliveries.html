@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Ragra - Notification deliveries</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
+  h1 { margin-bottom: 0.25rem; }
+  nav a { margin-right: 1rem; color: #1d4ed8; text-decoration: none; font-size: 0.9rem; }
+  table { border-collapse: collapse; width: 100%; margin-top: 1rem; font-size: 0.9rem; }
+  th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid #eee; vertical-align: top; }
+  th { color: #555; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.03em; }
+  .ok { color: #1e7d34; font-weight: 600; }
+  .failed { color: #9c1c1c; font-weight: 600; }
+  .empty { color: #888; font-style: italic; }
+  .error { color: #7a1f1f; font-size: 0.85rem; }
+</style>
+</head>
+<body>
+<h1>Notification deliveries</h1>
+<nav><a href="/">Today</a><a href="/tasks">Tasks</a><a href="/missed">Missed</a></nav>
+<p class="meta">One row per provider per attempt. Provider configuration and credentials are never recorded here.</p>
+
+{% if deliveries %}
+<table>
+  <tr><th>When</th><th>Provider</th><th>Category</th><th>Result</th><th>Error</th></tr>
+  {% for row in deliveries %}
+    <tr>
+      <td>{{ row.attempted_at }}</td>
+      <td>{{ row.provider }}</td>
+      <td>{{ row.category or '—' }}</td>
+      <td>{% if row.ok %}<span class="ok">delivered</span>{% else %}<span class="failed">failed</span>{% endif %}</td>
+      <td class="error">{{ row.error or '' }}</td>
+    </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p class="empty">No delivery attempts recorded yet.</p>
+{% endif %}
+
+</body>
+</html>

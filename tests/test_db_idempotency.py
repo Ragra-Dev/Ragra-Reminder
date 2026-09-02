@@ -17,7 +17,9 @@ def test_repeated_course_sync_does_not_duplicate(conn):
     id1 = _make_course(conn)
     id2 = _make_course(conn)
     assert id1 == id2
-    count = conn.execute("SELECT COUNT(*) AS c FROM courses").fetchone()["c"]
+    count = conn.execute(
+        "SELECT COUNT(*) AS c FROM courses WHERE external_id = 'course-1'"
+    ).fetchone()["c"]
     assert count == 1
 
 

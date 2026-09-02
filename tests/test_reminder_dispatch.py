@@ -207,7 +207,7 @@ def test_completed_task_reminder_is_never_dispatched(conn):
 
 def test_cancelled_task_reminder_is_never_dispatched(conn):
     task_id = _make_task_with_reminder(conn, scheduled_for=PAST)
-    repo.cancel_task(conn, task_id=task_id)
+    repo.cancel_task_from_source(conn, task_id=task_id)
     provider = FakeProvider(NotifyResult(ok=True))
 
     summary = dispatch_due_reminders(conn, providers=[provider], now=NOW)

@@ -16,12 +16,33 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from ragra.db import repo
+from ragra.tz import format_local, format_stored_local, local_day_bounds, utc_iso
+
+
+def _todays_classes(conn: sqlite3.Connection, *, now: datetime) -> list:
+    """Today's classes, computed on demand from the weekly timetable
+    pattern. Best-effort: a timetable problem (a malformed stored time, or
+    missing timezone data) must not take the whole brief down, since every
+    deadline fact in it is still correct and useful."""
+    from ragra.timetable.schedule import occurrences_for_local_day, weekly_class_from_row
+
+    try:
+        rows = repo.list_timetable_events(conn)
+        return occurrences_for_local_day(
+            [weekly_class_from_row(row) for row in rows], instant=now
+        )
+    except Exception:  # noqa: BLE001 - the brief degrades, never fails
+        return []
 
 
 def build_deterministic_brief(conn: sqlite3.Connection, *, now: datetime) -> str:
-    now_iso = now.isoformat()
-    end_of_today_iso = now.replace(hour=23, minute=59, second=59, microsecond=0).isoformat()
-    week_end_iso = (now + timedelta(days=7)).isoformat()
+    now_iso = utc_iso(now)
+    # "Today" is the campus calendar day, not the UTC one. These differ for
+    # five hours of every day, during which a UTC-day boundary silently
+    # moved work into or out of "due today" - see ragra/tz.py.
+    _day_start, day_end = local_day_bounds(now)
+    end_of_today_iso = utc_iso(day_end)
+    week_end_iso = utc_iso(now + timedelta(days=7))
 
     overdue = repo.overdue_tasks(conn, now=now_iso)
     due_today = repo.tasks_due_between(conn, start_iso=now_iso, end_iso=end_of_today_iso)
@@ -37,9 +58,24 @@ def build_deterministic_brief(conn: sqlite3.Connection, *, now: datetime) -> str
 
     def _line(t: sqlite3.Row) -> str:
         course = t["course_code"] or t["course_name"]
-        return f"  - {course}: {t['title']} (due {t['actual_deadline']})"
+        return f"  - {course}: {t['title']} (due {format_stored_local(t['actual_deadline'])})"
 
-    lines = [f"Good morning. Here is your academic status as of {now_iso}.", ""]
+    lines = [f"Good morning. Here is your academic status as of {format_local(now)}.", ""]
+
+    classes = _todays_classes(conn, now=now)
+    lines.append(f"CLASSES TODAY ({len(classes)}):")
+    if classes:
+        for occurrence in classes:
+            room = f" - {occurrence.room}" if occurrence.room else ""
+            cancelled = " [CANCELLED]" if occurrence.is_cancelled else ""
+            lines.append(
+                f"  - {occurrence.starts_at_local.strftime('%H:%M')}"
+                f"-{occurrence.ends_at_local.strftime('%H:%M')} "
+                f"{occurrence.course_name}{room}{cancelled}"
+            )
+    else:
+        lines.append("  (none)")
+    lines.append("")
 
     lines.append(f"OVERDUE ({len(overdue)}):")
     if overdue:
@@ -65,7 +101,10 @@ def build_deterministic_brief(conn: sqlite3.Connection, *, now: datetime) -> str
     lines.append(f"REMINDERS FIRING TODAY ({len(reminders_today)}):")
     if reminders_today:
         for r in reminders_today:
-            lines.append(f"  - [{r['reminder_type']}] {r['course_code']}: {r['task_title']} at {r['scheduled_for']}")
+            lines.append(
+                f"  - [{r['reminder_type']}] {r['course_code']}: {r['task_title']} "
+                f"at {format_stored_local(r['scheduled_for'])}"
+            )
     else:
         lines.append("  (none)")
 
@@ -79,8 +118,8 @@ def build_full_brief(conn: sqlite3.Connection, *, now: datetime, hermes_bin: Pat
     clear note rather than an import failure."""
     text = build_deterministic_brief(conn, now=now)
 
-    now_iso = now.isoformat()
-    week_end_iso = (now + timedelta(days=7)).isoformat()
+    now_iso = utc_iso(now)
+    week_end_iso = utc_iso(now + timedelta(days=7))
     try:
         from ragra.adapters.ai import AIAdapterError
         from ragra.ai.advisor import ask_for_priorities

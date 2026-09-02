@@ -23,12 +23,23 @@
   button { cursor: pointer; border: 1px solid #ccc; background: #fff; border-radius: 6px; padding: 0.25rem 0.6rem; font-size: 0.85rem; }
   button:hover { background: #f0f0f0; }
   .empty { color: #888; font-style: italic; }
+  nav { margin: 0.5rem 0 1rem; }
+  nav a { margin-right: 1rem; color: #1d4ed8; text-decoration: none; font-size: 0.9rem; }
   .reminder-row { padding: 0.4rem 0; border-bottom: 1px solid #eee; font-size: 0.9rem; }
   .reminder-row .meta { color: #666; font-size: 0.8rem; }
 </style>
 </head>
 <body>
   <h1>Today</h1>
+  <nav>
+    <a href="/">Today</a>
+    <a href="#schedule">Schedule</a>
+    <a href="#deadlines">Deadlines</a>
+    <a href="/tasks">Tasks</a>
+    <a href="/announcements">Announcements</a>
+    <a href="/missed">Missed</a>
+    <a href="/deliveries">Deliveries</a>
+  </nav>
 
   {% if priority %}
   <div class="priority">
@@ -37,7 +48,60 @@
   </div>
   {% endif %}
 
-  <h2>Overdue</h2>
+  <h2 id="schedule">Schedule</h2>
+  {% if classes_today %}
+    {% for c in classes_today %}
+    <div class="task">
+      <div>
+        <strong>{{ c.starts_at_local.strftime('%H:%M') }}-{{ c.ends_at_local.strftime('%H:%M') }}</strong>
+        {{ c.course_name }}
+        {% if c.is_cancelled %}<span class="badge missed">cancelled</span>{% endif %}
+        <div class="meta">
+          {% if c.room %}{{ c.room }}{% endif %}
+          {% if c.section %} · {{ c.section }}{% endif %}
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  {% else %}
+    <p class="empty">No classes scheduled today.</p>
+  {% endif %}
+
+  <h2 id="announcements">Announcements{% if announcements %} ({{ announcements|length }}){% endif %}</h2>
+  {% if announcements %}
+    {% for a in announcements %}
+    <div class="task">
+      <div>
+        {{ a.course_code or a.course_name }} - <a href="/tasks/{{ a.id }}">{{ a.title }}</a>
+        {% if a.child_task_id %}<span class="badge done">task created</span>{% endif %}
+      </div>
+    </div>
+    {% endfor %}
+    <p class="meta"><a href="/announcements">Triage announcements</a></p>
+  {% else %}
+    <p class="empty">Nothing awaiting triage.</p>
+  {% endif %}
+
+  <h2 id="tasks">Your tasks{% if personal_tasks %} ({{ personal_tasks|length }}){% endif %}</h2>
+  {% if personal_tasks %}
+    {% for t in personal_tasks %}
+    <div class="task">
+      <div>
+        <a href="/tasks/{{ t.id }}">{{ t.title }}</a>
+        {% if t.actual_deadline %}<span class="badge actual">due {{ t.actual_deadline }}</span>{% endif %}
+        {% if t.personal_deadline %}<span class="badge personal">plan {{ t.personal_deadline }}</span>{% endif %}
+      </div>
+      <form class="inline" method="post" action="/tasks/{{ t.id }}/complete">
+        <button type="submit">Mark complete</button>
+      </form>
+    </div>
+    {% endfor %}
+    <p class="meta"><a href="/tasks">Manage tasks</a></p>
+  {% else %}
+    <p class="empty">No personal tasks. <a href="/tasks">Add one</a>.</p>
+  {% endif %}
+
+  <h2 id="deadlines">Overdue</h2>
   {% if overdue %}
     {% for t in overdue %}
     <div class="task">

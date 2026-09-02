@@ -46,7 +46,7 @@ def test_complete_task_removes_it_from_overdue(client):
 
     resp = client.get("/")
     # No longer flagged as overdue work needing action...
-    overdue_section = resp.text.split("<h2>Due today</h2>")[0]
+    overdue_section = resp.text.split("Due today</h2>")[0]
     assert "Assignment 2" not in overdue_section
     # ...but it should now surface in "Recently completed" (Phase 4:
     # the dashboard must be able to answer "what have I completed?").
@@ -161,15 +161,15 @@ def test_missed_task_appears_in_missed_section(client):
     conn.close()
 
     resp = client.get("/")
-    missed_section = resp.text.split("<h2>Missed")[1].split("<h2>Due today</h2>")[0]
+    missed_section = resp.text.split("<h2>Missed")[1].split("Due today</h2>")[0]
     assert "Assignment 2" in missed_section
     assert "missed" in missed_section.lower()
 
 
 def test_overdue_task_stays_in_overdue_section_and_not_in_missed(client):
     resp = client.get("/")
-    overdue_section = resp.text.split("<h2>Overdue</h2>")[1].split("<h2>Missed")[0]
-    missed_section = resp.text.split("<h2>Missed")[1].split("<h2>Due today</h2>")[0]
+    overdue_section = resp.text.split("Overdue</h2>")[1].split("<h2>Missed")[0]
+    missed_section = resp.text.split("<h2>Missed")[1].split("Due today</h2>")[0]
     assert "Assignment 2" in overdue_section
     assert "Assignment 2" not in missed_section
 
@@ -183,8 +183,8 @@ def test_completed_task_does_not_appear_in_overdue_or_missed(client):
     conn.close()
 
     resp = client.get("/")
-    overdue_section = resp.text.split("<h2>Overdue</h2>")[1].split("<h2>Missed")[0]
-    missed_section = resp.text.split("<h2>Missed")[1].split("<h2>Due today</h2>")[0]
+    overdue_section = resp.text.split("Overdue</h2>")[1].split("<h2>Missed")[0]
+    missed_section = resp.text.split("<h2>Missed")[1].split("Due today</h2>")[0]
     assert "Completed Long Ago" not in overdue_section
     assert "Completed Long Ago" not in missed_section
 
@@ -194,12 +194,12 @@ def test_cancelled_task_does_not_appear_in_overdue_or_missed(client):
     cancelled_id = _make_task(conn, external_id="cw-cancelled", title="Cancelled Assignment")
     conn.close()
     conn = connect(client.db_path)
-    repo.cancel_task(conn, task_id=cancelled_id)
+    repo.cancel_task_from_source(conn, task_id=cancelled_id)
     conn.close()
 
     resp = client.get("/")
-    overdue_section = resp.text.split("<h2>Overdue</h2>")[1].split("<h2>Missed")[0]
-    missed_section = resp.text.split("<h2>Missed")[1].split("<h2>Due today</h2>")[0]
+    overdue_section = resp.text.split("Overdue</h2>")[1].split("<h2>Missed")[0]
+    missed_section = resp.text.split("<h2>Missed")[1].split("Due today</h2>")[0]
     assert "Cancelled Assignment" not in overdue_section
     assert "Cancelled Assignment" not in missed_section
 

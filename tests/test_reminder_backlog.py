@@ -119,7 +119,7 @@ def test_completed_and_cancelled_tasks_never_produce_notifications(conn):
 
     repo.mark_completed(conn, task_id=done_task["id"])
     repo.cancel_pending_reminders(conn, task_id=done_task["id"])
-    repo.cancel_task(conn, task_id=gone_task["id"])
+    repo.cancel_task_from_source(conn, task_id=gone_task["id"])
     repo.cancel_pending_reminders(conn, task_id=gone_task["id"])
 
     from ragra.reminders.dispatch import preview_due_reminders

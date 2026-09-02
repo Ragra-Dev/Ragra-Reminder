@@ -12,8 +12,23 @@ from fastapi.templating import Jinja2Templates
 
 from ragra.db import repo
 from ragra.db.connection import connect_closing
+from ragra.timetable.schedule import occurrences_for_local_day, weekly_class_from_row
+from ragra.tz import format_stored_local, local_day_bounds, utc_iso
 
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
+
+
+def _todays_classes(conn, *, now: datetime) -> list:
+    """Today's classes, computed on demand from the weekly pattern. Failing
+    softly on purpose: a timetable problem must not blank the whole
+    dashboard, whose deadline data is unaffected and still correct."""
+    try:
+        rows = repo.list_timetable_events(conn)
+        return occurrences_for_local_day(
+            [weekly_class_from_row(row) for row in rows], instant=now
+        )
+    except Exception:  # noqa: BLE001 - the schedule section degrades, the page does not
+        return []
 
 # How many MISSED tasks the main dashboard shows before pointing to the
 # full list. Not a "historical" classification (see docs/ARCHITECTURE.md
@@ -21,6 +36,10 @@ _TEMPLATES_DIR = Path(__file__).parent / "templates"
 # long tail of old work doesn't dominate the daily view. Everything stays
 # reachable via /missed regardless.
 MISSED_SECTION_PREVIEW_LIMIT = 5
+
+# Same rationale as the missed preview: the dashboard shows the most recent
+# untriaged announcements, with the full list one click away.
+ANNOUNCEMENT_PREVIEW_LIMIT = 5
 
 
 def create_app(db_path: Path) -> FastAPI:
@@ -30,11 +49,18 @@ def create_app(db_path: Path) -> FastAPI:
     @app.get("/")
     def today(request: Request):
         now = datetime.now(timezone.utc)
-        now_iso = now.isoformat()
-        end_of_today_iso = now.replace(hour=23, minute=59, second=59, microsecond=0).isoformat()
-        week_end_iso = (now + timedelta(days=7)).isoformat()
+        now_iso = utc_iso(now)
+        # The campus calendar day, not the UTC one - see ragra/tz.py. These
+        # disagree for five hours daily, during which a UTC boundary moves
+        # work into or out of "due today".
+        _day_start, day_end = local_day_bounds(now)
+        end_of_today_iso = utc_iso(day_end)
+        week_end_iso = utc_iso(now + timedelta(days=7))
 
         with connect_closing(db_path) as conn:
+            classes_today = _todays_classes(conn, now=now)
+            announcements = repo.open_announcements(conn, limit=ANNOUNCEMENT_PREVIEW_LIMIT)
+            personal_tasks = repo.manual_tasks(conn)
             overdue = repo.overdue_tasks(conn, now=now_iso)
             missed = repo.missed_tasks(conn, limit=MISSED_SECTION_PREVIEW_LIMIT)
             missed_total = repo.count_missed_tasks(conn)
@@ -72,6 +98,9 @@ def create_app(db_path: Path) -> FastAPI:
                 "scheduled_reminders": scheduled_reminders,
                 "recently_completed": recently_completed,
                 "priority": priority,
+                "classes_today": classes_today,
+                "announcements": announcements,
+                "personal_tasks": personal_tasks,
             },
         )
 
@@ -116,11 +145,140 @@ def create_app(db_path: Path) -> FastAPI:
 
     @app.post("/tasks/{task_id}/personal-deadline")
     def set_personal_deadline(task_id: int, personal_deadline: str = Form(...)):
+        # Allowed on every task, Classroom-sourced included: a personal
+        # completion target is Ragra-owned data about the user's own plan and
+        # never touches anything Classroom is authoritative for. See
+        # docs/INTERFACES.md contract #5.
         with connect_closing(db_path) as conn:
             repo.set_personal_deadline(conn, task_id=task_id, personal_deadline=personal_deadline)
         return RedirectResponse("/", status_code=303)
 
+    # --- Manual tasks -----------------------------------------------------
+    #
+    # Every route below declares each accepted form field by name. That is
+    # the first and most important layer of the write guard: a route that
+    # does not declare `title` structurally cannot receive one, so no amount
+    # of extra POST data can reach a Classroom-authoritative column. The
+    # repo-layer TaskSourceViolation check is the second layer, and input
+    # validation is the third. There is no auth layer behind any of this.
+
+    @app.get("/tasks")
+    def tasks_page(request: Request):
+        with connect_closing(db_path) as conn:
+            personal = repo.manual_tasks(conn)
+        return templates.TemplateResponse(request, "tasks.html", {"tasks": personal})
+
+    @app.post("/tasks/new")
+    def create_task(
+        title: str = Form(...),
+        description: str = Form(""),
+        actual_deadline: str = Form(""),
+        personal_deadline: str = Form(""),
+    ):
+        with connect_closing(db_path) as conn:
+            try:
+                repo.create_manual_task(
+                    conn,
+                    title=title,
+                    description=description or None,
+                    actual_deadline=_clean_deadline(actual_deadline),
+                    personal_deadline=_clean_deadline(personal_deadline),
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return RedirectResponse("/tasks", status_code=303)
+
+    @app.post("/tasks/{task_id}/edit")
+    def edit_task(
+        task_id: int,
+        title: str = Form(...),
+        description: str = Form(""),
+        actual_deadline: str = Form(""),
+    ):
+        with connect_closing(db_path) as conn:
+            try:
+                repo.update_manual_task(
+                    conn,
+                    task_id=task_id,
+                    title=title,
+                    description=description or None,
+                    actual_deadline=_clean_deadline(actual_deadline),
+                )
+            except repo.TaskSourceViolation as exc:
+                raise HTTPException(status_code=403, detail=str(exc)) from exc
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return RedirectResponse("/tasks", status_code=303)
+
+    @app.post("/tasks/{task_id}/cancel")
+    def cancel_task(task_id: int):
+        with connect_closing(db_path) as conn:
+            try:
+                repo.cancel_task(conn, task_id=task_id)
+            except repo.TaskSourceViolation as exc:
+                raise HTTPException(status_code=403, detail=str(exc)) from exc
+            repo.cancel_pending_reminders(conn, task_id=task_id)
+        return RedirectResponse("/tasks", status_code=303)
+
+    # --- Announcements ----------------------------------------------------
+    #
+    # Fully deterministic: open it, optionally turn it into a task you own,
+    # or archive it. No AI anywhere in this path - the announcement text is
+    # never summarised, interpreted, or used to invent a deadline.
+
+    @app.get("/announcements")
+    def announcements_page(request: Request):
+        with connect_closing(db_path) as conn:
+            rows = repo.open_announcements(conn)
+        return templates.TemplateResponse(request, "announcements.html", {"announcements": rows})
+
+    @app.post("/announcements/{task_id}/create-task")
+    def create_task_from_announcement(
+        task_id: int,
+        title: str = Form(""),
+        actual_deadline: str = Form(""),
+        personal_deadline: str = Form(""),
+    ):
+        with connect_closing(db_path) as conn:
+            try:
+                repo.create_task_from_announcement(
+                    conn,
+                    announcement_task_id=task_id,
+                    title=title.strip() or None,
+                    actual_deadline=_clean_deadline(actual_deadline),
+                    personal_deadline=_clean_deadline(personal_deadline),
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return RedirectResponse("/announcements", status_code=303)
+
+    @app.post("/announcements/{task_id}/archive")
+    def archive_announcement(task_id: int):
+        with connect_closing(db_path) as conn:
+            repo.archive_task(conn, task_id=task_id)
+        return RedirectResponse("/announcements", status_code=303)
+
+    @app.get("/deliveries")
+    def deliveries(request: Request):
+        with connect_closing(db_path) as conn:
+            rows = repo.recent_notification_deliveries(conn, limit=100)
+        return templates.TemplateResponse(request, "deliveries.html", {"deliveries": rows})
+
     return app
+
+
+def _clean_deadline(value: str) -> str | None:
+    """Empty means "no deadline", never "now". A supplied value must parse
+    as a real date/datetime - storing an unparseable string would produce a
+    row that every deadline comparison silently mis-sorts."""
+    text = (value or "").strip()
+    if not text:
+        return None
+    try:
+        datetime.fromisoformat(text)
+    except ValueError as exc:
+        raise ValueError(f"{text!r} is not a valid date or date-time") from exc
+    return text
 
 
 def _default_db_path() -> Path:

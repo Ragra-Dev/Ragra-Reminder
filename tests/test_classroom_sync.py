@@ -48,7 +48,11 @@ def test_repeated_full_sync_does_not_duplicate_courses_or_tasks(conn):
     assert summary2.tasks_created == 0
     assert summary3.tasks_created == 0
 
-    course_count = conn.execute("SELECT COUNT(*) AS c FROM courses").fetchone()["c"]
+    # Excludes the seeded '__personal__' pseudo-course, which always exists
+    # and holds manual tasks rather than anything Classroom syncs.
+    course_count = conn.execute(
+        "SELECT COUNT(*) AS c FROM courses WHERE external_id != '__personal__'"
+    ).fetchone()["c"]
     task_count = conn.execute("SELECT COUNT(*) AS c FROM tasks").fetchone()["c"]
     assert course_count == 1
     assert task_count == 1
