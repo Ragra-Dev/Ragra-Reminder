@@ -82,5 +82,10 @@ def reminder_message(reminder_type: str, task_title: str, course_code: str | Non
         "FEW_HOURS": f"Reminder: {label} due soon",
         "MIDPOINT": f"Reminder: {label}",
         "FINAL_1H": f"⚠️ {label} due in 1 hour",
+        # Not a countdown reminder: an alert that Classroom itself moved the
+        # authoritative deadline. Routed through the reminders table on
+        # purpose, so it inherits the same idempotency, bounded retry and
+        # delivery recording as everything else.
+        "DEADLINE_CHANGED": f"Deadline changed: {label}",
     }
     return messages.get(reminder_type, label)

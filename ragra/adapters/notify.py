@@ -26,7 +26,7 @@ import subprocess
 from dataclasses import dataclass
 from email.message import EmailMessage
 from pathlib import Path
-from typing import Protocol
+from typing import Callable, Protocol
 
 
 class NotifyNotConfigured(RuntimeError):
@@ -59,18 +59,34 @@ class NotificationProvider(Protocol):
 
 
 def send_to_all_providers(
-    providers: list[NotificationProvider], notification: Notification
+    providers: list[NotificationProvider],
+    notification: Notification,
+    *,
+    on_attempt: Callable[[str, NotifyResult], None] | None = None,
 ) -> tuple[bool, list[str]]:
-    """Shared fan-out used by both ragra/reminders/dispatch.py and
-    ragra/health.py: attempts every configured provider (no short-circuit
-    on the first success) so a caller can tell whether at least one
-    delivered. Returns (delivered, errors) - delivered is True if any
-    provider succeeded; errors collects every failure (empty if all
-    succeeded)."""
+    """Shared fan-out used by ragra/reminders/dispatch.py, ragra/health.py
+    and ragra/reminders/class_reminders.py: attempts every configured
+    provider (no short-circuit on the first success) so a caller can tell
+    whether at least one delivered. Returns (delivered, errors) - delivered
+    is True if any provider succeeded; errors collects every failure (empty
+    if all succeeded).
+
+    `on_attempt(provider_name, result)` is invoked once per provider, and is
+    how per-provider delivery gets recorded without this module ever
+    learning about the database. Keeping persistence on the caller's side is
+    what lets the notification layer stay a pure boundary. A recorder that
+    raises must never lose an already-successful delivery, so its failure is
+    contained here.
+    """
     errors: list[str] = []
     delivered = False
     for provider in providers:
         result = provider.send(notification)
+        if on_attempt is not None:
+            try:
+                on_attempt(type(provider).__name__, result)
+            except Exception:  # noqa: BLE001 - bookkeeping must not undo a real send
+                pass
         if result.ok:
             delivered = True
         else:

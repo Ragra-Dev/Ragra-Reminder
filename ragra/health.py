@@ -85,7 +85,13 @@ def check_and_alert(conn: sqlite3.Connection, *, providers: list[NotificationPro
     message = "Ragra health alert - needs attention:\n" + "\n".join(lines)
     notification = Notification(text=message, category="HEALTH_ALERT")
 
-    delivered, _errors = send_to_all_providers(providers, notification)
+    def _record(provider_name: str, result) -> None:
+        repo.record_notification_delivery(
+            conn, provider=provider_name, ok=result.ok,
+            category=notification.category, error=result.error,
+        )
+
+    delivered, _errors = send_to_all_providers(providers, notification, on_attempt=_record)
     if not delivered:
         # Couldn't deliver the alert through any configured provider - leave
         # last_alert_sent_at unset so the next check tries again, rather

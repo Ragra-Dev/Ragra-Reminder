@@ -14,6 +14,8 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from ragra.db import repo
+from ragra.relevance.engine import RelevanceDecision, is_relevant
+from ragra.relevance.profile import UserAcademicProfile, load_profile
 from ragra.reminders.engine import compute_reminder_plan
 from datetime import datetime, timezone
 
@@ -33,8 +35,67 @@ class SyncSummary:
     tasks_cancelled: int = 0
     backlog_reminders_suppressed: int = 0
     tasks_marked_missed: int = 0
+    relevance_evaluated: int = 0
+    relevance_other_section: int = 0
     deadlines_changed: list[dict] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    # Non-fatal problems. A relevance failure lands here rather than in
+    # `errors`, because it must never mark the whole Classroom sync failed:
+    # the academic data synced correctly, only the advisory decision didn't.
+    warnings: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class _RelevanceContext:
+    """Everything the relevance engine needs for one course, resolved once
+    per sync rather than per item. `profile` is loaded a single time for the
+    whole run (see load_profile's contract in docs/INTERFACES.md #4)."""
+
+    course_name: str
+    profile: UserAcademicProfile
+
+
+def _evaluate_relevance(
+    conn: sqlite3.Connection,
+    *,
+    task_id: int,
+    item: dict[str, Any],
+    context: _RelevanceContext | None,
+    summary: SyncSummary,
+) -> None:
+    """Compute and persist the section-relevance decision for one task.
+
+    Deliberately best-effort and fail-open in three separate ways: no
+    context means nothing is written (every task keeps the RELEVANT default
+    from migration 0002); a raised exception is recorded as a warning and
+    swallowed rather than failing the sync; and the decision itself never
+    affects whether the task is stored or listed. Relevance can only ever
+    influence proactive notification - never visibility.
+    """
+    if context is None:
+        return
+    try:
+        decision = is_relevant(
+            item.get("title") or item.get("text", "") or "",
+            item.get("description") or item.get("text") or "",
+            context.course_name,
+            context.profile,
+        )
+    except Exception as exc:  # noqa: BLE001 - relevance must never break sync
+        summary.warnings.append(f"relevance evaluation failed for task {task_id}: {exc}")
+        return
+
+    reason = None
+    if decision is not RelevanceDecision.RELEVANT:
+        # A richer trace would need the engine to return its evidence;
+        # docs/INTERFACES.md #3 freezes the return type as the enum, so the
+        # reason records what was decided and against which course.
+        reason = f"{decision.value} for course {context.course_name!r}"
+
+    summary.relevance_evaluated += 1
+    if decision is RelevanceDecision.OTHER_SECTION:
+        summary.relevance_other_section += 1
+    repo.set_task_relevance(conn, task_id=task_id, relevance=decision.value, reason=reason)
 
 
 def _classroom_due_to_iso(due_date: dict | None, due_time: dict | None) -> str | None:
@@ -57,6 +118,16 @@ def _classroom_due_to_iso(due_date: dict | None, due_time: dict | None) -> str |
 def sync_classroom(conn: sqlite3.Connection, client: ClassroomClient) -> SyncSummary:
     summary = SyncSummary()
     repo.record_sync_start(conn, source="classroom")
+
+    # Loaded once for the whole run. A failure here disables relevance
+    # evaluation for this sync but must not stop academic data syncing -
+    # every task then keeps the fail-open RELEVANT default.
+    profile: UserAcademicProfile | None
+    try:
+        profile = load_profile()
+    except Exception as exc:  # noqa: BLE001 - advisory feature, never fatal
+        profile = None
+        summary.warnings.append(f"relevance disabled this run: profile unavailable ({exc})")
 
     try:
         courses = client.list_courses()
@@ -110,9 +181,12 @@ def sync_classroom(conn: sqlite3.Connection, client: ClassroomClient) -> SyncSum
                 state=course_state,
             )
 
-            seen_coursework = _sync_coursework(conn, client, course_id, course["id"], summary)
-            seen_announcements = _sync_announcements(conn, client, course_id, course["id"], summary)
-            seen_materials = _sync_materials(conn, client, course_id, course["id"], summary)
+            course_name = course.get("name", "Untitled course")
+            context = _RelevanceContext(course_name=course_name, profile=profile) if profile else None
+
+            seen_coursework = _sync_coursework(conn, client, course_id, course["id"], summary, context)
+            seen_announcements = _sync_announcements(conn, client, course_id, course["id"], summary, context)
+            seen_materials = _sync_materials(conn, client, course_id, course["id"], summary, context)
 
             for source_type, seen_ids in (
                 ("coursework", seen_coursework),
@@ -151,6 +225,7 @@ def _apply_upsert(
     kind: str,
     actual_deadline: str | None,
     summary: SyncSummary,
+    context: _RelevanceContext | None = None,
 ) -> None:
     result = repo.upsert_task_from_source(
         conn,
@@ -165,6 +240,12 @@ def _apply_upsert(
         source_published_at=item.get("creationTime"),
         source_updated_at=item.get("updateTime"),
     )
+
+    # Evaluated on every sync, not only on create/change: the decision also
+    # depends on the user's enrollment profile, which can change without any
+    # Classroom-side change. set_task_relevance skips the write when the
+    # decision is unchanged, so a routine re-sync stays idempotent.
+    _evaluate_relevance(conn, task_id=result.task_id, item=item, context=context, summary=summary)
 
     if result.created:
         summary.tasks_created += 1
@@ -200,6 +281,17 @@ def _apply_upsert(
             }
         )
         repo.cancel_pending_reminders(conn, task_id=result.task_id)
+        # Queued after the cancel above, or it would be cancelled with the
+        # stale countdown it is announcing. Keyed on the *new* deadline so
+        # re-detecting the same change can never send twice, while a genuine
+        # second change does produce a second alert.
+        repo.insert_reminder_if_absent(
+            conn,
+            task_id=result.task_id,
+            reminder_type="DEADLINE_CHANGED",
+            scheduled_for=repo.now_iso(),
+            idempotency_key=f"{result.task_id}:DEADLINE_CHANGED:{result.new_deadline}",
+        )
         if result.new_deadline:
             _schedule_reminders(conn, task_id=result.task_id, title=item.get("title") or "",
                                  course_code=course_code, actual_deadline=result.new_deadline,
@@ -232,7 +324,7 @@ def _schedule_reminders(
         )
 
 
-def _sync_coursework(conn, client, course_id, course_external_id, summary) -> set[str]:
+def _sync_coursework(conn, client, course_id, course_external_id, summary, context=None) -> set[str]:
     course_code = None
     items = client.list_course_work(course_external_id)
     for item in items:
@@ -240,28 +332,28 @@ def _sync_coursework(conn, client, course_id, course_external_id, summary) -> se
         _apply_upsert(
             conn, course_id=course_id, course_external_id=course_external_id,
             course_code=course_code, source_type="coursework", item=item,
-            kind="ACTIONABLE", actual_deadline=deadline, summary=summary,
+            kind="ACTIONABLE", actual_deadline=deadline, summary=summary, context=context,
         )
     return {item["id"] for item in items}
 
 
-def _sync_announcements(conn, client, course_id, course_external_id, summary) -> set[str]:
+def _sync_announcements(conn, client, course_id, course_external_id, summary, context=None) -> set[str]:
     items = client.list_announcements(course_external_id)
     for item in items:
         _apply_upsert(
             conn, course_id=course_id, course_external_id=course_external_id,
             course_code=None, source_type="announcement", item=item,
-            kind="INFORMATIONAL", actual_deadline=None, summary=summary,
+            kind="INFORMATIONAL", actual_deadline=None, summary=summary, context=context,
         )
     return {item["id"] for item in items}
 
 
-def _sync_materials(conn, client, course_id, course_external_id, summary) -> set[str]:
+def _sync_materials(conn, client, course_id, course_external_id, summary, context=None) -> set[str]:
     items = client.list_course_materials(course_external_id)
     for item in items:
         _apply_upsert(
             conn, course_id=course_id, course_external_id=course_external_id,
             course_code=None, source_type="material", item=item,
-            kind="INFORMATIONAL", actual_deadline=None, summary=summary,
+            kind="INFORMATIONAL", actual_deadline=None, summary=summary, context=context,
         )
     return {item["id"] for item in items}

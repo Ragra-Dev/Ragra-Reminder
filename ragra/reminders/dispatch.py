@@ -41,6 +41,24 @@ MAX_ATTEMPTS = 3
 RETRY_DELAY = timedelta(minutes=15)
 
 
+def _delivery_recorder(conn: sqlite3.Connection, notification: Notification):
+    """Per-provider delivery recording. Lives here rather than in
+    ragra/adapters/notify.py so the notification layer never touches the
+    database - see docs/INTERFACES.md contract #1."""
+
+    def record(provider_name: str, result) -> None:
+        repo.record_notification_delivery(
+            conn,
+            provider=provider_name,
+            ok=result.ok,
+            reminder_id=notification.reminder_id,
+            category=notification.category,
+            error=result.error,
+        )
+
+    return record
+
+
 @dataclass
 class DispatchSummary:
     sent: int = 0
@@ -103,7 +121,9 @@ def dispatch_due_reminders(
         notification = Notification(
             text=message, reminder_id=reminder["id"], category=reminder["reminder_type"]
         )
-        delivered, errors = send_to_all_providers(providers, notification)
+        delivered, errors = send_to_all_providers(
+            providers, notification, on_attempt=_delivery_recorder(conn, notification)
+        )
 
         if delivered:
             repo.mark_reminder_sent(conn, reminder_id=reminder["id"])

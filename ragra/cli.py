@@ -235,6 +235,30 @@ def _run_reminders_dispatch(conn, config: Config, log) -> tuple[int, str | None]
     return 0, None
 
 
+def _run_class_reminders(conn, config: Config, log) -> tuple[int, str | None]:
+    """Announce classes starting shortly. Runs after timetable sync so it
+    always reasons about the freshest pattern, and computes occurrences on
+    demand - nothing about a future class is stored (see
+    ragra/timetable/schedule.py)."""
+    from ragra.reminders.class_reminders import run_class_reminders
+
+    providers = _build_providers(config)
+    try:
+        summary = run_class_reminders(conn, providers=providers, now=datetime.now(timezone.utc))
+    except Exception as exc:  # noqa: BLE001
+        log(f"Class reminders failed unexpectedly: {exc}")
+        return 1, str(exc)
+
+    log(
+        f"Class reminders: {summary.scheduled} scheduled, {summary.sent} sent, "
+        f"{summary.retrying} retrying, {summary.expired} expired, "
+        f"{summary.skipped_not_configured} skipped (not configured)"
+    )
+    for error in summary.errors:
+        log(f"  class reminder error: {error}")
+    return 0, None
+
+
 def _run_timetable_sync(conn, config: Config, log) -> tuple[int, str | None]:
     if not config.fast_timetable_spreadsheet_id:
         log("Timetable sync skipped - RAGRA_FAST_TIMETABLE_SPREADSHEET_ID not set. See .env.example.")
@@ -330,6 +354,7 @@ def cmd_tick(args: argparse.Namespace) -> int:
     # any runner logs or returns - see ragra/db/repo.py's tick_sessions.
     stage_results: dict[str, str | None] = {
         "classroom": None, "calendar": None, "reminders": None, "timetable": None,
+        "class_reminders": None,
     }
     tick_errors: list[str] = []
 
@@ -353,6 +378,8 @@ def cmd_tick(args: argparse.Namespace) -> int:
                 ("calendar", _run_calendar_sync),
                 ("reminders", _run_reminders_dispatch),
                 ("timetable", _run_timetable_sync),
+                # After timetable sync, so it always sees the freshest pattern.
+                ("class_reminders", _run_class_reminders),
             ):
                 rc, error = runner(conn, config, _capturing_log(component))
                 health.record_result(conn, component=component, success=(rc == 0), error=error)
@@ -375,6 +402,7 @@ def cmd_tick(args: argparse.Namespace) -> int:
                 calendar_result=stage_results["calendar"],
                 reminders_result=stage_results["reminders"],
                 timetable_result=stage_results["timetable"],
+                class_reminders_result=stage_results["class_reminders"],
                 error="; ".join(tick_errors) if tick_errors else None,
             )
     except Exception as exc:  # noqa: BLE001 - last-resort guard; a tick must never leave a hung/corrupt process
@@ -392,6 +420,7 @@ def cmd_tick(args: argparse.Namespace) -> int:
                     calendar_result=stage_results["calendar"],
                     reminders_result=stage_results["reminders"],
                     timetable_result=stage_results["timetable"],
+                    class_reminders_result=stage_results["class_reminders"],
                     error=f"tick failed unexpectedly: {exc}",
                 )
         except Exception:  # noqa: BLE001 - recording the diagnostic must never mask the real failure
