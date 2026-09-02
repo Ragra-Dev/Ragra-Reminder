@@ -11,6 +11,10 @@ dependencies = [
     "google-api-python-client>=2.120",
     "google-auth>=2.28",
     "google-auth-oauthlib>=1.2",
+    # Required for named IANA timezone resolution (zoneinfo). Windows ships
+    # no system timezone database, and Ragra deliberately refuses to fall
+    # back to a fixed UTC offset - see ragra/tz.py.
+    "tzdata>=2024.1",
 ]
 
 [project.optional-dependencies]
