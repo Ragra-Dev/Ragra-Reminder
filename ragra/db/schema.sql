@@ -78,11 +78,14 @@ CREATE INDEX IF NOT EXISTS idx_reminders_dispatch ON reminders(status, scheduled
 -- Ragra-owned Google Calendar events. One row per event Ragra created; the
 -- google_event_id is reused on every sync so events are updated, not
 -- duplicated.
+-- Note: this is the baseline snapshot. Later schema changes live only in
+-- ragra/db/migrations/ - e.g. migration 0006 drops the dead
+-- timetable_event_id column this table was originally created with.
 CREATE TABLE IF NOT EXISTS calendar_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     task_id INTEGER REFERENCES tasks(id),
     timetable_event_id INTEGER,
-    kind TEXT NOT NULL,            -- ACTUAL_DEADLINE | PERSONAL_PLAN | CLASS
+    kind TEXT NOT NULL,            -- ACTUAL_DEADLINE | PERSONAL_PLAN
     google_event_id TEXT NOT NULL UNIQUE,
     updated_at TEXT NOT NULL
 );
