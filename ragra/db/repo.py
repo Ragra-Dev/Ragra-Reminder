@@ -578,7 +578,7 @@ def tasks_due_between(conn: sqlite3.Connection, *, start_iso: str, end_iso: str)
 def tasks_missing_personal_target(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     """Actionable tasks that already have an authoritative actual_deadline
     from Classroom but no personal completion target yet - Ragra should
-    surface these so the developer can decide when HE plans to actually do the
+    surface these so the user can decide when they plan to actually do the
     work, independent of (and possibly earlier than) the academic deadline."""
     return conn.execute(
         """SELECT tasks.*, courses.course_code, courses.name AS course_name

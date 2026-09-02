@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     status TEXT NOT NULL DEFAULT 'DISCOVERED', -- DISCOVERED, ACTION_REQUIRED, PLANNED,
                                                 -- IN_PROGRESS, COMPLETED, MISSED, CANCELLED, ARCHIVED
     actual_deadline TEXT,                  -- ISO 8601, authoritative (Classroom), NULL if none
-    personal_deadline TEXT,                -- ISO 8601, the developer's intended completion time
+    personal_deadline TEXT,                -- ISO 8601, the user's intended completion time
     source_published_at TEXT,              -- Classroom creationTime, for informational triage
     source_updated_at TEXT,                -- Classroom updateTime, drives change detection
     completed_at TEXT,

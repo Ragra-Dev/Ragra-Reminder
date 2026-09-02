@@ -16,7 +16,7 @@ Important fields:
 
 ## Deadline semantics
 `actual_deadline` is authoritative academic information.
-`personal_deadline` is the developer's intended completion time.
+`personal_deadline` is the user's intended completion time.
 
 They are never interchangeable.
 

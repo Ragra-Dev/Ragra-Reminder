@@ -15,7 +15,7 @@ progress.
 ## Current State
 
 **Architecture (current phase, Phase 2):** Ragra is a single-user, local-first
-academic manager for the developer (FAST-NUCES Islamabad), built on SQLite and
+academic manager initially built for a FAST-NUCES Islamabad student, built on SQLite and
 Windows Task Scheduler. This is the foundation implementation, not the final
 product architecture. A multi-user, hosted version is planned for Phase 3+
 (see ROADMAP.md).
@@ -26,11 +26,11 @@ What actually works end-to-end today:
 - Pulls real Google Classroom courses, coursework, announcements, and
   materials into a local SQLite database, idempotently.
 - Distinguishes `actual_deadline` (authoritative, from Classroom) from
-  `personal_deadline` (the developer's own intended completion time) throughout.
+  `personal_deadline` (the user's own intended completion time) throughout.
 - A deterministic reminder engine computes a reminder cadence per task,
   persists it, and dispatches through a notification provider with bounded
   retry.
-- Syncs Ragra-owned events onto the developer's real Google Calendar, idempotently.
+- Syncs Ragra-owned events onto the user's real Google Calendar, idempotently.
 - Syncs the FAST timetable from its public spreadsheet source, matching
   scraped classes against a small enrollment config to distinguish regular
   and repeat courses (independently, including independent theory/lab
@@ -301,7 +301,7 @@ Verified against the actual code, not assumed:
 - **Notification fallback channels** - multi-provider mechanism is built and
   tested (`ragra/adapters/notify.py`; every configured `NotificationProvider`
   is attempted per send). Two providers now exist in code (Hermes, Email -
-  Phase 1), but only Hermes has real credentials configured on the developer's
+  Phase 1), but only Hermes has real credentials configured on the current
   installation, so genuine multi-channel redundancy isn't active yet - that's
   a configuration step, not missing code. Web Push (Phase 5) is still
   unimplemented.

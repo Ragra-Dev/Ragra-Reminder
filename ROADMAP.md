@@ -24,7 +24,7 @@ This roadmap is the source of truth for product direction, architecture, phase o
 
 1. `docs/PROJECT_STATUS.md` says 186 tests. Actual: **211**.
 2. `cli.py:472` help text says timetable sync is *"manual only, not yet in `tick`"*. **Wrong** — `cmd_tick` (`cli.py:336–341`) runs the timetable stage alongside classroom, calendar, reminders.
-3. `README.md` describe Ragra as "single-user, local-first" while §1 of your brief describes a hosted multi-user platform. Both are currently true statements about different points in time; the docs need a stated target, not just a stated present.
+3. Project documentation describes Ragra as "single-user, local-first" while §1 of your brief describes a hosted multi-user platform. Both are currently true statements about different points in time; the docs need a stated target, not just a stated present.
 
 ### New findings this pass (not in the previous review)
 
@@ -227,8 +227,8 @@ needs to change to become multi-user.
 
 ## 4. PHASE 0 — REPOSITORY HYGIENE / CLEAN CLONE
 
-**Purpose.** the assigned owner must be able to clone, install, and get a green
-suite without asking you anything. Right now they cannot.
+**Purpose.** A new contributor must be able to clone, install, and get a
+green suite without asking anyone anything. Right now that is not possible.
 
 **Goal.** `git clone && pip install -e ".[dev]" && pytest` → 211 passing, on a
 machine that has never seen this project.
@@ -242,7 +242,7 @@ machine that has never seen this project.
 **Backend work.** None.
 **Testing work.** Verify the clean-clone path in a fresh virtualenv — actually do it, don't reason about it.
 
-**Security work.** Rotate `RAGRA_SHEETS_API_KEY` — the `.env` with live values left your machine in the archive upload. Set up a `pre-commit` secret-scanning hook every contributor installs. Confirm local-only files are ignored and never zipped into a share again — use `git archive`, not a folder zip.
+**Security work.** Rotate `RAGRA_SHEETS_API_KEY` — the `.env` with live values left the local machine in an archive upload. Set up a `pre-commit` secret-scanning hook every contributor installs. Confirm local-only files are ignored and never zipped into a share again — use `git archive`, not a folder zip.
 
 **Deployment work.** None.
 **Dependencies.** None. Start immediately.
@@ -250,7 +250,7 @@ machine that has never seen this project.
 **Definition of done.** Fresh clone in a fresh venv installs and passes 211 tests with no manual `pip install`. `CONTRIBUTING.md` exists. Sheets key rotated. No stale claim remains in `docs/`.
 
 **Duration.** 3–6 hours hands-on, 1–2 days calendar.
-**Skills to learn.** None.
+**Skills to learn.** None — mechanical, well-defined edits.
 **Risks.** Only that it gets skipped — a broken clean-clone path is a demoralising first experience for anyone new to the codebase.
 **Exit criteria.** A green suite from a fresh clone on a machine that has never seen the project, with no manual setup steps.
 
@@ -301,9 +301,9 @@ independently of the migration work.
 
 **Duration.** 15–25 hours hands-on, 1.5–3 weeks calendar.
 
-**Skills to learn.** what "fail open" means as an
-invariant, and why a property test is stronger than example tests here. SQL migration patterns, Python `Protocol` typing.
-SMTP mechanics, stub-server test setup.
+**Skills to learn.** What "fail open" means as an invariant, and why a
+property test is stronger than example tests here. SQL migration patterns,
+Python `Protocol` typing, SMTP mechanics, stub-server test setup.
 
 **Risks.** Relevance scope creep — the temptation to handle every string FAST
 has ever produced. Cap it: seven labels from §6, five `UNKNOWN` cases, ship.
@@ -375,11 +375,11 @@ Rule: append-only within sections, never reorder, and never leave two PRs
 touching the same one of these three open for more than 48 hours. The dashboard
 restructure is deliberately last and single-owner.
 
-**Skills to learn.** timezone handling — this is
-the single most common source of silent bugs in scheduling software, and you
-cannot delegate an invariant you don't understand. Also HTTP form handling and
-CSRF basics, because Phase 3 puts this on the internet. 
-HTMX, Jinja patterns, SQL joins for the dashboard queries. template markup, CRUD boilerplate.
+**Skills to learn.** Timezone handling — this is the single most common
+source of silent bugs in scheduling software, and it is not something to
+delegate blindly. Also HTTP form handling and CSRF basics, because Phase 3
+puts this on the internet. HTMX, Jinja patterns, SQL joins for the dashboard
+queries.
 
 **Risks.** (1) Scope explosion — this phase can absorb infinite polish; cap it
 by the two-week dogfood test, not by a feature list. (2) `web/app.py` becoming
@@ -446,16 +446,15 @@ migrating from the pre-`user_id` schema.
 
 **Duration.** 35–60 hours hands-on, 3–5 weeks calendar.
 
-**Skills to learn.** how OAuth
-2.0 authorization-code flow actually works (what `state` is for, why the code
-is exchanged server-side, what a refresh token grants an attacker who steals
-it); what a session cookie is and what `HttpOnly`/`SameSite` do; what CSRF is.
-**You are about to hold other students' Google Classroom access.** This is the
-one phase where shallow understanding is genuinely irresponsible. Spend a day
-on the OAuth spec's authorization-code section and OWASP's session and CSRF
-cheat sheets before writing anything. encryption library
-choice and key rotation, FastAPI dependency injection. 
-form handling, the settings UI.
+**Skills to learn — non-negotiable:** how OAuth 2.0 authorization-code flow
+actually works (what `state` is for, why the code is exchanged server-side,
+what a refresh token grants an attacker who steals it); what a session cookie
+is and what `HttpOnly`/`SameSite` do; what CSRF is. **You are about to hold
+other students' Google Classroom access.** This is the one phase where
+shallow understanding is genuinely irresponsible. Spend a day on the OAuth
+spec's authorization-code section and OWASP's session and CSRF cheat sheets
+before writing anything. Also: encryption library choice and key rotation,
+FastAPI dependency injection, form handling, the settings UI.
 
 **Risks.** (1) A missed `WHERE user_id = ?` — mitigated by cross-written
 isolation tests and a dedicated review pass. (2) Underestimating this phase; it looks
@@ -532,11 +531,11 @@ once into a scratch database.
 the roadmap** — first deployments always cost more than estimated, and neither
 of you has done this before.
 
-**Skills to learn.** basic Postgres operations
-(connections, pooling, why a connection limit matters); what a container image
-actually is; how environment-based secrets reach a running process; how to read
-production logs. You cannot operate what you don't understand at 2am. Dockerfile authoring, platform-specific deploy config,
-APScheduler. the mechanical SQL dialect port.
+**Skills to learn.** Basic Postgres operations (connections, pooling, why a
+connection limit matters); what a container image actually is; how
+environment-based secrets reach a running process; how to read production
+logs. You cannot operate what you don't understand at 2am. Also: Dockerfile
+authoring, platform-specific deploy config, APScheduler.
 
 **Risks.** (1) The port takes 3× the estimate — likely; budget for it.
 (2) Free-tier limits (Neon compute suspension, Fly machine sizing) surprising
@@ -584,10 +583,10 @@ reminders.
 
 **Duration.** 25–45 hours hands-on, 2–4 weeks calendar.
 
-**Skills to learn.** what a service worker is and
-its lifecycle, and the platform reality that **iOS Safari only delivers push to
-installed PWAs** — this constrains your onboarding UX, not just your code.
-VAPID, `pywebpush`, subscription management. manifest, icons, boilerplate.
+**Skills to learn.** What a service worker is and its lifecycle, and the
+platform reality that **iOS Safari only delivers push to installed PWAs** —
+this constrains onboarding UX, not just code. VAPID, `pywebpush`, subscription
+management.
 
 **Risks.** (1) iOS limitations disappointing users — set expectations in the UI
 rather than fighting the platform. (2) Notification fatigue — your reminder
@@ -635,10 +634,9 @@ demonstrably met for people who are not you.
 **Duration.** 25–40 hours hands-on, 3–5 weeks calendar — calendar-dominated,
 because you are waiting on humans.
 
-**Skills to learn.** reading production logs and
-diagnosing from incomplete information — the core operational skill, and the
-one that decides whether Ragra survives having users. 
-monitoring setup. UI copy, empty states.
+**Skills to learn.** Reading production logs and diagnosing from incomplete
+information — the core operational skill, and the one that decides whether
+Ragra survives having users. Monitoring setup.
 
 **Risks.** (1) Onboarding friction — most likely cause of pilot failure; if
 someone can't get to a useful screen in five minutes they stop. (2) The FAST
@@ -693,10 +691,9 @@ contacting you, and you can go a week without touching the server.
 **Duration.** 30–50 hours hands-on, **4–8 weeks calendar** — dominated by the
 Google review wait.
 
-**Skills to learn.** what data you hold, where,
-for how long, and how you'd delete it on request — you cannot write an honest
-privacy policy otherwise, and Google will ask. load
-testing, rate limiting. boilerplate.
+**Skills to learn.** What data is held, where, for how long, and how it would
+be deleted on request — an honest privacy policy depends on this, and Google
+will ask. Load testing, rate limiting.
 
 **Risks.** (1) Google verification rejected or slow — **the top schedule risk
 in this roadmap.** (2) A security issue surfacing after launch. (3) The

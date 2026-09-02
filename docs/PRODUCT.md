@@ -5,7 +5,7 @@ Turn fragmented academic information into an automatically maintained system of:
 source -> task/deadline -> personal plan -> reminder -> completion -> history -> optional AI planning.
 
 ## User
-Initially one user: the developer, FAST-NUCES Islamabad.
+Initially built for a single student user (FAST-NUCES Islamabad).
 
 ## P0 — must work
 1. Google Classroom connection
