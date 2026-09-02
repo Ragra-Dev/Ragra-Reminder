@@ -11,7 +11,7 @@
 1. **Clone the repository:**
    ```bash
    git clone <repository-url>
-   cd "<REPOSITORY_ROOT>"
+   cd ragra
    ```
 
 2. **Create a virtual environment:**
@@ -30,7 +30,7 @@
    python -m pytest
    ```
 
-All tests should pass (211 passing as of the latest main branch).
+All tests should pass (397 passing as of the latest main branch).
 
 ## Running Ragra
 

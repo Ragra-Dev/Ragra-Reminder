@@ -14,7 +14,7 @@ progress.
 
 ## Current State
 
-**Architecture (current phase, Phase 0):** Ragra is a single-user, local-first
+**Architecture (current phase, Phase 2):** Ragra is a single-user, local-first
 academic manager for the developer (FAST-NUCES Islamabad), built on SQLite and
 Windows Task Scheduler. This is the foundation implementation, not the final
 product architecture. A multi-user, hosted version is planned for Phase 3+
@@ -41,9 +41,20 @@ What actually works end-to-end today:
   per-component health tracking, a self-alert if something breaks
   repeatedly, and a structured 48-hour tick-session diagnostic log
   (separate from application data, auto-purged).
-- A small FastAPI + Jinja2 dashboard shows overdue/missed/due-today/due-soon
-  tasks, lets you mark a task complete or set a personal target, and has a
-  per-task detail view.
+- A FastAPI + Jinja2 dashboard organised as Schedule / Announcements /
+  Tasks / Deadlines / Missed: today's classes with times and rooms,
+  announcement triage, personal task management, overdue/missed/due-today/
+  due-soon deadlines, per-task detail, and a notification delivery log.
+- Computes and stores a section-relevance decision for every Classroom item
+  during sync, fail-open: only an unambiguous match to a *different*
+  section can suppress a notification, and no task is ever hidden.
+- Personal (manual) tasks the user owns outright, kept strictly separate
+  from Classroom-authoritative data by an enforced write boundary.
+- Announces classes starting shortly, and notifies when Classroom moves a
+  deadline.
+- All user-facing dates and times are rendered in campus local time with an
+  explicit zone label; "today" means the campus calendar day, not the UTC
+  one.
 - A deterministic daily brief (`ragra brief`) and an optional AI priority
   narrative (`ragra plan`, via an optional Hermes one-shot completion call)
   sit on top of the deterministic data - the AI never writes back to
@@ -76,17 +87,23 @@ locally).
 
 **Notifications (optional)** - reminders dispatch through whichever
 `NotificationProvider`s are configured (`ragra/adapters/notify.py`), behind
-one `send(message)` interface; `ragra/reminders/dispatch.py`/`ragra/health.py`
-never know which provider they're talking to. Every configured provider is
-attempted per send (deliberate redundancy - one channel breaking doesn't
-silently take down delivery). Current provider: an optional personal Hermes
-integration (`hermes send --to <target> "<message>"`) for the developer's own
-installation - not required for Classroom/Calendar/FAST sync or the
-reminder engine itself. A direct Telegram Bot API provider was built and
-verified working, then deliberately removed from the product direction in
-favor of Web Push/email as the planned next providers (see Planned Roadmap)
-- the interface was already provider-neutral, so nothing else needed to
-change when it was dropped.
+one `send(notification: Notification)` interface (`Notification` carries
+`text`/`reminder_id`/`category` - see `docs/INTERFACES.md` contract #2);
+`ragra/reminders/dispatch.py`/`ragra/health.py` never know which provider
+they're talking to. Every configured provider is attempted per send
+(deliberate redundancy - one channel breaking doesn't silently take down
+delivery). Two concrete providers exist: `HermesProvider` (optional,
+personal, `hermes send --to <target> "<message>"`) and `EmailProvider`
+(optional, SMTP via the standard library, credentials from `RAGRA_SMTP_*`
+environment variables only, never leaked into a `NotifyResult.error`).
+Neither is required for Classroom/Calendar/FAST sync or the reminder
+engine itself. Email exists in code but is not configured with real SMTP
+credentials in the current deployment, so genuine multi-channel
+redundancy is a configuration step away rather than missing code. A direct Telegram Bot API provider was built and verified
+working, then deliberately removed from the product direction in favor of
+Web Push/email as the planned next providers (see Planned Roadmap) - the
+interface was already provider-neutral, so nothing else needed to change
+when it was dropped.
 
 **WhatsApp** - one real, explicitly-approved test notification was sent
 through Hermes (a personal WhatsApp contact target) as a standalone connectivity test,
@@ -112,11 +129,11 @@ if a run is due, and rejects overlapping instances. This is a **local
 fallback only** - it does nothing when the machine is fully powered off,
 which is the actual long-term problem (see "Remote Execution" below).
 
-**Vercel OAuth branding site** - a separate site (outside this repository,
-at `<PRIVATE_OAUTH_BRANDING_SITE>`) was used earlier to satisfy Google's OAuth
-consent-screen branding/domain requirements so the Classroom scope could be
-granted. It was not built or modified as part of Ragra's codebase and is
-intentionally excluded from this repository.
+**Vercel OAuth branding site** - a separate site, maintained outside this
+repository, was used earlier to satisfy Google's OAuth consent-screen
+branding/domain requirements so the Classroom scope could be granted. It was
+not built or modified as part of Ragra's codebase and is intentionally
+excluded from this repository.
 
 ## Remote Execution (laptop-off problem) — Phase 4 milestone
 
@@ -133,18 +150,19 @@ retained only if bundling into existing Google Cloud project is chosen).
 
 **Notification layer readiness:** The notification system is already
 provider-neutral (`ragra/adapters/notify.py`'s `NotificationProvider` protocol;
-`ragra/reminders/dispatch.py`/`ragra/health.py` depend only on `send(message)`).
-This is a hard requirement for remote execution: Hermes' `hermes send` shells
-out to a Windows binary reading local session files, which a remote worker
-cannot use. Web Push and email providers are planned for Phase 1 and Phase 5
-respectively; a remote worker will use one of those, not Hermes.
+`ragra/reminders/dispatch.py`/`ragra/health.py` depend only on
+`send(notification: Notification)`). This is a hard requirement for remote
+execution: Hermes' `hermes send` shells out to a Windows binary reading local
+session files, which a remote worker cannot use. `EmailProvider` (Phase 1) is
+implemented and ready for a remote worker to use instead of Hermes; Web Push
+(Phase 5) is still planned.
 
 ## Current Verification
 
 Last verified **2026-08-29**, directly from the running system (not
-estimated):
+estimated); test count reverified **2026-09-02** at the close of Phase 2 implementation:
 
-- **211/211 tests passing**
+- **397/397 tests passing**
 - **8** Classroom courses synced
 - **175** persisted tasks
 - **18** Calendar events
@@ -224,14 +242,24 @@ text for `ragra plan` / `ragra brief --ai` to print.
   state once exhausted.
 - **SQLite WAL mode** - chosen once the scheduler, dashboard, and CLI began
   routinely touching the database concurrently.
+- **General migration framework** (`ragra/db/migrator.py`, Phase 1) - numbered,
+  append-only `.sql` files under `ragra/db/migrations/`, tracked in a
+  `schema_migrations` table, applied idempotently from `connect()`. Verified
+  non-destructive against a copy of the real database (205 tasks): every
+  pre-existing table byte-identical before/after, rerun is a true no-op. The
+  two legacy targeted column-migration functions in `connection.py` are
+  unchanged and still run first - the new framework only governs schema
+  changes from this point forward.
 - **Windows Task Scheduler**, not a custom daemon - simplest reliable
   option for a single-user Windows machine.
 - **Notification delivery is pluggable and optional**; Ragra never hard-
   depends on any one messaging client - `ragra/reminders/dispatch.py` and
-  `ragra/health.py` depend only on `NotificationProvider.send(message)`,
-  never on Hermes/WhatsApp/Web Push/email specifically. Hermes (an
-  optional, advanced-personal provider) is only ever shelled out to via
-  `hermes send`, never imported.
+  `ragra/health.py` depend only on
+  `NotificationProvider.send(notification: Notification)`, never on
+  Hermes/WhatsApp/Web Push/email specifically. Hermes (an optional,
+  advanced-personal provider) is only ever shelled out to via `hermes send`,
+  never imported. Email (`EmailProvider`) speaks SMTP directly via the
+  standard library.
 - **AI is never the source of truth** for deadlines, task existence, or
   completion/reminder state - those remain deterministic, by design.
 - **No invented semester/term classification.** Investigated whether
@@ -250,9 +278,13 @@ Verified against the actual code, not assumed:
 - **Remote/always-on execution** - investigated and designed, not deployed
   (see "Remote Execution" above). Ragra still stops entirely when the
   laptop is off.
-- **Class-aware reminders** - not implemented. The timetable is synced and
-  persisted, but nothing yet reasons about "class starting soon" or
-  cross-references it against task deadlines.
+- **Class-aware reminders** - implemented in Phase 2. Class occurrences are
+  computed on demand from the weekly timetable pattern (never materialised -
+  see `ragra/timetable/schedule.py`), and a class starting within the
+  lookahead window is announced once through the same provider-neutral
+  notification layer. Not yet cross-referenced against task deadlines
+  ("you have a lab and an assignment due the same afternoon"), which
+  remains future work.
 - **Task detail pages** - implemented, but basic: title, course, both
   deadlines, status, description (if Classroom provided one), a link back
   to the Classroom post (if present), reminder state, and history. No
@@ -261,14 +293,18 @@ Verified against the actual code, not assumed:
 - **Source/material links** - present only insofar as `description` and
   `link` were already captured from Classroom during sync; no dedicated
   materials/attachments model.
-- **Snooze/cancel actions** - not on the dashboard. `repo.cancel_task()`
-  exists at the code level but has no UI entry point; there is no snooze
-  concept at all.
+- **Snooze** - still not implemented; there is no snooze concept at all.
+  Cancel now has a dashboard entry point, but only for manual tasks:
+  cancelling a Classroom-sourced task raises `TaskSourceViolation`, because
+  whether such a task exists is Classroom's decision (docs/INTERFACES.md
+  contract #5).
 - **Notification fallback channels** - multi-provider mechanism is built and
   tested (`ragra/adapters/notify.py`; every configured `NotificationProvider`
-  is attempted per send); but only one real provider (Hermes) is currently
-  configured in practice. Genuine redundancy needs a second real provider,
-  planned for Phase 1 (Email) and Phase 5 (Web Push).
+  is attempted per send). Two providers now exist in code (Hermes, Email -
+  Phase 1), but only Hermes has real credentials configured on the developer's
+  installation, so genuine multi-channel redundancy isn't active yet - that's
+  a configuration step, not missing code. Web Push (Phase 5) is still
+  unimplemented.
 - **Automatic morning brief delivery** - not implemented; `ragra brief`
   exists as a CLI command and `/brief` as a web endpoint, but nothing
   schedules or sends it automatically.
@@ -277,10 +313,6 @@ Verified against the actual code, not assumed:
   `matching.py`/`registration.py` (which could derive one) was never
   wired in. The dashboard/reminders correctly fall back to full course
   names everywhere, so this is cosmetic, not a bug.
-- **Schema migrations** - a general migration framework is planned for Phase 1
-  (numbered append-only `.sql` files, applied from `connect()`). Until then,
-  targeted one-off idempotent column-adds (as used for reminder retry columns)
-  remain the pattern.
 - **Dashboard pagination** - only the Missed section has a preview/full-page
   split (added this session). Due Soon, Recently Completed, and Scheduled
   Reminders have no limit and will grow unbounded over time.
@@ -303,8 +335,8 @@ The roadmap defines nine phases (P0–P8). Current status:
 | Phase | Duration | Milestone | Status |
 |-------|----------|-----------|--------|
 | **P0** | 1–2 days | Repository Hygiene / Clean Clone | COMPLETED|
-| **P1** | 1.5–3 wk | Core Academic Intelligence (M1) | IN PROGRESS |
-| **P2** | 3–6 wk | Complete Single-User Product (M2) | PLANNED |
+| **P1** | 1.5–3 wk | Core Academic Intelligence (M1) | COMPLETED |
+| **P2** | 3–6 wk | Complete Single-User Product (M2) | IMPLEMENTED (soak test pending) |
 | **P3** | 3–5 wk | Identity + User Isolation (local) | PLANNED |
 | **P4** | 3–6 wk | Hosted Backend: Postgres + Remote Execution | PLANNED |
 | **P5** | 2–4 wk | Web Push + Notification Preferences | PLANNED |
@@ -362,5 +394,6 @@ python -m venv .venv
 Copy `.env.example` to `.env` and fill in the real local paths before
 running anything that talks to Classroom or Calendar. No secrets belong in
 `.env.example` or in this repository - real credentials/tokens live outside
-the project directory entirely (under `<LOCAL_APPDATA>\hermes` and
-`<LOCAL_APPDATA>\ragra`), and were never part of what's committed here.
+the project directory entirely, in a per-user application-data directory
+resolved at runtime from the environment (see `ragra/config.py`), and were
+never part of what's committed here.

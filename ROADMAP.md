@@ -846,17 +846,28 @@ costs momentum, not value.
 ## 17. CURRENT POSITION (§27)
 
 ```
-CURRENT PHASE:                    Phase 1 — Core Academic Intelligence
-                                  (Phase 0 not yet done; it's a day, do it first)
-CURRENT MILESTONE:                M1
-CURRENT TASK — THE ASSIGNED OWNER:            (0) Phase 0 hygiene + write docs/INTERFACES.md
-                                  (1) ragra/relevance/ as pure, tested functions
-                                  (2) UserAcademicProfile + load_profile()
-CURRENT TASK — the assigned owner:      (1) Migration framework, verified against a
-                                      copy of the real 175-task DB
-                                  (2) Notification value object refactor
-                                  (3) EmailProvider + stub-SMTP tests
-NEXT MILESTONE AFTER BOTH FINISH: M2 — Phase 2, the complete single-user product
+CURRENT PHASE:                    Phase 2 — Complete the Single-User Product
+                                  (implementation complete; two-week soak
+                                  test outstanding — see exit criteria)
+CURRENT MILESTONE:                M2
+PHASE 1 STATUS:                   COMPLETE. Landed as three
+                                  logically separate, independently
+                                  reviewed commits (migration framework,
+                                  notification value object, EmailProvider)
+                                  on top of the relevance engine + profile
+                                  work already done. Suite: 290 passing
+                                  (was 211 at Phase 0 close). See
+                                  docs/PROJECT_STATUS.md for the full
+                                  verified snapshot.
+CURRENT TASK — MAINTAINER:        Phase 2 implemented end to end by the
+                                  sole active developer, covering both
+                                  originally-allocated tracks. Remaining
+                                  before Phase 2 can be called complete:
+                                  the two-week real-use soak test that is
+                                  this phase's actual exit criterion, and
+                                  the deferred HTMX pass (plain forms ship
+                                  today and work).
+NEXT MILESTONE AFTER PHASE 2:     M3 — Phase 3, identity and user isolation
 NEXT MAJOR PRODUCT MILESTONE:     End of Phase 2 — Ragra is genuinely useful to you
 FIRST POINT REAL USERS CAN USE IT: End of Phase 6 (pilot), ~4–7 months out
 FIRST POINT IT IS A REAL HOSTED PRODUCT: End of Phase 4

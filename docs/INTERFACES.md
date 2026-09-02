@@ -8,10 +8,12 @@ This document defines four contracts that Phase 1 and Phase 2 depend on. These s
 
 **Location:** `ragra/adapters/notify.py`
 
+**Status: implemented (Phase 1).**
+
 **Contract:**
 ```python
 class NotificationProvider(Protocol):
-    def send(self, message: str) -> NotifyResult: ...
+    def send(self, notification: Notification) -> NotifyResult: ...
 
 @dataclass(frozen=True)
 class NotifyResult:
@@ -20,49 +22,49 @@ class NotifyResult:
 ```
 
 **Semantics:**
-- Every provider implements exactly one method: `send(message: str) -> NotifyResult`.
+- Every provider implements exactly one method: `send(notification: Notification) -> NotifyResult` (see contract #2 for `Notification`).
 - A provider must report success or failure; it never decides whether the caller should retry.
 - Idempotency (never resending the same message) is the caller's responsibility.
 - Multiple providers may be configured; `dispatch.py` fan-outs to all (one success = message sent).
 - An empty provider list is a valid, stable state (reminders stay PENDING).
 
 **Current Implementations:**
-- `HermesProvider` — optional, shells out to `hermes send` (current only concrete provider)
-- Planned: `EmailProvider` (Phase 1), `WebPushProvider` (Phase 5)
+- `HermesProvider` — optional, advanced-personal-only, shells out to `hermes send`. Never required.
+- `EmailProvider` — optional, speaks SMTP directly via the standard library (`smtplib`/`email.message`, no third-party dependency). Credentials from environment only (`RAGRA_SMTP_*`); never appear in a `NotifyResult.error` string (see `_redact()`).
+- Planned: `WebPushProvider` (Phase 5).
 
 ---
 
-## 2. Notification Value Object (Phase 1 Refactor)
+## 2. Notification Value Object
 
-**Location:** `ragra/reminders/dispatch.py`, `ragra/health.py`
+**Location:** `ragra/adapters/notify.py` (dataclass), consumed by `ragra/reminders/dispatch.py`, `ragra/health.py`
 
-**Current Signature (to be refactored):**
-```python
-def send(message: str) -> NotifyResult
-```
+**Status: implemented (Phase 1).**
 
-**Proposed Signature (Phase 1):**
+**Signature:**
 ```python
 @dataclass(frozen=True)
 class Notification:
     text: str
     reminder_id: int | None = None  # For delivery tracking
-    category: str | None = None     # e.g., FINAL_1H, DUE_TODAY, for routing policy
+    category: str | None = None     # e.g., T_MINUS_1D, HEALTH_ALERT, for routing policy
 
 def send(notification: Notification) -> NotifyResult
 ```
 
-**Why:** Enables per-category routing (email vs push policy), delivery tracking, and deduplication across providers without changing `dispatch.py`'s overall structure.
+**Why:** Enables per-category routing (email vs push policy), delivery tracking, and deduplication across providers without changing `dispatch.py`'s overall structure. `dispatch.py` sets `category` to the reminder's `reminder_type`; `health.py` sets it to `"HEALTH_ALERT"`.
 
 **Guarantee:** This refactor is internal to the notification layer. `dispatch.py` and `health.py` never import provider-specific code; they only depend on `NotificationProvider.send()`.
 
 ---
 
-## 3. Relevance Decision (Planned Phase 1)
+## 3. Relevance Decision
 
-**Location:** `ragra/relevance/engine.py` (to be created)
+**Location:** `ragra/relevance/engine.py`
 
-**Proposed Signature:**
+**Status: implemented (Phase 1).**
+
+**Signature:**
 ```python
 from enum import Enum
 
@@ -86,12 +88,15 @@ def is_relevant(
 - **UNKNOWN:** Do not suppress (notify). Example: ambiguous titles, or conflicting evidence in title vs description.
 - Never invented data: **no inference, expansion, or AI judgment.** Only pattern matching against the profile.
 
-**Five Ambiguous Cases (decided, not implemented yet):**
+**Five Ambiguous Cases (decided, implemented):**
 1. Chapter references ("Section 3 of the textbook") → `UNKNOWN` (not a section label)
 2. Course codes ("CS-101") → `UNKNOWN` (code-shaped but ambiguous context)
 3. Ranges ("Sections A-D") → `UNKNOWN` (do not expand to individual matches)
 4. No section token at all → `UNKNOWN` (could be for all students)
 5. Title/description disagree → `UNKNOWN` (cannot resolve)
+
+**Sixth case, discovered during implementation, decided the same way relevance always is — never suppress on a positive signal:**
+6. "All sections"/"all batches" bypass phrases (e.g. "Announcement for all sections") → `RELEVANT`, not merely `UNKNOWN`. This is an explicit, unambiguous positive signal that content applies regardless of section — stronger than "no evidence", so it is classified as confirmed-relevant rather than merely not-suppressed. Detected in `ragra/relevance/sections.py`'s `extract_sections()` (`applies_to_all` flag), checked before section-token extraction.
 
 **Property Test Invariant (non-negotiable):**
 > No input ever yields `notify=False` except `OTHER_SECTION`.
@@ -102,9 +107,11 @@ This invariant is enforced by test: if a future edge case breaks it, the test fa
 
 ## 4. UserAcademicProfile
 
-**Location:** `ragra/relevance/profile.py` (to be created)
+**Location:** `ragra/relevance/profile.py`
 
-**Proposed Signature:**
+**Status: implemented (Phase 1).**
+
+**Signature:**
 ```python
 @dataclass
 class UserAcademicProfile:
@@ -152,20 +159,43 @@ CREATE TABLE tasks (
 )
 ```
 
-**Invariant (enforced by a write-guard test, not just documentation):**
+**Amended in Phase 2.** The original draft of this contract said "Classroom tasks are read-only to the user (no reschedule, no cancel, no edit)" and required `update_task_personal_deadline` to raise for Classroom-sourced tasks. Taken literally that would have deleted a correct, shipped feature: setting a *personal* completion target on a Classroom assignment is the entire purpose of `personal_deadline` (`docs/DOMAIN.md`: "`personal_deadline` is the user's intended completion time"), and it never touches Classroom's data. The real invariant being protected is **"Classroom-authoritative data is never user-writable"**, not "rows sourced from Classroom are frozen". The contract below states that precisely.
+
+**Field ownership (the actual invariant):**
+
+| Field group | Fields | Writable by |
+|---|---|---|
+| Classroom-authoritative | `title`, `description`, `link`, `actual_deadline`, `kind`, `course_id`, `source_type`, `external_id`, `source_published_at`, `source_updated_at` | Classroom sync only — **never** a user-facing API, for any task |
+| Ragra-owned | `personal_deadline`, completion status | The user, on **any** task (Classroom-sourced or manual) |
+| Existence | cancellation | The user on **manual** tasks only; for Classroom-sourced tasks, existence is Classroom's to decide (`cancel_tasks_missing_from_source` owns that transition) |
+
+**Invariant (enforced by write-guard tests, not just documentation):**
 ```python
-def update_task_personal_deadline(..., task_id: int, ...) -> None:
-    """Raises if task_id is Classroom-sourced (not manual)."""
+def set_personal_deadline(..., task_id: int, ...) -> None:
+    """Allowed for every task. personal_deadline is Ragra-owned."""
+
+def mark_completed(..., task_id: int, ...) -> None:
+    """Allowed for every task. Completion is Ragra-owned."""
 
 def cancel_task(..., task_id: int, ...) -> None:
-    """Raises if task_id is Classroom-sourced."""
+    """Raises TaskSourceViolation if task_id is Classroom-sourced."""
+
+def update_manual_task(..., task_id: int, ...) -> None:
+    """Raises TaskSourceViolation if task_id is not source_type='manual'."""
 ```
 
 **Guarantee:**
-- Classroom tasks are read-only to the user (no reschedule, no cancel, no edit).
-- Manual tasks can be edited, rescheduled, or cancelled by the user.
+- No Classroom-authoritative field is writable through any user-facing API, on any task.
+- Manual tasks can be edited, rescheduled, or cancelled by the user; Classroom-sourced tasks can be planned (personal deadline) and completed, but never edited or cancelled.
 - No API ever accepts `source_type` or `external_id` as a parameter; they are derived from context.
 - The `__personal__` pseudo-course (created at schema-init time) holds all manual tasks.
+
+**Write-guard defense in depth (Phase 2 security design).** There is no auth layer behind these routes, so the boundary is enforced at three independent levels:
+1. **Route signatures are explicit.** Every route declares each accepted `Form(...)` parameter by name. No dict-splatting, no `**kwargs`, no request-body model that permits extra fields — a route that only declares `personal_deadline` is structurally incapable of receiving `title`. This mirrors the existing "structurally true, not just a rule" approach used for read-only Classroom access (`ClassroomGoogleClient` has no write method to call).
+2. **Repo-layer guards.** `cancel_task`/`update_manual_task` re-check `source_type` and raise `TaskSourceViolation`, so a future route bug cannot corrupt authoritative data.
+3. **Input validation before write.** Values are parsed/validated (e.g. a personal deadline must parse as a real date) rather than stored raw.
+
+Enforced by adversarial tests that POST unexpected extra fields (`title`, `actual_deadline`, `source_type`, `external_id`) to every personal-task route and assert every Classroom-authoritative field is byte-identical afterward.
 
 ---
 
