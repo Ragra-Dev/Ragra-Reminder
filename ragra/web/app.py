@@ -28,8 +28,17 @@ from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import PlainTextResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
+from ragra import accounts as accounts_module
+from ragra.adapters import google_credentials
 from ragra.db import repo
 from ragra.db.connection import connect_closing
+from ragra.notifications.preferences import (
+    NotificationPreferences,
+    load_preferences,
+    save_preferences,
+)
+from ragra.relevance.profile import load_raw_profile, save_profile
+from ragra.timetable.enrollment import EnrolledCourse
 from ragra.timetable.schedule import occurrences_for_local_day, weekly_class_from_row
 from ragra.tz import format_stored_local, local_day_bounds, utc_iso
 from ragra.web import auth, csrf, sessions
@@ -558,6 +567,134 @@ def create_app(
             )
         return templates.TemplateResponse(request, "deliveries.html", {"deliveries": rows})
 
+    # --- Account settings --------------------------------------------------
+    #
+    # The roadmap's Phase 3 frontend work lists a profile editor, notification
+    # preferences, and a delete-account flow explicitly - not just the storage
+    # and CLI commands underneath them. These three routes are that UI. What
+    # is deliberately NOT here is a web-triggered Google consent screen for
+    # Classroom/Calendar access: that has always been a local, interactive
+    # CLI flow (`ragra classroom-auth` / `calendar-auth`) that only proceeds
+    # after explicit human go-ahead at a terminal, and Phase 3 did not change
+    # that boundary - it only changed where the resulting token is stored
+    # (see ragra/adapters/google_credentials.py). This page shows that
+    # connection status read-only and points at the CLI for changing it.
+
+    @app.get("/account")
+    def account_page(request: Request):
+        with connect_closing(db_path) as conn:
+            user_id = _acting_user(conn, request)
+            user_row = repo.get_user(conn, user_id=user_id)
+            profile = load_raw_profile(conn, user_id=user_id)
+            preferences = load_preferences(conn, user_id=user_id)
+            credentials = google_credentials.status(conn, user_id=user_id)
+
+        return templates.TemplateResponse(
+            request,
+            "account.html",
+            {
+                "display_name": user_row["display_name"] if user_row else None,
+                "profile": profile,
+                "enrollment_text": _enrollment_to_text(profile.enrollment),
+                "preferences": preferences,
+                "credentials": credentials,
+            },
+        )
+
+    @app.post("/account/profile")
+    def update_account_profile(
+        request: Request,
+        program: str = Form(...),
+        batch_year: str = Form(""),
+        enrollment_start_year: str = Form(...),
+        enrollment_start_term: str = Form(...),
+        enrollment: str = Form(""),
+    ):
+        try:
+            start_year = int(enrollment_start_year.strip())
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400, detail="Enrollment start year must be a whole number"
+            ) from exc
+        try:
+            courses = _parse_enrollment_text(enrollment)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        with connect_closing(db_path) as conn:
+            user_id = _acting_user(conn, request)
+            try:
+                save_profile(
+                    conn,
+                    user_id=user_id,
+                    program=program.strip(),
+                    batch_year=batch_year.strip() or None,
+                    enrollment_start_year=start_year,
+                    enrollment_start_term=enrollment_start_term.strip().upper(),
+                    enrollment=courses,
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return RedirectResponse("/account", status_code=303)
+
+    @app.post("/account/notifications")
+    def update_account_notifications(
+        request: Request,
+        email_enabled: str = Form(""),
+        email_to: str = Form(""),
+        hermes_enabled: str = Form(""),
+        hermes_target: str = Form(""),
+    ):
+        # A checkbox's value is present only when checked, so "enabled" is
+        # derived from presence - but the destination itself is saved
+        # regardless of the toggle, so switching a channel off never throws
+        # away the address it will be switched back on with.
+        clean_email = email_to.strip() or None
+        clean_hermes = hermes_target.strip() or None
+        preferences = NotificationPreferences(
+            email_enabled=bool(email_enabled) and clean_email is not None,
+            email_to=clean_email,
+            hermes_enabled=bool(hermes_enabled) and clean_hermes is not None,
+            hermes_target=clean_hermes,
+        )
+        with connect_closing(db_path) as conn:
+            save_preferences(conn, user_id=_acting_user(conn, request), preferences=preferences)
+        return RedirectResponse("/account", status_code=303)
+
+    @app.get("/account/delete")
+    def account_delete_page(request: Request):
+        with connect_closing(db_path) as conn:
+            summary = accounts_module.preview_deletion(
+                conn, user_id=_acting_user(conn, request)
+            )
+        return templates.TemplateResponse(
+            request, "account_delete.html", {"lines": accounts_module.describe(summary)}
+        )
+
+    @app.post("/account/delete")
+    def account_delete_route(request: Request, confirm: str = Form("")):
+        # Typed confirmation, not a checkbox: this is the one action in
+        # Ragra that cannot be undone by using the product again, and a
+        # checkbox is too easy to tick on the way past. Case-insensitive
+        # and whitespace-trimmed on purpose - the word is a deliberate
+        # usability speed bump, not the security boundary. That boundary
+        # is the session and CSRF token this route already requires.
+        if confirm.strip().lower() != "delete":
+            raise HTTPException(status_code=400, detail='Type "delete" to confirm.')
+
+        with connect_closing(db_path) as conn:
+            user_id = _acting_user(conn, request)
+            accounts_module.delete_account(conn, user_id=user_id)
+            # The cascade already removed every session row for this user
+            # (sessions.user_id -> ON DELETE CASCADE), including the one this
+            # request is using - the cookie itself is cleared below only so
+            # the browser stops sending a token that no longer resolves to
+            # anything.
+
+        response = RedirectResponse("/login", status_code=303)
+        response.delete_cookie(sessions.COOKIE_NAME, path="/")
+        return response
+
     return app
 
 
@@ -583,6 +720,66 @@ def _set_session_cookie(response, token: str, settings: auth.AuthSettings) -> No
         secure=settings.secure_cookies,
         path="/",
     )
+
+
+def _parse_enrollment_text(text: str) -> tuple[EnrolledCourse, ...]:
+    """Parse the enrollment textarea, one course per line:
+
+        Course Name | Section | REGULAR or REPEAT | batch year | aliases,comma,separated
+
+    Only the first three fields are required. A plain-text, line-per-course
+    format rather than a dynamic add-row widget is a deliberate scope
+    decision for this phase (see docs/PROJECT_STATUS.md) - it needs no
+    client-side JavaScript and reuses EnrolledCourse's own validation
+    unchanged, at the cost of being less friendly to edit than a real form
+    would be. A richer editor is future frontend work, not a blocked
+    dependency of anything in Phase 3.
+
+    Raises ValueError naming the 1-indexed line on any problem, so the
+    route can turn it directly into a 400 the user can act on.
+    """
+    courses: list[EnrolledCourse] = []
+    for lineno, raw_line in enumerate(text.splitlines(), start=1):
+        line = raw_line.strip()
+        if not line:
+            continue
+        parts = [p.strip() for p in line.split("|")]
+        if len(parts) < 3:
+            raise ValueError(
+                f"line {lineno}: expected at least 'Course Name | Section | REGULAR or REPEAT'"
+            )
+        name, section, enrollment_type = parts[0], parts[1], parts[2].upper()
+        if not name or not section:
+            raise ValueError(f"line {lineno}: course name and section are both required")
+        batch_year = parts[3] if len(parts) > 3 and parts[3] else None
+        aliases = (
+            tuple(a.strip() for a in parts[4].split(",") if a.strip())
+            if len(parts) > 4 and parts[4]
+            else ()
+        )
+        try:
+            courses.append(
+                EnrolledCourse(
+                    name, section, enrollment_type, batch_year=batch_year, aliases=aliases
+                )
+            )
+        except ValueError as exc:
+            raise ValueError(f"line {lineno}: {exc}") from exc
+    return tuple(courses)
+
+
+def _enrollment_to_text(enrollment: tuple[EnrolledCourse, ...]) -> str:
+    """The inverse of `_parse_enrollment_text`, for pre-filling the textarea
+    with a user's already-saved enrollment."""
+    lines = []
+    for course in enrollment:
+        parts = [course.course_name, course.section, course.enrollment_type]
+        if course.batch_year or course.aliases:
+            parts.append(course.batch_year or "")
+        if course.aliases:
+            parts.append(",".join(course.aliases))
+        lines.append(" | ".join(parts))
+    return "\n".join(lines)
 
 
 def _clean_deadline(value: str) -> str | None:

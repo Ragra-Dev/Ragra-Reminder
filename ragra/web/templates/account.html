@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Ragra - Account</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 780px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
+  h1 { margin-bottom: 0.25rem; }
+  h2 { margin-top: 2rem; border-bottom: 1px solid #ddd; padding-bottom: 0.25rem; }
+  nav a { margin-right: 1rem; color: #1d4ed8; text-decoration: none; font-size: 0.9rem; }
+  section { background: #f8f9fb; border: 1px solid #e3e6ee; border-radius: 8px; padding: 1rem; margin: 1rem 0; }
+  section label { display: block; font-size: 0.8rem; color: #444; margin-top: 0.6rem; }
+  section input[type=text], section textarea { width: 100%; padding: 0.4rem; border: 1px solid #ccc; border-radius: 4px; font-family: inherit; box-sizing: border-box; }
+  section textarea { font-family: ui-monospace, monospace; font-size: 0.85rem; }
+  .checkbox-row { display: flex; align-items: center; gap: 0.4rem; margin-top: 0.6rem; }
+  .checkbox-row label { margin: 0; }
+  .hint { color: #666; font-size: 0.8rem; margin-top: 0.3rem; }
+  .status-line { padding: 0.25rem 0; font-size: 0.9rem; }
+  .status-line .label { color: #444; }
+  button { cursor: pointer; border: 1px solid #ccc; background: #fff; border-radius: 6px; padding: 0.35rem 0.8rem; font-size: 0.85rem; margin-top: 0.8rem; }
+  button:hover { background: #f0f0f0; }
+  .danger { border-color: #f3d4d4; background: #fff7f7; }
+  .danger a { color: #9c1c1c; }
+  form.inline { display: inline; }
+</style>
+</head>
+<body>
+<h1>Account</h1>
+<p class="hint">{{ display_name or "Signed in" }}</p>
+<nav><a href="/">Today</a><a href="/tasks">Tasks</a><a href="/missed">Missed</a><a href="/deliveries">Deliveries</a></nav>
+
+<h2>Academic profile</h2>
+<section>
+  <form method="post" action="/account/profile">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token_for(request) }}">
+    <label>Program <input type="text" name="program" value="{{ profile.program }}" required></label>
+    <label>Batch year <input type="text" name="batch_year" value="{{ profile.batch_year or '' }}"></label>
+    <label>Enrollment start year
+      <input type="text" name="enrollment_start_year" value="{{ profile.enrollment_start_year }}">
+    </label>
+    <p class="hint">Used only to compute the descriptive "expected semester" shown elsewhere - it never
+      filters which courses are relevant.</p>
+    <label>Enrollment start term
+      <select name="enrollment_start_term">
+        <option value="FALL" {% if profile.enrollment_start_term == "FALL" %}selected{% endif %}>FALL</option>
+        <option value="SPRING" {% if profile.enrollment_start_term == "SPRING" %}selected{% endif %}>SPRING</option>
+      </select>
+    </label>
+    <label>Enrolled courses, one per line
+      <textarea name="enrollment" rows="6" placeholder="Digital Logic Design | CS-G | REGULAR | 2025 | DLD,Digital Logic">{{ enrollment_text }}</textarea>
+    </label>
+    <p class="hint">Format: <code>Course Name | Section | REGULAR or REPEAT | batch year (optional) | aliases, comma, separated (optional)</code>.
+      This is what used to be the hand-edited MY_ENROLLMENT table - it's now yours alone, and nobody else's
+      account is affected by it.</p>
+    <button type="submit">Save profile</button>
+  </form>
+</section>
+
+<h2>Notifications</h2>
+<section>
+  <form method="post" action="/account/notifications">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token_for(request) }}">
+    <div class="checkbox-row">
+      <input type="checkbox" id="email_enabled" name="email_enabled" value="1" {% if preferences.email_enabled %}checked{% endif %}>
+      <label for="email_enabled">Email reminders</label>
+    </div>
+    <label>Email address <input type="text" name="email_to" value="{{ preferences.email_to or '' }}" placeholder="you@example.com"></label>
+    <div class="checkbox-row">
+      <input type="checkbox" id="hermes_enabled" name="hermes_enabled" value="1" {% if preferences.hermes_enabled %}checked{% endif %}>
+      <label for="hermes_enabled">Hermes delivery (e.g. WhatsApp)</label>
+    </div>
+    <label>Hermes target <input type="text" name="hermes_target" value="{{ preferences.hermes_target or '' }}" placeholder="whatsapp:+92..."></label>
+    <p class="hint">A channel only delivers when it's both checked here AND the deployment has the
+      matching infrastructure configured (an SMTP relay, or HERMES_BIN). Leaving an address here while
+      unchecked keeps it saved without sending anything.</p>
+    <button type="submit">Save notification settings</button>
+  </form>
+</section>
+
+<h2>Connected Google services</h2>
+<section>
+  <div class="status-line"><span class="label">Encryption key configured:</span> {{ credentials.encryption_key_configured }}</div>
+  <div class="status-line"><span class="label">Classroom:</span> {{ credentials.classroom }}</div>
+  <div class="status-line"><span class="label">Calendar:</span> {{ credentials.calendar }}</div>
+  <p class="hint">Connecting or reconnecting Classroom/Calendar access is done at a terminal
+    (<code>ragra classroom-auth</code>, <code>ragra calendar-auth</code>) rather than from this page -
+    that consent screen has always required a deliberate, interactive step, and Phase 3 only changed
+    where the resulting token is stored (encrypted, per account), not how it's granted.</p>
+</section>
+
+<h2 class="danger-heading">Danger zone</h2>
+<section class="danger">
+  <p>Permanently delete this account and everything it owns - tasks, reminders, calendar links,
+    stored Google authorization, notification settings, sign-in sessions.</p>
+  <a href="/account/delete"><button type="button">Delete my account&hellip;</button></a>
+</section>
+
+</body>
+</html>

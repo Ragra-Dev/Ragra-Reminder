@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Ragra - Delete account</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 780px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
+  h1 { margin-bottom: 0.25rem; }
+  a.back { color: #666; font-size: 0.85rem; text-decoration: none; }
+  a.back:hover { text-decoration: underline; }
+  section { background: #fff7f7; border: 1px solid #f3d4d4; border-radius: 8px; padding: 1rem; margin: 1rem 0; }
+  pre { white-space: pre-wrap; font-family: ui-monospace, monospace; font-size: 0.85rem; background: #fff; border: 1px solid #eee; border-radius: 6px; padding: 0.75rem; }
+  label { display: block; font-size: 0.85rem; margin-top: 0.8rem; }
+  input[type=text] { padding: 0.4rem; border: 1px solid #ccc; border-radius: 4px; font-family: inherit; }
+  button { cursor: pointer; border: 1px solid #9c1c1c; background: #9c1c1c; color: #fff; border-radius: 6px; padding: 0.4rem 0.9rem; font-size: 0.85rem; margin-top: 0.8rem; }
+  button:hover { background: #7a1616; }
+</style>
+</head>
+<body>
+<a class="back" href="/account">&larr; Back to account</a>
+<h1>Delete this account</h1>
+<p>This cannot be undone. Everything listed below is removed immediately - nothing is recoverable
+  afterward, and no support flow can bring it back.</p>
+
+<section>
+  <pre>{% for line in lines %}{{ line }}
+{% endfor %}</pre>
+
+  <form method="post" action="/account/delete">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token_for(request) }}">
+    <label>Type <strong>delete</strong> to confirm
+      <input type="text" name="confirm" autocomplete="off" required>
+    </label>
+    <button type="submit">Permanently delete my account</button>
+  </form>
+</section>
+</body>
+</html>
