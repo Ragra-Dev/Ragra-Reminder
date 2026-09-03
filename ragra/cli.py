@@ -356,20 +356,108 @@ def cmd_reminders(args: argparse.Namespace) -> int:
         return rc
 
 
-def cmd_tick(args: argparse.Namespace) -> int:
-    """The one entrypoint meant to run unattended (Windows Task Scheduler).
-    Each step is isolated: Classroom sync, Calendar sync, reminder
-    dispatch, and FAST timetable sync each catch their own failures and
-    continue, so e.g. Google being briefly unreachable never prevents
-    already-synced reminders from still being dispatched, and a FAST
-    source hiccup never touches the other three. Logs to
-    RAGRA_HOME/logs/ragra.log. Tracks each step's health (ragra/health.py)
-    and sends at most one notification if a component has been failing for
-    FAILURE_ALERT_THRESHOLD consecutive ticks - re-armed automatically the
-    next time that component succeeds."""
+TICK_COMPONENTS = (
+    ("classroom", "_run_classroom_sync"),
+    ("calendar", "_run_calendar_sync"),
+    ("reminders", "_run_reminders_dispatch"),
+    ("timetable", "_run_timetable_sync"),
+    # After timetable sync, so it always sees the freshest pattern.
+    ("class_reminders", "_run_class_reminders"),
+)
+
+
+def _tick_one_user(conn, config: Config, logger, *, user_id: int, started_at: str) -> tuple[int, list[str]]:
+    """Run every stage for one account and record that account's
+    diagnostics. Returns (exit_code, errors).
+
+    Each stage is already isolated from the others; this function is the
+    isolation boundary between *users*. Nothing it does can reach another
+    account: every call below carries user_id, health and sync state are
+    per-user rows (migrations 0018-0019), and the providers are built from
+    this user's own preferences.
+    """
     from ragra import health
     from ragra.db import repo
+
+    stage_results: dict[str, str | None] = {name: None for name, _ in TICK_COMPONENTS}
+    errors: list[str] = []
+    started = time.monotonic()
+
+    def _capturing_log(component: str):
+        def log(message: str) -> None:
+            stage_results[component] = message if stage_results[component] is None else (
+                stage_results[component] + "\n" + message
+            )
+            logger.info("[user %s] %s", user_id, message)
+
+        return log
+
+    exit_code = 0
+    for component, runner_name in TICK_COMPONENTS:
+        runner = globals()[runner_name]
+        try:
+            rc, error = runner(conn, config, _capturing_log(component), user_id=user_id)
+        except Exception as exc:  # noqa: BLE001 - one stage must never abort the user
+            rc, error = 1, str(exc)
+            logger.error("[user %s] %s stage raised: %s", user_id, component, exc)
+
+        health.record_result(
+            conn, user_id=user_id, component=component, success=(rc == 0), error=error
+        )
+        if rc:
+            exit_code = 1
+            if error:
+                errors.append(f"{component}: {error}")
+
+    alerted = health.check_and_alert(
+        conn, user_id=user_id, providers=_build_providers(conn, config, user_id=user_id)
+    )
+    if alerted:
+        logger.info("[user %s] health alert sent for: %s", user_id, ", ".join(alerted))
+
+    repo.record_tick_session(
+        conn,
+        user_id=user_id,
+        started_at=started_at,
+        finished_at=datetime.now(timezone.utc).isoformat(),
+        duration_seconds=time.monotonic() - started,
+        exit_code=exit_code,
+        classroom_result=stage_results["classroom"],
+        calendar_result=stage_results["calendar"],
+        reminders_result=stage_results["reminders"],
+        timetable_result=stage_results["timetable"],
+        class_reminders_result=stage_results["class_reminders"],
+        error="; ".join(errors) if errors else None,
+    )
+    return exit_code, errors
+
+
+def cmd_tick(args: argparse.Namespace) -> int:
+    """The one entrypoint meant to run unattended (Windows Task Scheduler).
+
+    Runs every stage for every user. Isolation works at two levels, and both
+    matter for different reasons:
+
+      - between stages, so Google being briefly unreachable never prevents
+        already-synced reminders from being dispatched;
+      - between users, so one account's expired token, malformed timetable,
+        or unreachable notification provider cannot stop any other account
+        from being processed at all. Without that, a single broken account
+        would silently take the whole system down for everyone, and the
+        symptom - "reminders stopped" - would point nowhere near the cause.
+
+    Logs to RAGRA_HOME/logs/ragra.log, prefixed by user. Tracks each stage's
+    health per user (ragra/health.py) and sends at most one notification per
+    user if one of their components has been failing for
+    FAILURE_ALERT_THRESHOLD consecutive ticks - re-armed automatically the
+    next time that component succeeds.
+
+    The process exit code is non-zero if *any* user had a failing stage,
+    since the scheduled task has only one code to report.
+    """
+    from ragra.db import repo
     from ragra.logging_setup import configure_logging
+    from ragra.web import sessions
 
     config = load_config()
     logger = configure_logging(config.ragra_home)
@@ -377,92 +465,39 @@ def cmd_tick(args: argparse.Namespace) -> int:
     started_at = datetime.now(timezone.utc).isoformat()
     logger.info("tick start")
 
-    # Structured, short-retention diagnostics (separate table from the text
-    # log): captures each stage's own summary line without changing what
-    # any runner logs or returns - see ragra/db/repo.py's tick_sessions.
-    stage_results: dict[str, str | None] = {
-        "classroom": None, "calendar": None, "reminders": None, "timetable": None,
-        "class_reminders": None,
-    }
-    tick_errors: list[str] = []
-
-    def _capturing_log(component: str):
-        def log(message: str) -> None:
-            stage_results[component] = message if stage_results[component] is None else (
-                stage_results[component] + "\n" + message
-            )
-            logger.info(message)
-
-        return log
-
     exit_code = 0
     try:
         with connect_closing(config.db_path) as conn:
-            # Retention first, and deliberately not per-user (see
-            # repo.purge_old_tick_sessions): it prunes the whole log by age.
-            cutoff = (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
-            repo.purge_old_tick_sessions(conn, older_than_iso=cutoff)
+            # Housekeeping first, and deliberately not per-user: these prune
+            # strictly by age (see repo.purge_old_tick_sessions), so running
+            # them once per user would be wasted work, and running them only
+            # for the users visited would leave a departed user's rows behind
+            # forever.
+            now = datetime.now(timezone.utc)
+            repo.purge_old_tick_sessions(
+                conn, older_than_iso=(now - timedelta(hours=48)).isoformat()
+            )
+            sessions.purge_expired_sessions(conn, now=now)
 
-            user_id = acting_user_id(conn)
+            users = repo.list_users(conn)
+            logger.info("tick covering %d account(s)", len(users))
 
-            for component, runner in (
-                ("classroom", _run_classroom_sync),
-                ("calendar", _run_calendar_sync),
-                ("reminders", _run_reminders_dispatch),
-                ("timetable", _run_timetable_sync),
-                # After timetable sync, so it always sees the freshest pattern.
-                ("class_reminders", _run_class_reminders),
-            ):
-                rc, error = runner(conn, config, _capturing_log(component), user_id=user_id)
-                health.record_result(
-                    conn, user_id=user_id, component=component, success=(rc == 0), error=error
-                )
+            for user in users:
+                try:
+                    rc, _errors = _tick_one_user(
+                        conn, config, logger, user_id=user["id"], started_at=started_at
+                    )
+                except Exception as exc:  # noqa: BLE001 - one user must never abort the rest
+                    logger.error("[user %s] tick failed unexpectedly: %s", user["id"], exc)
+                    rc = 1
                 if rc:
                     exit_code = 1
-                    if error:
-                        tick_errors.append(f"{component}: {error}")
-
-            alerted = health.check_and_alert(
-                conn, user_id=user_id, providers=_build_providers(conn, config, user_id=user_id)
-            )
-            if alerted:
-                logger.info("health alert sent for: %s", ", ".join(alerted))
-
-            repo.record_tick_session(
-                conn,
-                user_id=user_id,
-                started_at=started_at,
-                finished_at=datetime.now(timezone.utc).isoformat(),
-                duration_seconds=time.monotonic() - started,
-                exit_code=exit_code,
-                classroom_result=stage_results["classroom"],
-                calendar_result=stage_results["calendar"],
-                reminders_result=stage_results["reminders"],
-                timetable_result=stage_results["timetable"],
-                class_reminders_result=stage_results["class_reminders"],
-                error="; ".join(tick_errors) if tick_errors else None,
-            )
     except Exception as exc:  # noqa: BLE001 - last-resort guard; a tick must never leave a hung/corrupt process
+        # Reached only for a failure outside any single user's run - opening
+        # the database, or enumerating accounts. A per-user failure is
+        # already contained above and recorded against that user.
         logger.error("tick failed unexpectedly: %s", exc)
         exit_code = 1
-        try:
-            with connect_closing(config.db_path) as conn:
-                repo.record_tick_session(
-                    conn,
-                    user_id=acting_user_id(conn),
-                    started_at=started_at,
-                    finished_at=datetime.now(timezone.utc).isoformat(),
-                    duration_seconds=time.monotonic() - started,
-                    exit_code=exit_code,
-                    classroom_result=stage_results["classroom"],
-                    calendar_result=stage_results["calendar"],
-                    reminders_result=stage_results["reminders"],
-                    timetable_result=stage_results["timetable"],
-                    class_reminders_result=stage_results["class_reminders"],
-                    error=f"tick failed unexpectedly: {exc}",
-                )
-        except Exception:  # noqa: BLE001 - recording the diagnostic must never mask the real failure
-            pass
 
     logger.info("tick end (%.1fs, exit=%d)", time.monotonic() - started, exit_code)
     return exit_code
