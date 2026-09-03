@@ -30,7 +30,7 @@
    python -m pytest
    ```
 
-All tests should pass (397 passing as of the latest main branch).
+All tests should pass (712 passing as of the latest main branch).
 
 ## Running Ragra
 
@@ -67,6 +67,23 @@ cp .env.example .env
 - Run the full test suite after meaningful changes: `python -m pytest`.
 - Inspect the codebase before changing architecture — read `docs/ARCHITECTURE.md` for context.
 - **Git commits:** Use concise, professional messages that describe the logical engineering change. The code, tests, documentation, and PR descriptions carry the technical detail — commit messages should not. Never include personal information, credentials, internal debugging history, or excessive implementation details.
+
+## Licensing and Contributions
+
+Ragra's source is published under the PolyForm Strict License 1.0.0 (see
+`LICENSE`). By submitting a contribution (a pull request, patch, or any other
+submitted change), you confirm that you have the right to submit it under
+these terms.
+
+Contributions may require acceptance of a Contributor License Agreement
+(CLA) before they can be merged. A CLA, where required, governs the
+intellectual-property terms under which a contribution is accepted into the
+project — for example, granting the project the rights it needs to
+distribute, modify, and relicense the contributed code alongside the rest of
+the codebase. A CLA is a contribution/IP mechanism only: it does not by
+itself entitle a contributor to royalties, revenue share, or ownership in the
+project. Any commercial compensation arrangement with a contributor, if one
+is ever made, is a separate agreement outside the scope of the CLA.
 
 ## Database Backups
 

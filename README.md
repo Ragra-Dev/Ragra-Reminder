@@ -56,3 +56,19 @@ cancelled/rescheduled classes don't leave stale reminders).
 
 See [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md) for current verified
 state, known limitations, and the roadmap.
+
+## License
+
+This repository is public so the source is available for inspection and
+evaluation — being visible on GitHub is a platform feature (view/fork
+access under GitHub's own terms of service), not a copyright license. The
+actual permissions anyone receives are only those granted by the license in
+[`LICENSE`](LICENSE): the **PolyForm Strict License 1.0.0**.
+
+In plain terms: you may use and run this software for any noncommercial
+purpose (personal study, evaluation, coursework, research, and similar), but
+the license does **not** grant a right to redistribute copies of it or to
+create and publish modified/derivative works based on it. Commercial use,
+and any distribution or derivative-works rights beyond what PolyForm Strict
+grants, require separate permission from the copyright holder. See `LICENSE`
+for the exact, authoritative terms.

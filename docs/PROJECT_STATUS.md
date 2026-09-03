@@ -394,7 +394,7 @@ The roadmap defines nine phases (P0–P8). Current status:
 | **P0** | 1–2 days | Repository Hygiene / Clean Clone | COMPLETED|
 | **P1** | 1.5–3 wk | Core Academic Intelligence (M1) | COMPLETED |
 | **P2** | 3–6 wk | Complete Single-User Product (M2) | IMPLEMENTED (soak test pending) |
-| **P3** | 3–5 wk | Identity + User Isolation (local) | PLANNED |
+| **P3** | 3–5 wk | Identity + User Isolation (local) | IMPLEMENTED (awaiting review) |
 | **P4** | 3–6 wk | Hosted Backend: Postgres + Remote Execution | PLANNED |
 | **P5** | 2–4 wk | Web Push + Notification Preferences | PLANNED |
 | **P6** | 3–5 wk | Pilot: 1–3 Real Users | PLANNED |

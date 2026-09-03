@@ -2,8 +2,8 @@
 
 **TOTAL NUMBER OF MAJOR PHASES: 9** (Phase 0 through Phase 8)
 
-
-This roadmap is the source of truth for product direction, architecture, phase order, dependencies, and definition of done for each phase.
+This roadmap is the source of truth for product direction, architecture,
+phase order, dependencies, and definition of done for each phase.
 
 ---
 
@@ -148,8 +148,8 @@ not a new mechanism.
 **Keep FastAPI + Jinja through v1. Add HTMX for interactivity. Do not add
 React/Next.** The app is read-dominant, server-rendered, has no complex client
 state, no offline mode, and no realtime requirement. A second build toolchain
-would roughly double the maintenance surface area, for
-zero user-visible benefit. You will write exactly one piece of hand-written
+would roughly double the maintenance surface area, for zero user-visible
+benefit. You will write exactly one piece of hand-written
 JavaScript for v1: the service worker + push subscription handshake (~80
 lines, Phase 5). Revisit only if you later want genuine offline support or an
 app-like SPA — neither is in v1.
@@ -250,6 +250,7 @@ machine that has never seen this project.
 **Definition of done.** Fresh clone in a fresh venv installs and passes 211 tests with no manual `pip install`. `CONTRIBUTING.md` exists. Sheets key rotated. No stale claim remains in `docs/`.
 
 **Duration.** 3–6 hours hands-on, 1–2 days calendar.
+
 **Skills to learn.** None — mechanical, well-defined edits.
 **Risks.** Only that it gets skipped — a broken clean-clone path is a demoralising first experience for anyone new to the codebase.
 **Exit criteria.** A green suite from a fresh clone on a machine that has never seen the project, with no manual setup steps.
@@ -300,6 +301,9 @@ independently of the migration work.
 **Definition of done.** `grep -r import ragra/relevance/` shows no sqlite3, no network, no AI. `TARGET_PROGRAM` no longer referenced at any `timetable_sync.py` call site. All pre-existing timetable tests pass **unmodified**. Migration verified non-destructive against real data. Email provider sends via stub. Suite ≥ 230 tests, green.
 
 **Duration.** 15–25 hours hands-on, 1.5–3 weeks calendar.
+
+The interface freeze (§7) must be written before implementation starts. A
+contract negotiated during review is a contract negotiated too late.
 
 **Skills to learn.** What "fail open" means as an invariant, and why a
 property test is stronger than example tests here. SQL migration patterns,
@@ -370,6 +374,20 @@ tracker for two full weeks and count the times you opened Classroom anyway.
 **Duration.** 40–70 hours hands-on, **3–6 weeks calendar**. This is the largest
 feature phase in the roadmap.
 
+**Task breakdown.**
+
+| Task | Files | Depends | Parallel? | Effort |
+|---|---|---|---|---|
+| Relevance persistence + sync wiring | migration, `repo.py`, `classroom_sync.py` | P1 | Not with the personal-task task | 6–10h |
+| Personal task model + guard | migration, `repo.py` | P1 | Not with the above | 6–10h |
+| Announcement workflow | `web/app.py`, templates, `repo.py` | personal tasks | Not with dashboard restructure | 6–10h |
+| Timetable surfaced (dashboard + brief) | `web/app.py`, `brief.py`, templates | — | Yes, if sequenced against announcements | 4–6h |
+| Class-occurrence expander (pure) | `ragra/timetable/schedule.py` (new) | — | **Yes** — new file, zero conflict | 5–8h |
+| Class-aware reminders | `reminders/`, `cli.py` | expander | No | 6–10h |
+| Deadline-change notification | `classroom_sync.py`, `dispatch.py` | P1 Notification | Conflicts with relevance wiring in `classroom_sync.py` | 4–6h |
+| Delivery status + UI | migration, `dispatch.py`, `web/app.py` | P1 | Yes | 5–8h |
+| Dashboard restructure + HTMX | `web/app.py`, templates | most of the above | **No — do it last, single owner** | 8–12h |
+
 **Merge hotspots this phase:** `repo.py`, `web/app.py`, `classroom_sync.py`.
 Rule: append-only within sections, never reorder, and never leave two PRs
 touching the same one of these three open for more than 48 hours. The dashboard
@@ -434,8 +452,8 @@ others.
 **Security work.** This is the phase where security stops being hygiene and
 becomes the product's obligation. CSRF tokens on every mutating form. OAuth
 `state` parameter validated. Refresh tokens encrypted. No secrets in logs.
-Session fixation prevention. **Budget a dedicated, deep review pass for isolation
-alone** — do not merge this phase on a normal PR review.
+Session fixation prevention. **Budget a dedicated, deep review pass for
+isolation alone** — do not merge this phase on a normal PR review.
 
 **Deployment work.** None yet, deliberately.
 **Dependencies.** Phase 2 complete and stable. Do not start this with Phase 2 features half-merged.
@@ -445,6 +463,21 @@ proven by tests, account deletion works, and your own account still works after
 migrating from the pre-`user_id` schema.
 
 **Duration.** 35–60 hours hands-on, 3–5 weeks calendar.
+
+**Task breakdown.**
+
+| Task | Depends | Parallel? |
+|---|---|---|
+| `user_id` migration + repo rewrite | P2 frozen | **No — nothing else merges during this** |
+| Web OAuth flow + token encryption | user_id | After the migration lands |
+| Sessions + auth middleware + CSRF | user_id | Yes, after migration |
+| Profile / preferences UI | sessions | Yes |
+| Account deletion | all | Yes |
+| Isolation test suite | all | Yes |
+
+Isolation-test authorship should be kept independent of the implementation
+work — tests written by whoever wrote the isolation code tend to validate
+what was intended, not what was actually built.
 
 **Skills to learn — non-negotiable:** how OAuth 2.0 authorization-code flow
 actually works (what `state` is for, why the code is exchanged server-side,
@@ -585,6 +618,18 @@ once into a scratch database.
 the roadmap** — first deployments always cost more than estimated, and neither
 of you has done this before.
 
+**Task breakdown.**
+
+| Task | Depends | Parallel? |
+|---|---|---|
+| Postgres port of `repo.py` | P3 | **No — single owner, one branch** |
+| Data migration script + verification | port | No |
+| Dockerfile + deploy config | — | **Yes, from day 1 of the phase** |
+| Scheduler-in-process | deploy | Yes |
+| Secrets, TLS, domain | deploy | Yes |
+| Backups + restore drill | Postgres | Yes |
+| Structured logging + `/health` | — | Yes |
+
 **Skills to learn.** Basic Postgres operations (connections, pooling, why a
 connection limit matters); what a container image actually is; how
 environment-based secrets reach a running process; how to read production
@@ -637,6 +682,12 @@ reminders.
 
 **Duration.** 25–45 hours hands-on, 2–4 weeks calendar.
 
+The backend work (`WebPushProvider`, subscription lifecycle, routing) and the
+frontend work (service worker, PWA manifest, permission UX — needs real-device
+testing across Chrome/Android and Safari/iOS) can proceed in parallel,
+meeting only at the subscription endpoint. Human review: test on a real
+iPhone and a real Android device — emulators lie about push.
+
 **Skills to learn.** What a service worker is and its lifecycle, and the
 platform reality that **iOS Safari only delivers push to installed PWAs** —
 this constrains onboarding UX, not just code. VAPID, `pywebpush`, subscription
@@ -687,6 +738,9 @@ demonstrably met for people who are not you.
 
 **Duration.** 25–40 hours hands-on, 3–5 weeks calendar — calendar-dominated,
 because you are waiting on humans.
+
+This phase spans user contact, onboarding UX, triage, fixes, and regression
+tests, with a weekly review of what broke.
 
 **Skills to learn.** Reading production logs and diagnosing from incomplete
 information — the core operational skill, and the one that decides whether
@@ -744,6 +798,12 @@ contacting you, and you can go a week without touching the server.
 
 **Duration.** 30–50 hours hands-on, **4–8 weeks calendar** — dominated by the
 Google review wait.
+
+This phase spans Google verification, privacy policy, landing page, and
+domain setup, alongside load testing, rate limiting, quota adaptation, and
+monitoring, plus a full security review. A privacy policy is a legal document
+describing what the product actually does, so a human must verify every claim
+in it is true.
 
 **Skills to learn.** What data is held, where, for how long, and how it would
 be deleted on request — an honest privacy policy depends on this, and Google
@@ -834,9 +894,10 @@ Ragra is v1 when all fourteen are true for people you have never met.
 
 **Branching.** `main` always green. Short-lived feature branches
 (`feat/relevance-engine`, `feat/migrations`, `feat/user-id-tenant-key`). One
-task per branch, days not weeks. PR + review, always — it's the mechanism that catches a boundary
-violation before it reaches `main`. Rebase before opening. **No long-lived `personal` branch, ever** — the
-personal edition is `.env` values and an optional provider, nothing more.
+task per branch, days not weeks. PR + review, always — it's the mechanism
+that catches a boundary violation before it reaches `main`. Rebase before
+opening. **No long-lived `personal` branch, ever** — the personal edition is
+`.env` values and an optional provider, nothing more.
 
 **Merge hotspots, in order of danger.**
 
@@ -858,8 +919,8 @@ with sequencing.
 
 ## 16. ESTIMATES
 
-Hands-on = actual keyboard hours. Calendar = elapsed wall-clock for two
-part-time students with coursework.
+Hands-on = actual keyboard hours. Calendar = elapsed wall-clock time assuming
+part-time work alongside coursework.
 
 | Phase | Hands-on | Calendar |
 |---|---|---|
@@ -874,15 +935,15 @@ part-time students with coursework.
 | **Total to v1** | **215–365 h** | **5–9 months** |
 
 **FASTEST PLAUSIBLE PATH — ~4.5 months.** Assumes: 10+ hours/week of
-consistent engineering time; no exam period interrupts; the Postgres port hits
-the low estimate; Google verification clears on the first submission in ~2
-weeks; the pilot finds only small bugs; no FAST sheet restructure. Every one of
-these is plausible. All of them together is not. Plan against it only if you
-have a hard deadline and are willing to cut P5 (ship email-only v1).
+consistent engineering time; no exam period interrupts; the Postgres port
+hits the low estimate; Google verification clears on the first submission in
+~2 weeks; the pilot finds only small bugs; no FAST sheet restructure. Every
+one of these is plausible. All of them together is not. Plan against it only
+if you have a hard deadline and are willing to cut P5 (ship email-only v1).
 
 **REALISTIC PATH — ~7 months.** Assumes: 6–8 hours/week, multi-week
-interruptions for exams, the Postgres port runs over, Google verification takes
-one round trip (~4 weeks), the pilot surfaces two or three real design
+interruptions for exams, the Postgres port runs over, Google verification
+takes one round trip (~4 weeks), the pilot surfaces two or three real design
 problems. **This is what I'd plan against.**
 
 **CONSERVATIVE PATH — ~11–12 months.** Assumes: sporadic work, one long
@@ -900,21 +961,21 @@ costs momentum, not value.
 CURRENT PHASE:                    Phase 3 — Identity and User Isolation
                                   (implementation complete; awaiting review)
 CURRENT MILESTONE:                M3
-PHASE 1 STATUS:                   COMPLETE. Landed as three
-                                  logically separate, independently
-                                  reviewed commits (migration framework,
-                                  notification value object, EmailProvider)
-                                  on top of the relevance engine + profile
-                                  work already done. Suite: 290 passing
-                                  (was 211 at Phase 0 close).
+PHASE 1 STATUS:                   COMPLETE. Landed as three logically
+                                  separate, independently reviewed commits
+                                  (migration framework, notification value
+                                  object, EmailProvider) on top of the
+                                  relevance engine + profile work already
+                                  done. Suite: 290 passing (was 211 at
+                                  Phase 0 close).
 PHASE 2 STATUS:                   COMPLETE. Implemented end to end across
-                                  both originally-planned tracks. The two-week
-                                  soak test was explicitly waived by the
-                                  maintainer so Phase 3 could begin; the
-                                  deferred HTMX pass remains outstanding
+                                  both originally-planned tracks. The
+                                  two-week soak test was explicitly waived
+                                  by the maintainer so Phase 3 could begin;
+                                  the deferred HTMX pass remains outstanding
                                   (plain forms ship today and work).
-PHASE 3 STATUS:                   Implementation complete, both tracks. 17
-                                  migrations (0009–0025),
+PHASE 3 STATUS:                   Implementation complete, both tracks.
+                                  17 migrations (0009–0025),
                                   every user-owned table carries an owner,
                                   Google sign-in with PKCE and single-use
                                   state, server-side sessions, encrypted
@@ -988,4 +1049,7 @@ control.
 - **Nobody wants it.** You are ~5 months of work from finding out whether students other than you will use this. Nothing in P3–P5 tests that hypothesis. **Consider talking to three FAST students during P2** — show them your working single-user version, watch their reaction, and let it change P2's priorities. That costs a week and could save three months.
 - **Notification fatigue.** The current cadence (up to 5 reminders per task) was tuned for one user who tolerates it. Add push and email and it becomes spam to a stranger. Re-tune before P6, not after.
 
-**10. Next action.** See §17 for current phase status and §4-§12 for phase-by-phase technical work.
+**10. Next action.** Per §17, Phases 0–3 are complete. The next milestone is
+Phase 4 — porting `repo.py` to Postgres and standing up remote execution
+(§8), which should not start until Phase 3's isolation guarantees have been
+reviewed and merged.

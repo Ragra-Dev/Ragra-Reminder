@@ -24,3 +24,7 @@ logs/
 secrets/
 
 .pytest_cache/
+
+# Private development material - never commit; local-only per project policy
+CLAUDE.md
+.claude/
