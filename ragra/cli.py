@@ -724,6 +724,49 @@ def cmd_notify_adopt_env(args: argparse.Namespace) -> int:
     return 0
 
 
+# ---------------------------------------------------------------------------
+# Account deletion (P3-11)
+# ---------------------------------------------------------------------------
+
+
+def cmd_account_delete(args: argparse.Namespace) -> int:
+    """Delete this account and everything it owns.
+
+    Two-step by design. Without --confirm this prints exactly what would be
+    removed and stops; the confirmation text is generated from the same
+    schema walk the deletion performs, so it cannot drift out of date the
+    way a hand-written sentence would. The flag is spelled --confirm rather
+    than -y so it cannot be typed by accident, and there is no interactive
+    prompt because this command has to work from a script.
+    """
+    from ragra import accounts
+
+    config = load_config()
+    with connect_closing(config.db_path) as conn:
+        user_id = args.user_id if args.user_id is not None else acting_user_id(conn)
+
+        try:
+            summary = accounts.preview_deletion(conn, user_id=user_id)
+        except accounts.UnknownAccount as exc:
+            print(exc)
+            return 1
+
+        if not args.confirm:
+            print("This would permanently delete:")
+            for line in accounts.describe(summary):
+                print(line)
+            print()
+            print("Nothing was deleted. Re-run with --confirm to proceed.")
+            return 0
+
+        accounts.delete_account(conn, user_id=user_id)
+
+    print("Deleted:")
+    for line in accounts.describe(summary):
+        print(line)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="ragra")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -790,6 +833,20 @@ def build_parser() -> argparse.ArgumentParser:
         "notify-adopt-env",
         help="Adopt the environment's configured destinations for this account (one-time migration)",
     ).set_defaults(func=cmd_notify_adopt_env)
+
+    account_delete = sub.add_parser(
+        "account-delete",
+        help="Permanently delete an account and everything it owns (shows a preview unless --confirm)",
+    )
+    account_delete.add_argument(
+        "--user-id", type=int, default=None,
+        help="Account to delete; defaults to the acting account",
+    )
+    account_delete.add_argument(
+        "--confirm", action="store_true",
+        help="Actually delete. Without this the command only reports what would be removed.",
+    )
+    account_delete.set_defaults(func=cmd_account_delete)
 
     return parser
 

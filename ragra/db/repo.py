@@ -87,6 +87,27 @@ def unlinked_user_id(conn: sqlite3.Connection) -> int | None:
     return rows[0]["id"] if len(rows) == 1 else None
 
 
+def delete_user(conn: sqlite3.Connection, *, user_id: int) -> bool:
+    """Delete an account and, by cascade, everything it owns.
+
+    Foreign keys are asserted on rather than assumed: SQLite enforces
+    ON DELETE CASCADE only when the pragma is enabled for the connection,
+    and a delete with it off would leave every child row behind as an
+    orphan - the exact opposite of what deleting an account is supposed to
+    mean. See ragra/db/connection.py, which enables it, and the cascade
+    tests in tests/test_account_deletion.py, which prove each table is
+    actually reached."""
+    enabled = conn.execute("PRAGMA foreign_keys").fetchone()[0]
+    if not enabled:
+        raise RuntimeError(
+            "refusing to delete a user with foreign keys disabled: the cascade "
+            "would silently leave that user's data behind"
+        )
+    cur = conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+    conn.commit()
+    return cur.rowcount > 0
+
+
 # ---------------------------------------------------------------------------
 # Per-user Google authorization (migration 0023)
 #
