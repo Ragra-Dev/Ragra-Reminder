@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime, timezone
 
 from ragra.db import repo
 
@@ -32,3 +33,22 @@ def make_user(conn: sqlite3.Connection, *, google_sub: str, display_name: str = 
     )
     conn.commit()
     return cur.lastrowid
+
+
+def sign_in(client, db_path, *, user_id: int | None = None) -> int:
+    """Put a real session cookie on a TestClient and return the user id.
+
+    Web tests go through the actual session machinery rather than a bypass,
+    so a change that breaks authentication breaks them too. Using a stub
+    would let the whole suite keep passing while the app let everyone in.
+    """
+    from ragra.db.connection import connect_closing
+    from ragra.web import sessions
+
+    with connect_closing(db_path) as conn:
+        resolved = owner_id(conn) if user_id is None else user_id
+        token = sessions.create_session(
+            conn, user_id=resolved, now=datetime.now(timezone.utc)
+        )
+    client.cookies.set(sessions.COOKIE_NAME, token)
+    return resolved

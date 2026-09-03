@@ -14,7 +14,7 @@ from ragra.db import repo
 from ragra.db.connection import connect
 from ragra.web.app import MISSED_SECTION_PREVIEW_LIMIT, create_app
 
-from tests.support import owner_id
+from tests.support import owner_id, sign_in
 
 
 @pytest.fixture
@@ -41,6 +41,7 @@ def client(tmp_path: Path):
 
     app = create_app(db_path)
     with TestClient(app) as c:
+        sign_in(c, db_path)
         yield c
 
 

@@ -6,47 +6,118 @@ a row without naming its owner - which is what makes the ownership filter,
 not the URL, decide what a request can see. Requesting another user's task
 id returns 404 from the scoped query rather than the row.
 
-Identity resolution is intentionally minimal for now: the single
-pre-identity owner row. Real sign-in (sessions, Google OAuth) is a
-follow-up piece that replaces `current_user_id()`'s body, not its callers.
+Identity comes from the session cookie (see ragra/web/sessions.py), which
+is issued only by the Google sign-in round trip in ragra/web/auth.py. One
+deliberate exception exists and is described on `current_user_id`: a
+single-user deployment on loopback with sign-in unconfigured continues to
+work, because that is the shape Ragra has been running in and silently
+locking its owner out of their own dashboard would be a worse outcome than
+the risk it removes. That exception is narrow, testable, and can be switched
+off.
 """
 
 from __future__ import annotations
 
+import ipaddress
 import os
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, Form, HTTPException, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import PlainTextResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from ragra.db import repo
 from ragra.db.connection import connect_closing
 from ragra.timetable.schedule import occurrences_for_local_day, weekly_class_from_row
 from ragra.tz import format_stored_local, local_day_bounds, utc_iso
+from ragra.web import auth, sessions
 
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
 
 
-class NoCurrentUser(RuntimeError):
-    """No acting user could be resolved. Raised rather than defaulting to
-    "the first user": silently picking an owner is how one account ends up
-    reading another's data."""
+class NotSignedIn(Exception):
+    """No authenticated user for this request.
+
+    Not an HTTPException: a browser navigating to a page should be sent to
+    sign in, while a form post or an API-ish request should get a plain 401.
+    The app-level handler decides which, so no route has to.
+    """
 
 
-def current_user_id(conn: sqlite3.Connection, request: Request | None = None) -> int:
+# Headers a reverse proxy adds. Their presence means the socket peer is the
+# proxy, not the person - so "the peer is loopback" stops meaning "this
+# request came from this machine".
+_PROXY_HEADERS = ("x-forwarded-for", "x-real-ip", "forwarded", "x-forwarded-host")
+
+
+def _is_loopback(request: Request | None) -> bool:
+    """Whether the request genuinely came from this machine.
+
+    The fallback below is only defensible because it cannot be reached from
+    the network. Two things make that true:
+
+    `request.client.host` is the actual socket peer, which a client cannot
+    forge by sending a header - and it is parsed as an address rather than
+    string-compared against "127.0.0.1", since loopback is a whole /8 plus
+    ::1.
+
+    But a reverse proxy on the same host would make every remote request
+    look loopback, which would hand the owner's dashboard to anyone who
+    could reach the proxy. So a request carrying proxy headers is not
+    treated as local. Ragra does not trust those headers for anything -
+    their mere presence is the signal, which is why a forged one only ever
+    costs the forger the fallback.
+    """
+    if request is None or request.client is None:
+        return False
+    if any(header in request.headers for header in _PROXY_HEADERS):
+        return False
+    try:
+        return ipaddress.ip_address(request.client.host).is_loopback
+    except ValueError:
+        return False
+
+
+def current_user_id(
+    conn: sqlite3.Connection,
+    request: Request | None = None,
+    *,
+    settings: auth.AuthSettings | None = None,
+    now: datetime | None = None,
+) -> int:
     """The user this request acts as.
 
-    Deliberately fails closed: if there is no unambiguous pre-identity
-    owner row, this raises instead of guessing, and the route returns 500
-    rather than operating on somebody's data by accident.
+    Resolved from the session cookie. Fails closed: an absent, unknown, or
+    expired session raises rather than falling back to "the first user",
+    because silently picking an owner is exactly how one account ends up
+    reading another's data.
+
+    The one exception is the legacy single-user mode: when sign-in is not
+    configured at all, the request came from loopback, and the database
+    holds exactly one never-signed-in user, that user is the acting user.
+    All three conditions are required. Configuring sign-in ends it, a second
+    account ends it, and a request from anywhere but this machine never
+    qualifies - so the deployment that would be exposed by it (bound to a
+    public interface with no sign-in set up) is precisely the one it
+    refuses.
     """
-    user_id = repo.unlinked_user_id(conn)
-    if user_id is None:
-        raise NoCurrentUser("no unambiguous current user; sign-in is required")
-    return user_id
+    session = sessions.lookup_session(
+        conn,
+        token=request.cookies.get(sessions.COOKIE_NAME) if request is not None else None,
+        now=now or datetime.now(timezone.utc),
+    )
+    if session is not None:
+        return session.user_id
+
+    settings = settings if settings is not None else auth.load_auth_settings()
+    if not settings.configured and _is_loopback(request):
+        user_id = repo.unlinked_user_id(conn)
+        if user_id is not None and len(repo.list_users(conn)) == 1:
+            return user_id
+
+    raise NotSignedIn()
 
 
 def _todays_classes(conn, *, user_id: int, now: datetime) -> list:
@@ -73,9 +144,119 @@ MISSED_SECTION_PREVIEW_LIMIT = 5
 ANNOUNCEMENT_PREVIEW_LIMIT = 5
 
 
-def create_app(db_path: Path) -> FastAPI:
+def create_app(
+    db_path: Path,
+    *,
+    auth_settings: auth.AuthSettings | None = None,
+    identity_provider: auth.IdentityProvider | None = None,
+) -> FastAPI:
+    """Build the app.
+
+    `auth_settings` and `identity_provider` are injectable so the sign-in
+    security properties - state validation, PKCE, the allow-list, one-time
+    adoption - can be tested end to end without a network round trip. A
+    security control that can only be exercised against Google's live
+    servers is a security control that does not get exercised.
+    """
     app = FastAPI(title="Ragra")
     templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
+    settings = auth_settings if auth_settings is not None else auth.load_auth_settings()
+
+    def _provider() -> auth.IdentityProvider:
+        if identity_provider is not None:
+            return identity_provider
+        return auth.GoogleIdentityProvider(settings)
+
+    def _acting_user(conn, request: Request) -> int:
+        return current_user_id(conn, request, settings=settings)
+
+    @app.exception_handler(NotSignedIn)
+    def _not_signed_in(request: Request, _exc: NotSignedIn):
+        """A browser navigating to a page is sent to sign in; anything else
+        gets a bare 401. Both are deliberate: bouncing a form POST through a
+        login redirect would silently discard what the user submitted, and
+        answering a page request with a JSON error would strand them."""
+        if request.method == "GET" and "text/html" in request.headers.get("accept", ""):
+            target = auth.safe_redirect_target(request.url.path)
+            suffix = f"?next={target}" if target != "/" else ""
+            return RedirectResponse(f"/login{suffix}", status_code=303)
+        return PlainTextResponse("Sign-in required", status_code=401)
+
+    # --- Sign-in ----------------------------------------------------------
+    #
+    # Three routes and nothing else. The security of this flow rests on
+    # properties enforced in ragra/web/auth.py - a single-use, expiring
+    # state bound to the attempt that created it; PKCE so an intercepted
+    # code cannot be redeemed; a verified ID token rather than a decoded
+    # one; identity keyed on the Google subject rather than the email - so
+    # these handlers stay thin enough to read in one sitting.
+
+    @app.get("/login")
+    def login(request: Request, next: str = ""):
+        """Start sign-in. Idempotent and safe to reload: each visit begins a
+        fresh attempt, and abandoned ones expire on their own."""
+        if not settings.configured and identity_provider is None:
+            return PlainTextResponse(
+                "Sign-in is not configured on this deployment.", status_code=503
+            )
+        with connect_closing(db_path) as conn:
+            url = auth.begin_sign_in(
+                conn,
+                _provider(),
+                now=datetime.now(timezone.utc),
+                redirect_to=next,
+            )
+        return RedirectResponse(url, status_code=303)
+
+    @app.get("/auth/callback")
+    def auth_callback(request: Request, code: str = "", state: str = "", error: str = ""):
+        now = datetime.now(timezone.utc)
+        with connect_closing(db_path) as conn:
+            # Spend the state first, whatever else is wrong with the
+            # request: a callback that arrives with an error, or with no
+            # code, must still not leave a reusable attempt behind.
+            try:
+                consumed = auth.consume_state(conn, state=state, now=now)
+            except auth.AuthError:
+                return PlainTextResponse("Sign-in could not be completed.", status_code=400)
+
+            if error or not code:
+                return PlainTextResponse("Sign-in could not be completed.", status_code=400)
+
+            try:
+                identity = _provider().exchange_code(
+                    code=code, code_verifier=consumed.code_verifier
+                )
+                user_id = auth.resolve_user(conn, identity, settings, now=now)
+            except auth.SignInRefused:
+                # Distinguished from a failed exchange on purpose: being
+                # told "not permitted" is actionable for a legitimate user
+                # and reveals nothing an attacker did not already supply.
+                return PlainTextResponse(
+                    "This account is not permitted to sign in here.", status_code=403
+                )
+            except auth.AuthError:
+                return PlainTextResponse("Sign-in could not be completed.", status_code=400)
+
+            # A brand-new token, never one carried in from the request. This
+            # is what makes session fixation impossible: an attacker cannot
+            # plant a session and have it become authenticated.
+            token = sessions.create_session(conn, user_id=user_id, now=now)
+
+        response = RedirectResponse(consumed.redirect_to, status_code=303)
+        _set_session_cookie(response, token, settings)
+        return response
+
+    @app.post("/logout")
+    def logout(request: Request):
+        """POST only. A GET sign-out is a link an attacker can put in an
+        image tag, which turns "log the user out" into something any page
+        can do to them."""
+        with connect_closing(db_path) as conn:
+            sessions.revoke_session(conn, token=request.cookies.get(sessions.COOKIE_NAME))
+        response = RedirectResponse("/login", status_code=303)
+        response.delete_cookie(sessions.COOKIE_NAME, path="/")
+        return response
 
     @app.get("/")
     def today(request: Request):
@@ -89,7 +270,7 @@ def create_app(db_path: Path) -> FastAPI:
         week_end_iso = utc_iso(now + timedelta(days=7))
 
         with connect_closing(db_path) as conn:
-            user_id = current_user_id(conn, request)
+            user_id = _acting_user(conn, request)
             classes_today = _todays_classes(conn, user_id=user_id, now=now)
             announcements = repo.open_announcements(
                 conn, user_id=user_id, limit=ANNOUNCEMENT_PREVIEW_LIMIT
@@ -151,7 +332,7 @@ def create_app(db_path: Path) -> FastAPI:
     def missed_full(request: Request):
         with connect_closing(db_path) as conn:
             # No limit - this user's full list, still only this user's.
-            missed = repo.missed_tasks(conn, user_id=current_user_id(conn, request))
+            missed = repo.missed_tasks(conn, user_id=_acting_user(conn, request))
 
         return templates.TemplateResponse(request, "missed.html", {"missed": missed})
 
@@ -163,14 +344,14 @@ def create_app(db_path: Path) -> FastAPI:
 
         with connect_closing(db_path) as conn:
             text = build_deterministic_brief(
-                conn, user_id=current_user_id(conn, request), now=datetime.now(timezone.utc)
+                conn, user_id=_acting_user(conn, request), now=datetime.now(timezone.utc)
             )
         return PlainTextResponse(text)
 
     @app.get("/tasks/{task_id}")
     def task_detail(request: Request, task_id: int):
         with connect_closing(db_path) as conn:
-            user_id = current_user_id(conn, request)
+            user_id = _acting_user(conn, request)
             # Scoped lookup: another user's task id is indistinguishable from
             # a nonexistent one, so this is a 404 and not a disclosure.
             task = repo.get_task_by_id(conn, user_id=user_id, task_id=task_id)
@@ -188,7 +369,7 @@ def create_app(db_path: Path) -> FastAPI:
     @app.post("/tasks/{task_id}/complete")
     def complete_task(request: Request, task_id: int):
         with connect_closing(db_path) as conn:
-            user_id = current_user_id(conn, request)
+            user_id = _acting_user(conn, request)
             repo.mark_completed(conn, user_id=user_id, task_id=task_id)
             repo.cancel_pending_reminders(conn, user_id=user_id, task_id=task_id)
         return RedirectResponse("/", status_code=303)
@@ -203,7 +384,7 @@ def create_app(db_path: Path) -> FastAPI:
         # docs/INTERFACES.md contract #5.
         with connect_closing(db_path) as conn:
             repo.set_personal_deadline(
-                conn, user_id=current_user_id(conn, request), task_id=task_id,
+                conn, user_id=_acting_user(conn, request), task_id=task_id,
                 personal_deadline=personal_deadline,
             )
         return RedirectResponse("/", status_code=303)
@@ -220,7 +401,7 @@ def create_app(db_path: Path) -> FastAPI:
     @app.get("/tasks")
     def tasks_page(request: Request):
         with connect_closing(db_path) as conn:
-            personal = repo.manual_tasks(conn, user_id=current_user_id(conn, request))
+            personal = repo.manual_tasks(conn, user_id=_acting_user(conn, request))
         return templates.TemplateResponse(request, "tasks.html", {"tasks": personal})
 
     @app.post("/tasks/new")
@@ -235,7 +416,7 @@ def create_app(db_path: Path) -> FastAPI:
             try:
                 repo.create_manual_task(
                     conn,
-                    user_id=current_user_id(conn, request),
+                    user_id=_acting_user(conn, request),
                     title=title,
                     description=description or None,
                     actual_deadline=_clean_deadline(actual_deadline),
@@ -257,7 +438,7 @@ def create_app(db_path: Path) -> FastAPI:
             try:
                 repo.update_manual_task(
                     conn,
-                    user_id=current_user_id(conn, request),
+                    user_id=_acting_user(conn, request),
                     task_id=task_id,
                     title=title,
                     description=description or None,
@@ -272,7 +453,7 @@ def create_app(db_path: Path) -> FastAPI:
     @app.post("/tasks/{task_id}/cancel")
     def cancel_task(request: Request, task_id: int):
         with connect_closing(db_path) as conn:
-            user_id = current_user_id(conn, request)
+            user_id = _acting_user(conn, request)
             try:
                 repo.cancel_task(conn, user_id=user_id, task_id=task_id)
             except repo.TaskSourceViolation as exc:
@@ -289,7 +470,7 @@ def create_app(db_path: Path) -> FastAPI:
     @app.get("/announcements")
     def announcements_page(request: Request):
         with connect_closing(db_path) as conn:
-            rows = repo.open_announcements(conn, user_id=current_user_id(conn, request))
+            rows = repo.open_announcements(conn, user_id=_acting_user(conn, request))
         return templates.TemplateResponse(request, "announcements.html", {"announcements": rows})
 
     @app.post("/announcements/{task_id}/create-task")
@@ -304,7 +485,7 @@ def create_app(db_path: Path) -> FastAPI:
             try:
                 repo.create_task_from_announcement(
                     conn,
-                    user_id=current_user_id(conn, request),
+                    user_id=_acting_user(conn, request),
                     announcement_task_id=task_id,
                     title=title.strip() or None,
                     actual_deadline=_clean_deadline(actual_deadline),
@@ -318,7 +499,7 @@ def create_app(db_path: Path) -> FastAPI:
     def archive_announcement(request: Request, task_id: int):
         with connect_closing(db_path) as conn:
             repo.archive_task(
-                conn, user_id=current_user_id(conn, request), task_id=task_id
+                conn, user_id=_acting_user(conn, request), task_id=task_id
             )
         return RedirectResponse("/announcements", status_code=303)
 
@@ -326,11 +507,34 @@ def create_app(db_path: Path) -> FastAPI:
     def deliveries(request: Request):
         with connect_closing(db_path) as conn:
             rows = repo.recent_notification_deliveries(
-                conn, user_id=current_user_id(conn, request), limit=100
+                conn, user_id=_acting_user(conn, request), limit=100
             )
         return templates.TemplateResponse(request, "deliveries.html", {"deliveries": rows})
 
     return app
+
+
+def _set_session_cookie(response, token: str, settings: auth.AuthSettings) -> None:
+    """Set the session cookie with the flags that make it a session cookie
+    rather than a liability.
+
+    httponly  - script cannot read it, so an XSS bug cannot exfiltrate the
+                session even though it could still act as the user.
+    samesite  - "lax" stops another site's form post from carrying it,
+                which is the browser-side half of the CSRF defence.
+    secure    - derived from the redirect URI's scheme (see
+                auth.load_auth_settings), so an HTTPS deployment cannot
+                accidentally send it in the clear.
+    """
+    response.set_cookie(
+        sessions.COOKIE_NAME,
+        token,
+        max_age=int(sessions.ABSOLUTE_LIFETIME.total_seconds()),
+        httponly=True,
+        samesite="lax",
+        secure=settings.secure_cookies,
+        path="/",
+    )
 
 
 def _clean_deadline(value: str) -> str | None:

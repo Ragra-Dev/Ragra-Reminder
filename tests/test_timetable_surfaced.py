@@ -15,7 +15,7 @@ from ragra.db.connection import connect_closing
 from ragra.timetable.schedule import occurrences_for_local_day, weekly_class_from_row
 from ragra.web.app import create_app
 
-from tests.support import owner_id
+from tests.support import owner_id, sign_in
 
 # 2026-09-07 is a Monday; 08:30 PKT == 03:30 UTC.
 MONDAY_MIDDAY_UTC = datetime(2026, 9, 7, 6, 0, tzinfo=timezone.utc)
@@ -44,6 +44,7 @@ def db_path(tmp_path):
 @pytest.fixture
 def client(db_path):
     c = TestClient(create_app(db_path))
+    sign_in(c, db_path)
     return c
 
 

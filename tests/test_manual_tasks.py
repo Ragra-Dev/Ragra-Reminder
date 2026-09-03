@@ -17,7 +17,7 @@ from ragra.db import repo
 from ragra.db.connection import connect_closing
 from ragra.web.app import create_app
 
-from tests.support import owner_id
+from tests.support import owner_id, sign_in
 
 CLASSROOM_FIELDS = (
     "title", "description", "link", "actual_deadline", "kind",
@@ -36,6 +36,7 @@ def db_path(tmp_path):
 @pytest.fixture
 def client(db_path):
     c = TestClient(create_app(db_path), follow_redirects=False)
+    sign_in(c, db_path)
     return c
 
 
