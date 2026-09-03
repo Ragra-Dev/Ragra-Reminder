@@ -28,6 +28,7 @@
 
 <div class="new-task">
   <form method="post" action="/tasks/new">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token_for(request) }}">
     <strong>New personal task</strong>
     <label>Title <input type="text" name="title" required></label>
     <label>Notes <textarea name="description" rows="2"></textarea></label>
@@ -50,13 +51,16 @@
       <div class="meta">
         {{ task.status }}
         <form class="inline" method="post" action="/tasks/{{ task.id }}/complete">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token_for(request) }}">
           <button type="submit">Complete</button>
         </form>
         <form class="inline" method="post" action="/tasks/{{ task.id }}/cancel">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token_for(request) }}">
           <button type="submit">Cancel</button>
         </form>
       </div>
       <form method="post" action="/tasks/{{ task.id }}/edit">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token_for(request) }}">
         <input type="text" name="title" value="{{ task.title }}">
         <input type="text" name="description" value="{{ task.description or '' }}">
         <input type="text" name="actual_deadline" value="{{ task.actual_deadline or '' }}">

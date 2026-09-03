@@ -34,6 +34,7 @@
         <div class="meta">Deadline was {{ t.actual_deadline }} - marked missed {{ t.missed_at }}</div>
       </div>
       <form class="inline" method="post" action="/tasks/{{ t.id }}/complete">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token_for(request) }}">
         <button type="submit">Mark complete</button>
       </form>
     </div>

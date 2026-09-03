@@ -36,12 +36,14 @@
 
       {% if not item.child_task_id %}
       <form class="inline" method="post" action="/announcements/{{ item.id }}/create-task">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token_for(request) }}">
         <input type="text" name="title" placeholder="{{ item.title }}">
         <input type="text" name="actual_deadline" placeholder="due (optional)">
         <button type="submit">Create task</button>
       </form>
       {% endif %}
       <form class="inline" method="post" action="/announcements/{{ item.id }}/archive">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token_for(request) }}">
         <button type="submit">Archive</button>
       </form>
     </div>

@@ -92,6 +92,7 @@
         {% if t.personal_deadline %}<span class="badge personal">plan {{ t.personal_deadline }}</span>{% endif %}
       </div>
       <form class="inline" method="post" action="/tasks/{{ t.id }}/complete">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token_for(request) }}">
         <button type="submit">Mark complete</button>
       </form>
     </div>
@@ -111,6 +112,7 @@
         <div class="meta">Academic deadline: {{ t.actual_deadline }}</div>
       </div>
       <form class="inline" method="post" action="/tasks/{{ t.id }}/complete">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token_for(request) }}">
         <button type="submit">Mark complete</button>
       </form>
     </div>
@@ -129,6 +131,7 @@
         <div class="meta">Deadline was {{ t.actual_deadline }} - marked missed {{ t.missed_at }}</div>
       </div>
       <form class="inline" method="post" action="/tasks/{{ t.id }}/complete">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token_for(request) }}">
         <button type="submit">Mark complete</button>
       </form>
     </div>
@@ -153,6 +156,7 @@
         </div>
       </div>
       <form class="inline" method="post" action="/tasks/{{ t.id }}/complete">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token_for(request) }}">
         <button type="submit">Mark complete</button>
       </form>
     </div>
@@ -174,6 +178,7 @@
         </div>
       </div>
       <form class="inline" method="post" action="/tasks/{{ t.id }}/complete">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token_for(request) }}">
         <button type="submit">Mark complete</button>
       </form>
     </div>
@@ -191,6 +196,7 @@
         <div class="meta">No academic deadline. When do you want this done?</div>
       </div>
       <form class="inline" method="post" action="/tasks/{{ t.id }}/personal-deadline">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token_for(request) }}">
         <input type="date" name="personal_deadline" required>
         <button type="submit">Set</button>
       </form>
@@ -211,6 +217,7 @@
         </div>
       </div>
       <form class="inline" method="post" action="/tasks/{{ t.id }}/personal-deadline">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token_for(request) }}">
         <input type="date" name="personal_deadline" required>
         <button type="submit">Set</button>
       </form>

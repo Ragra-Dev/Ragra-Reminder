@@ -32,7 +32,7 @@ from ragra.db import repo
 from ragra.db.connection import connect_closing
 from ragra.timetable.schedule import occurrences_for_local_day, weekly_class_from_row
 from ragra.tz import format_stored_local, local_day_bounds, utc_iso
-from ragra.web import auth, sessions
+from ragra.web import auth, csrf, sessions
 
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
 
@@ -162,6 +162,53 @@ def create_app(
     templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
     settings = auth_settings if auth_settings is not None else auth.load_auth_settings()
 
+    # Every template gets the current request's CSRF token, so a form can
+    # never be written without one being available - and the structural test
+    # in tests/test_csrf.py fails if a form is written without using it.
+    templates.env.globals["csrf_token_for"] = lambda request: csrf.token_for(
+        csrf.session_token_from(request)
+    )
+
+    @app.middleware("http")
+    async def _enforce_csrf(request: Request, call_next):
+        """Applied to every unsafe request rather than route by route.
+
+        Route-level checks are the version of this that gets forgotten: the
+        failure mode is a new POST handler that nobody remembers to
+        decorate, and it fails silently - the route works, it is just
+        forgeable. Enforcing here means a route added tomorrow is covered
+        without anyone doing anything.
+
+        /auth/callback is not exempted: it is a GET, and its own single-use
+        state parameter is what protects it (see ragra/web/auth.py).
+        """
+        if request.method not in csrf.UNSAFE_METHODS:
+            return await call_next(request)
+
+        submitted = request.headers.get(csrf.HEADER_NAME)
+        if submitted is None:
+            # Reading the body here consumes the stream, so it is replayed
+            # for the route that follows. Without this the handler would
+            # receive an empty form and the failure would look like a
+            # validation bug rather than a plumbing one.
+            body = await request.body()
+
+            async def _replay():
+                return {"type": "http.request", "body": body, "more_body": False}
+
+            request._receive = _replay  # noqa: SLF001 - the documented Starlette idiom
+            form = await request.form()
+            submitted = form.get(csrf.FIELD_NAME)
+            request._receive = _replay  # noqa: SLF001 - form() consumed it again
+
+        if not csrf.verify(submitted=submitted, session_token=csrf.session_token_from(request)):
+            # 403, not 400: the request was well formed, it just was not
+            # authorised to be made. Deliberately says nothing about
+            # whether a session exists.
+            return PlainTextResponse("Invalid or missing CSRF token", status_code=403)
+
+        return await call_next(request)
+
     def _provider() -> auth.IdentityProvider:
         if identity_provider is not None:
             return identity_provider
@@ -248,7 +295,7 @@ def create_app(
         return response
 
     @app.post("/logout")
-    def logout(request: Request):
+    def logout(request: Request):  # CSRF-checked by the middleware above
         """POST only. A GET sign-out is a link an attacker can put in an
         image tag, which turns "log the user out" into something any page
         can do to them."""
@@ -521,7 +568,8 @@ def _set_session_cookie(response, token: str, settings: auth.AuthSettings) -> No
     httponly  - script cannot read it, so an XSS bug cannot exfiltrate the
                 session even though it could still act as the user.
     samesite  - "lax" stops another site's form post from carrying it,
-                which is the browser-side half of the CSRF defence.
+                which is the browser-side half of the CSRF defence in
+                ragra/web/csrf.py.
     secure    - derived from the redirect URI's scheme (see
                 auth.load_auth_settings), so an HTTPS deployment cannot
                 accidentally send it in the clear.

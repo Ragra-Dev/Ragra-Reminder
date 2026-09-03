@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient
 
 from ragra.db import repo
 from ragra.db.connection import connect_closing
-from ragra.web import auth, sessions
+from ragra.web import auth, csrf, sessions
 from ragra.web.app import create_app
 
 NOW = datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc)
@@ -103,7 +103,14 @@ def _complete_sign_in(client, provider, *, identity=None, next_path=""):
     if identity is not None:
         provider.identity = identity
     client.get(f"/login?next={next_path}" if next_path else "/login")
-    return client.get(f"/auth/callback?code=auth-code&state={_state_from(provider)}")
+    response = client.get(f"/auth/callback?code=auth-code&state={_state_from(provider)}")
+    # A real browser gets this in every rendered form; setting it as a
+    # default header is the test-client equivalent. Tests about CSRF itself
+    # live in tests/test_csrf.py and deliberately do not use this path.
+    token = client.cookies.get(sessions.COOKIE_NAME)
+    if token:
+        client.headers[csrf.HEADER_NAME] = csrf.token_for(token)
+    return response
 
 
 # ---------------------------------------------------------------------------
@@ -122,11 +129,17 @@ def test_pages_are_not_readable_without_signing_in(client, path):
     "path", ["/tasks/1/complete", "/tasks/1/cancel", "/announcements/1/archive"]
 )
 def test_state_changing_posts_are_rejected_without_signing_in(client, path):
-    """A 401 rather than a redirect: bouncing a POST through a login page
-    would silently discard what was submitted, and would also let an
-    unauthenticated request believe it had succeeded."""
+    """Refused outright, never redirected to sign in: bouncing a POST
+    through a login page would silently discard what was submitted and let
+    an unauthenticated request believe it had succeeded.
+
+    The rejection is 403 rather than 401 because the CSRF check runs first
+    and a request with no session cannot carry a valid CSRF token - the
+    token is derived from the session. That ordering is deliberate: the
+    cheaper, unconditional check runs before anything touches the
+    database."""
     resp = client.post(path)
-    assert resp.status_code == 401
+    assert resp.status_code == 403
 
 
 def test_a_page_request_is_sent_to_sign_in_and_returns_to_where_it_started(client):
@@ -496,7 +509,7 @@ def test_logging_out_revokes_the_session_immediately(client, provider):
     _complete_sign_in(client, provider)
     assert client.get("/").status_code == 200
 
-    resp = client.post("/logout")
+    resp = client.post("/logout")  # CSRF header set by _complete_sign_in
     assert resp.status_code == 303
 
     # The cookie is cleared, but the real assertion is that the token no
