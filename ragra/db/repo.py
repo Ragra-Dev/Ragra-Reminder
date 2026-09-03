@@ -43,6 +43,44 @@ def _require_manual_task(conn: sqlite3.Connection, *, task_id: int, operation: s
 
 
 # ---------------------------------------------------------------------------
+# Users (tenant anchor - migration 0009)
+# ---------------------------------------------------------------------------
+
+
+def list_users(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    return conn.execute("SELECT * FROM users ORDER BY id").fetchall()
+
+
+def get_user(conn: sqlite3.Connection, *, user_id: int) -> sqlite3.Row | None:
+    return conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+
+
+def get_user_by_google_sub(conn: sqlite3.Connection, *, google_sub: str) -> sqlite3.Row | None:
+    """Look a user up by Google's stable subject id - the only identity key.
+    Never look a user up by email: a Google account's email can change while
+    its subject id cannot, so email matching would let one account silently
+    inherit another's data."""
+    return conn.execute("SELECT * FROM users WHERE google_sub = ?", (google_sub,)).fetchone()
+
+
+def unlinked_user_id(conn: sqlite3.Connection) -> int | None:
+    """The id of the single pre-identity owner row (google_sub IS NULL), or
+    None if there isn't exactly one.
+
+    This exists for one narrow purpose: the database predates any concept of
+    identity, so all of its existing data belongs to an owner who has never
+    signed in. Sign-in (P3-5) adopts that row rather than creating a second
+    user, which is what stops the entire existing history from becoming
+    orphaned the moment authentication is introduced.
+
+    Deliberately returns None when more than one unlinked row exists - an
+    ambiguous adoption must fail loudly rather than pick one."""
+    rows = conn.execute("SELECT id FROM users WHERE google_sub IS NULL").fetchall()
+    return rows[0]["id"] if len(rows) == 1 else None
+
+
+
+# ---------------------------------------------------------------------------
 # Courses
 # ---------------------------------------------------------------------------
 
