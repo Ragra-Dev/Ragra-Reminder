@@ -15,6 +15,11 @@ dependencies = [
     # no system timezone database, and Ragra deliberately refuses to fall
     # back to a fixed UTC offset - see ragra/tz.py.
     "tzdata>=2024.1",
+    # Credentials are encrypted at rest (see ragra/crypto.py). This already
+    # arrives as a transitive dependency of google-auth, but relying on that
+    # for an encryption primitive would be fragile - a change upstream must
+    # not be able to remove it.
+    "cryptography>=42",
 ]
 
 [project.optional-dependencies]

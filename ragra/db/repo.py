@@ -88,6 +88,71 @@ def unlinked_user_id(conn: sqlite3.Connection) -> int | None:
 
 
 # ---------------------------------------------------------------------------
+# Per-user Google authorization (migration 0023)
+#
+# The ciphertext never leaves this section as ciphertext and never enters it
+# as plaintext: encryption happens at the boundary in ragra/adapters, so a
+# caller cannot accidentally store a raw token by calling the wrong
+# function. What is stored here is opaque to the repository layer.
+# ---------------------------------------------------------------------------
+
+
+def store_google_credentials(
+    conn: sqlite3.Connection, *, user_id: int, service: str, ciphertext: bytes, scopes: str
+) -> None:
+    """Insert or replace one user's authorization for one service."""
+    now = now_iso()
+    conn.execute(
+        """INSERT INTO google_credentials (user_id, service, ciphertext, scopes, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?)
+           ON CONFLICT(user_id, service) DO UPDATE SET
+             ciphertext = excluded.ciphertext,
+             scopes = excluded.scopes,
+             updated_at = excluded.updated_at""",
+        (user_id, service, ciphertext, scopes, now, now),
+    )
+    conn.commit()
+
+
+def get_google_credentials(
+    conn: sqlite3.Connection, *, user_id: int, service: str
+) -> sqlite3.Row | None:
+    return conn.execute(
+        "SELECT * FROM google_credentials WHERE user_id = ? AND service = ?",
+        (user_id, service),
+    ).fetchone()
+
+
+def google_credential_scopes(
+    conn: sqlite3.Connection, *, user_id: int, service: str
+) -> str | None:
+    """What this user actually granted, answerable without the encryption
+    key - which is what lets a status command be useful on a machine that
+    deliberately does not hold the key."""
+    row = conn.execute(
+        "SELECT scopes FROM google_credentials WHERE user_id = ? AND service = ?",
+        (user_id, service),
+    ).fetchone()
+    return row["scopes"] if row else None
+
+
+def delete_google_credentials(
+    conn: sqlite3.Connection, *, user_id: int, service: str | None = None
+) -> int:
+    """Revoke locally. `service=None` removes every service for this user -
+    used when disconnecting an account entirely."""
+    if service is None:
+        cur = conn.execute("DELETE FROM google_credentials WHERE user_id = ?", (user_id,))
+    else:
+        cur = conn.execute(
+            "DELETE FROM google_credentials WHERE user_id = ? AND service = ?",
+            (user_id, service),
+        )
+    conn.commit()
+    return cur.rowcount
+
+
+# ---------------------------------------------------------------------------
 # Courses
 # ---------------------------------------------------------------------------
 

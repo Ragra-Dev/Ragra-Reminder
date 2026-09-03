@@ -22,6 +22,7 @@ import argparse
 import sys
 import time
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -30,6 +31,7 @@ from ragra.adapters import classroom as classroom_adapter
 from ragra.adapters.notify import EmailProvider, HermesProvider, NotificationProvider
 from ragra.config import Config, load_config
 from ragra.db.connection import connect_closing
+from ragra.adapters.user_clients import UserCredentialsUnavailable, calendar_client_for, classroom_client_for
 from ragra.reminders.dispatch import dispatch_due_reminders, preview_due_reminders
 from ragra.sync.calendar_sync import sync_all_task_events
 from ragra.sync.classroom_sync import sync_classroom
@@ -180,10 +182,13 @@ def cmd_calendar_auth(args: argparse.Namespace) -> int:
 
 def _run_classroom_sync(conn, config: Config, log, *, user_id: int) -> tuple[int, str | None]:
     try:
-        client = classroom_adapter.get_classroom_client(config.classroom_paths, interactive=False)
-    except classroom_adapter.ClassroomAdapterError as exc:
-        msg = f"Classroom sync skipped - authorization required: {exc}. Run: ragra classroom-auth"
-        log(msg)
+        client = classroom_client_for(conn, config, user_id=user_id)
+    except UserCredentialsUnavailable as exc:
+        # Not a failure of the run: an account that has not connected
+        # Google yet is a normal state, and counting it as a failure would
+        # feed a permanent alert streak into ragra/health.py for something
+        # nobody intends to fix.
+        log(f"Classroom sync skipped - authorization required: {exc}. Run: ragra classroom-auth")
         return 1, str(exc)
     except Exception as exc:  # noqa: BLE001 - a transient/network failure must not abort the tick
         log(f"Classroom sync failed unexpectedly: {exc}")
@@ -216,17 +221,15 @@ def _run_classroom_sync(conn, config: Config, log, *, user_id: int) -> tuple[int
 
 def _run_calendar_sync(conn, config: Config, log, *, user_id: int) -> tuple[int, str | None]:
     try:
-        calendar_credentials = calendar_adapter.ensure_calendar_credentials(config.calendar_paths, interactive=False)
-    except calendar_adapter.CalendarAdapterError as exc:
-        msg = f"Calendar sync skipped - authorization required: {exc}. Run: ragra calendar-auth"
-        log(msg)
+        calendar_client = calendar_client_for(conn, config, user_id=user_id)
+    except UserCredentialsUnavailable as exc:
+        log(f"Calendar sync skipped - authorization required: {exc}. Run: ragra calendar-auth")
         return 1, str(exc)
     except Exception as exc:  # noqa: BLE001
         log(f"Calendar sync failed unexpectedly: {exc}")
         return 1, str(exc)
 
     try:
-        calendar_client = calendar_adapter.GoogleCalendarClient(calendar_credentials)
         counts = sync_all_task_events(
             conn, calendar_client, user_id=user_id, calendar_id=config.calendar_id
         )
@@ -532,6 +535,90 @@ def cmd_serve(args: argparse.Namespace) -> int:
     return 0
 
 
+# ---------------------------------------------------------------------------
+# Credential storage (P3-6)
+# ---------------------------------------------------------------------------
+
+
+def cmd_generate_credential_key(args: argparse.Namespace) -> int:
+    """Mint an encryption key for stored Google credentials.
+
+    Prints the key once, to stdout, and never writes it anywhere: Ragra
+    must not be the thing that puts its own key next to the database it
+    protects. A key invented by hand would look identical to this one and
+    be enormously weaker, which is why this exists rather than a line of
+    documentation saying "pick 32 random bytes".
+    """
+    from ragra import crypto
+
+    print(crypto.generate_key())
+    print()
+    print(f"Set this as {crypto.KEY_ENV_VAR} in your environment (or .env).")
+    print("Store it somewhere other than alongside the database - a key kept next")
+    print("to the file it encrypts protects nothing. Losing it means every stored")
+    print("Google authorization must be granted again; there is no recovery path.")
+    return 0
+
+
+def cmd_credentials_status(args: argparse.Namespace) -> int:
+    """Show which Google services this account has authorized. Prints no
+    secrets - it is written to be safe to paste into a conversation."""
+    from ragra.adapters import google_credentials
+
+    config = load_config()
+    with connect_closing(config.db_path) as conn:
+        for key, value in google_credentials.status(conn, user_id=acting_user_id(conn)).items():
+            print(f"{key}: {value}")
+    return 0
+
+
+def cmd_credentials_import(args: argparse.Namespace) -> int:
+    """Adopt existing on-disk Google tokens into the encrypted per-user
+    store, so an already-granted authorization keeps working instead of
+    needing a fresh consent flow.
+
+    The source files are left in place deliberately (see
+    google_credentials.import_from_file); delete them once this reports
+    success and a sync has run.
+    """
+    from ragra import crypto
+    from ragra.adapters import google_credentials
+
+    config = load_config()
+    if not crypto.is_configured():
+        print(
+            f"{crypto.KEY_ENV_VAR} is not set - nothing was imported. "
+            "Generate one with: ragra generate-credential-key"
+        )
+        return 1
+
+    sources = {
+        google_credentials.CLASSROOM: config.classroom_paths.token_file,
+        google_credentials.CALENDAR: config.calendar_paths.token_file,
+    }
+
+    imported = 0
+    with connect_closing(config.db_path) as conn:
+        user_id = acting_user_id(conn)
+        for service, path in sources.items():
+            if path is None:
+                print(f"{service}: no token file configured")
+                continue
+            if google_credentials.import_from_file(
+                conn, user_id=user_id, service=service, path=Path(path)
+            ):
+                print(f"{service}: imported into the encrypted store")
+                imported += 1
+            else:
+                print(f"{service}: nothing to import")
+
+    if imported:
+        print()
+        print("The original token files were left in place. Remove them once a sync")
+        print("has confirmed the encrypted copies work.")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="ragra")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -567,6 +654,19 @@ def build_parser() -> argparse.ArgumentParser:
         "timetable-sync",
         help="Sync the FAST timetable (public spreadsheet, no OAuth) - runs automatically in `tick` every 15 minutes",
     ).set_defaults(func=cmd_timetable_sync)
+
+    sub.add_parser(
+        "generate-credential-key",
+        help="Print a new encryption key for stored Google credentials (never written to disk)",
+    ).set_defaults(func=cmd_generate_credential_key)
+    sub.add_parser(
+        "credentials-status",
+        help="Show which Google services this account has authorized (no secrets printed)",
+    ).set_defaults(func=cmd_credentials_status)
+    sub.add_parser(
+        "credentials-import",
+        help="Adopt existing on-disk Google tokens into the encrypted per-user store",
+    ).set_defaults(func=cmd_credentials_import)
 
     return parser
 
