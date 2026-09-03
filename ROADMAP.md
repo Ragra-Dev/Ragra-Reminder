@@ -67,8 +67,8 @@ first-class operational event, not an exception.
 ## 2. PHASE MAP
 
 ```
-P0  Repo hygiene / clean clone            ← 1 day        [nearly done]
-P1  Core academic intelligence (M1)       ← 1.5–3 wk     ← YOU ARE HERE
+P0  Repo hygiene / clean clone            ← 1 day
+P1  Core academic intelligence (M1)       ← 1.5–3 wk
 P2  Complete the single-user product (M2) ← 3–6 wk       ← Ragra becomes genuinely useful (to you)
 P3  Identity + user isolation (local)     ← 3–5 wk
 P4  Hosted backend: Postgres + deploy     ← 3–6 wk       ← Ragra becomes a real hosted product
@@ -77,6 +77,23 @@ P6  Pilot: 1–3 real users                 ← 3–5 wk       ← FIRST REAL EX
 P7  Production hardening + Google review  ← 4–8 wk       ← V1 PUBLIC LAUNCH
 P8  Post-v1                               ← ongoing      ← NOT part of v1
 ```
+
+**Phase status**
+
+| Phase | Status |
+|---|---|
+| P0 — Repo hygiene / clean clone | COMPLETED |
+| P1 — Core academic intelligence (M1) | COMPLETED |
+| P2 — Complete the single-user product (M2) | COMPLETED* |
+| P3 — Identity + user isolation (local) | COMPLETED* |
+| P4 — Hosted backend: Postgres + deploy | PLANNED |
+| P5 — Web Push + notification preferences | PLANNED |
+| P6 — Pilot: 1–3 real users | PLANNED |
+| P7 — Production hardening + Google review | PLANNED |
+| P8 — Post-v1 | PLANNED |
+
+\* = Implementation is complete, but the phase's required real-world soak /
+validation period has not yet been completed.
 
 Two things worth internalising from that map:
 
@@ -958,8 +975,11 @@ costs momentum, not value.
 ## 17. CURRENT POSITION (§27)
 
 ```
-CURRENT PHASE:                    Phase 3 — Identity and User Isolation
-                                  (implementation complete; awaiting review)
+CURRENT PHASE:                    Phase 4 has not started. Phases 2 and 3 are
+                                  implementation-complete; each is awaiting
+                                  its real-world soak / validation period
+                                  (see Phase status table, §2) before Phase 4
+                                  begins.
 CURRENT MILESTONE:                M3
 PHASE 1 STATUS:                   COMPLETE. Landed as three logically
                                   separate, independently reviewed commits
@@ -995,8 +1015,9 @@ PHASE 3 STATUS:                   Implementation complete, both tracks.
                                   passing (was 290 at Phase 1 close). See
                                   docs/PROJECT_STATUS.md for the full
                                   verified snapshot.
-CURRENT TASK — MAINTAINER:        Review Phase 3 before it is committed.
-                                  Nothing has been committed or pushed.
+CURRENT TASK — MAINTAINER:        Complete the real-world soak / validation
+                                  period for Phases 2 and 3 before Phase 4
+                                  begins.
 NEXT MILESTONE AFTER PHASE 3:     M4 — Phase 4, hosted backend (Postgres)
 NEXT MAJOR PRODUCT MILESTONE:     End of Phase 2 — Ragra is genuinely useful to you
 FIRST POINT REAL USERS CAN USE IT: End of Phase 6 (pilot), ~4–7 months out

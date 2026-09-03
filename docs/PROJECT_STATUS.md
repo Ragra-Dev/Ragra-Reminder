@@ -14,13 +14,12 @@ progress.
 
 ## Current State
 
-**Architecture (current phase, Phase 3):** Ragra is a local-first academic
-manager initially built for a FAST-NUCES Islamabad student, built on SQLite and
-Windows Task Scheduler. As of Phase 3 it is **multi-user in code** while
-remaining local in infrastructure: every stored row has an owner, every query
-names one, sign-in is a real Google OAuth round trip, and the scheduled tick
-processes each account independently. Hosting, Postgres, and remote execution
-remain Phase 4+ (see ROADMAP.md).
+**Architecture (current phase: Phase 3 implementation complete, Phase 4 not
+started):** Ragra is a single-user, local-first academic manager for
+Students of (FAST-NUCES Islamabad), built on SQLite and Windows Task
+Scheduler. Multi-user identity and isolation (Phase 3) are
+implementation-complete, pending their real-world soak / validation period
+(see ROADMAP.md); the hosted, multi-user backend (Phase 4+) has not started.
 
 **Status:** Currently a working foundation, not a finished product.
 
@@ -28,11 +27,11 @@ What actually works end-to-end today:
 - Pulls real Google Classroom courses, coursework, announcements, and
   materials into a local SQLite database, idempotently.
 - Distinguishes `actual_deadline` (authoritative, from Classroom) from
-  `personal_deadline` (the user's own intended completion time) throughout.
+  `personal_deadline` (User's own intended completion time) throughout.
 - A deterministic reminder engine computes a reminder cadence per task,
   persists it, and dispatches through a notification provider with bounded
   retry.
-- Syncs Ragra-owned events onto the user's real Google Calendar, idempotently.
+- Syncs Ragra-owned events onto User's real Google Calendar, idempotently.
 - Syncs the FAST timetable from its public spreadsheet source, matching
   scraped classes against a small enrollment config to distinguish regular
   and repeat courses (independently, including independent theory/lab
@@ -43,20 +42,9 @@ What actually works end-to-end today:
   per-component health tracking, a self-alert if something breaks
   repeatedly, and a structured 48-hour tick-session diagnostic log
   (separate from application data, auto-purged).
-- A FastAPI + Jinja2 dashboard organised as Schedule / Announcements /
-  Tasks / Deadlines / Missed: today's classes with times and rooms,
-  announcement triage, personal task management, overdue/missed/due-today/
-  due-soon deadlines, per-task detail, and a notification delivery log.
-- Computes and stores a section-relevance decision for every Classroom item
-  during sync, fail-open: only an unambiguous match to a *different*
-  section can suppress a notification, and no task is ever hidden.
-- Personal (manual) tasks the user owns outright, kept strictly separate
-  from Classroom-authoritative data by an enforced write boundary.
-- Announces classes starting shortly, and notifies when Classroom moves a
-  deadline.
-- All user-facing dates and times are rendered in campus local time with an
-  explicit zone label; "today" means the campus calendar day, not the UTC
-  one.
+- A small FastAPI + Jinja2 dashboard shows overdue/missed/due-today/due-soon
+  tasks, lets you mark a task complete or set a personal target, and has a
+  per-task detail view.
 - A deterministic daily brief (`ragra brief`) and an optional AI priority
   narrative (`ragra plan`, via an optional Hermes one-shot completion call)
   sit on top of the deterministic data - the AI never writes back to
@@ -99,9 +87,9 @@ personal, `hermes send --to <target> "<message>"`) and `EmailProvider`
 (optional, SMTP via the standard library, credentials from `RAGRA_SMTP_*`
 environment variables only, never leaked into a `NotifyResult.error`).
 Neither is required for Classroom/Calendar/FAST sync or the reminder
-engine itself. Email exists in code but is not configured with real SMTP
-credentials in the current deployment, so genuine multi-channel
-redundancy is a configuration step away rather than missing code. A direct Telegram Bot API provider was built and verified
+engine itself; only Hermes is actually configured on User's own
+installation today, so email exists in code but has no real SMTP
+credentials set. A direct Telegram Bot API provider was built and verified
 working, then deliberately removed from the product direction in favor of
 Web Push/email as the planned next providers (see Planned Roadmap) - the
 interface was already provider-neutral, so nothing else needed to change
@@ -162,19 +150,9 @@ implemented and ready for a remote worker to use instead of Hermes; Web Push
 ## Current Verification
 
 Last verified **2026-08-29**, directly from the running system (not
-estimated); test count and the Phase 3 migration checks reverified
-**2026-09-03** at the close of Phase 3 implementation:
+estimated); test count reverified **2026-09-01** at the close of Phase 1:
 
-- **712/712 tests passing**
-- **Phase 3 migrations (0009-0025) verified against a COPY of the real
-  database**, never the original: 708 rows preserved with row contents
-  byte-identical, 15 user-owned tables with zero unowned and zero orphaned
-  rows, zero foreign-key violations, per-user uniqueness admitting a second
-  account while still rejecting same-account duplicates, isolation confirmed
-  through the real repository functions, and a full deletion cascade that
-  left the real owner's data untouched. Re-running the migrator applied
-  nothing further.
-- **397/397 tests passing** at the close of Phase 2
+- **290/290 tests passing**
 - **8** Classroom courses synced
 - **175** persisted tasks
 - **18** Calendar events
@@ -287,61 +265,12 @@ text for `ragra plan` / `ragra brief --ai` to print.
 
 Verified against the actual code, not assumed:
 
-- **Profile and notification settings have both a web UI and CLI commands.**
-  `/account` lets a signed-in user edit their academic profile (program,
-  batch year, enrollment start term, enrolled courses as a plain-text list),
-  their notification destinations (email, Hermes target), see their Google
-  connection status, and delete their account - a typed `delete`
-  confirmation, not a checkbox, since it cannot be undone. The equivalent
-  CLI commands (`ragra notify-set`, `ragra notify-status`,
-  `ragra credentials-import`, `ragra account-delete`) still exist for
-  scripting and remain the only path for anything scheduled/unattended.
-  Both call the same underlying functions (`ragra/relevance/profile.py`,
-  `ragra/notifications/preferences.py`, `ragra/accounts.py`), so there is
-  one behavior, reachable two ways.
-- **The enrolled-courses editor is a plain-text list, not a dynamic
-  add-row form.** Each line is `Course Name | Section | REGULAR or REPEAT |
-  batch year | aliases`, parsed server-side with the same `EnrolledCourse`
-  validation the rest of the system uses. This needs no client-side
-  JavaScript and was the smallest reliable way to make the former
-  hand-edited `MY_ENROLLMENT` table user-editable; a friendlier per-row
-  widget is future frontend work, not a blocked dependency of anything.
-- **Connecting Classroom/Calendar access is still a CLI step, deliberately.**
-  `/account` shows connection status read-only. Granting or re-granting
-  that access has always been an interactive, local consent flow
-  (`ragra classroom-auth` / `calendar-auth`) that only proceeds after
-  explicit human go-ahead at a terminal; Phase 3 changed where the
-  resulting token is stored (encrypted, per account - see
-  `ragra/adapters/google_credentials.py`), not how it is granted. Building
-  a second, web-triggered OAuth consent screen for this was out of scope.
-- **Account deletion is local, and says so.** It removes every row the
-  account owned and destroys the stored Google credential, but it does not
-  withdraw the grant from the user's Google account - that has to be done at
-  myaccount.google.com/permissions. The deletion receipt states this
-  explicitly rather than letting the user assume otherwise.
-- **One deliberate authentication exception.** A deployment with sign-in
-  unconfigured, reached from loopback, holding exactly one never-signed-in
-  account continues to work without signing in. All three conditions are
-  required, so a second account or a request from the network ends it. This
-  exists so introducing identity did not lock the existing owner out of
-  their own dashboard; it is narrow, tested, and ends the moment sign-in is
-  configured.
-- **Credential encryption depends on an environment key.** With
-  `RAGRA_CREDENTIAL_KEY` unset, Google credentials cannot be stored or read
-  at all - Ragra fails closed rather than falling back to plaintext. Losing
-  the key means re-granting every authorization; there is no recovery path,
-  by design.
-
 - **Remote/always-on execution** - investigated and designed, not deployed
   (see "Remote Execution" above). Ragra still stops entirely when the
   laptop is off.
-- **Class-aware reminders** - implemented in Phase 2. Class occurrences are
-  computed on demand from the weekly timetable pattern (never materialised -
-  see `ragra/timetable/schedule.py`), and a class starting within the
-  lookahead window is announced once through the same provider-neutral
-  notification layer. Not yet cross-referenced against task deadlines
-  ("you have a lab and an assignment due the same afternoon"), which
-  remains future work.
+- **Class-aware reminders** - not implemented. The timetable is synced and
+  persisted, but nothing yet reasons about "class starting soon" or
+  cross-references it against task deadlines.
 - **Task detail pages** - implemented, but basic: title, course, both
   deadlines, status, description (if Classroom provided one), a link back
   to the Classroom post (if present), reminder state, and history. No
@@ -350,15 +279,13 @@ Verified against the actual code, not assumed:
 - **Source/material links** - present only insofar as `description` and
   `link` were already captured from Classroom during sync; no dedicated
   materials/attachments model.
-- **Snooze** - still not implemented; there is no snooze concept at all.
-  Cancel now has a dashboard entry point, but only for manual tasks:
-  cancelling a Classroom-sourced task raises `TaskSourceViolation`, because
-  whether such a task exists is Classroom's decision (docs/INTERFACES.md
-  contract #5).
+- **Snooze/cancel actions** - not on the dashboard. `repo.cancel_task()`
+  exists at the code level but has no UI entry point; there is no snooze
+  concept at all.
 - **Notification fallback channels** - multi-provider mechanism is built and
   tested (`ragra/adapters/notify.py`; every configured `NotificationProvider`
   is attempted per send). Two providers now exist in code (Hermes, Email -
-  Phase 1), but only Hermes has real credentials configured on the current
+  Phase 1), but only Hermes has real credentials configured on User's
   installation, so genuine multi-channel redundancy isn't active yet - that's
   a configuration step, not missing code. Web Push (Phase 5) is still
   unimplemented.
@@ -393,13 +320,16 @@ The roadmap defines nine phases (P0–P8). Current status:
 |-------|----------|-----------|--------|
 | **P0** | 1–2 days | Repository Hygiene / Clean Clone | COMPLETED|
 | **P1** | 1.5–3 wk | Core Academic Intelligence (M1) | COMPLETED |
-| **P2** | 3–6 wk | Complete Single-User Product (M2) | IMPLEMENTED (soak test pending) |
-| **P3** | 3–5 wk | Identity + User Isolation (local) | IMPLEMENTED (awaiting review) |
+| **P2** | 3–6 wk | Complete Single-User Product (M2) | COMPLETED* |
+| **P3** | 3–5 wk | Identity + User Isolation (local) | COMPLETED* |
 | **P4** | 3–6 wk | Hosted Backend: Postgres + Remote Execution | PLANNED |
 | **P5** | 2–4 wk | Web Push + Notification Preferences | PLANNED |
 | **P6** | 3–5 wk | Pilot: 1–3 Real Users | PLANNED |
 | **P7** | 4–8 wk | Production Hardening + V1 Launch | PLANNED |
 | **P8** | Ongoing | Post-V1 (optional features) | PLANNED |
+
+\* = Implementation is complete, but the phase's required real-world soak /
+validation period has not yet been completed.
 
 **Key milestones:**
 - End of P1: Deterministic relevance filtering + Email provider
