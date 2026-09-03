@@ -133,7 +133,7 @@ def sync_classroom(
     # every task then keeps the fail-open RELEVANT default.
     profile: UserAcademicProfile | None
     try:
-        profile = load_profile()
+        profile = load_profile(conn, user_id=user_id)
     except Exception as exc:  # noqa: BLE001 - advisory feature, never fatal
         profile = None
         summary.warnings.append(f"relevance disabled this run: profile unavailable ({exc})")

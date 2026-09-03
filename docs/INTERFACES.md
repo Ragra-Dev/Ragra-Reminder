@@ -121,15 +121,22 @@ class UserAcademicProfile:
     section_labels: dict[str, str]  # {course_name: "CS-A", "CS-B", "CS-C", ...}
     enrollment_config: dict         # Raw FAST enrollment rules (internal)
 
-def load_profile(user_id: str | None = None, *, today: date | None = None) -> UserAcademicProfile:
-    """Load the academic profile for this user (or the default user if None).
+def load_profile(
+    conn: sqlite3.Connection | None = None,
+    *,
+    user_id: int | None = None,
+    today: date | None = None,
+) -> UserAcademicProfile:
+    """The academic profile for one user.
     `today` is injectable for deterministic testing of expected_semester;
     defaults to date.today()."""
 ```
 
 **Semantics:**
-- **Phase 0→1 (single-user):** `user_id` is accepted but ignored; returns hardcoded profile from `ragra/timetable/enrollment.py`.
-- **Phase 3 (multi-user):** `user_id` fetches a row from `user_profiles` table; same signature, different source.
+- **Phase 0→1 (single-user):** `user_id` was accepted but ignored; returned the hardcoded profile from `ragra/timetable/enrollment.py`.
+- **Phase 3 (multi-user, implemented):** the profile is a `user_profiles` row (migration 0024). `user_id` narrowed from `str` to `int` to match the tenant key used by every other table, and `conn` was added because the profile now lives in the database rather than in a module. Both are optional so callers that genuinely have no database — the relevance engine's own tests — keep working unchanged.
+- **The fallback is deliberately narrow.** A user with no stored profile gets the module default *only* if they are the pre-identity owner, the account whose configuration has always lived in `ragra/timetable/enrollment.py`. Everyone else gets an empty profile. That degrades safely in both consumers: relevance falls open and suppresses nothing, and timetable matching finds no classes rather than somebody else's. Silently handing a new user another person's enrollment is the far worse failure, and it is the one a permissive default produces.
+- **Adoption is ordered, and the order matters.** Linking the owner's account is exactly what stops it matching that fallback, so the profile is written as a real row *before* the account is linked (see `adopt_legacy_profile`). Reversing those two steps would silently empty the owner's enrollment on their first sign-in.
 - No consumer ever imports `MY_ENROLLMENT` as a module constant again.
 - `enrolled_courses`/`section_labels` are keyed by FAST's own course names (`ragra/timetable/enrollment.py`), not Classroom course codes — no crosswalk between the two systems exists yet. An earlier draft of this contract illustrated Classroom-style codes here; corrected to match the only real, non-invented data source available in Phase 0→1.
 
@@ -143,6 +150,8 @@ def load_profile(user_id: str | None = None, *, today: date | None = None) -> Us
 - Every sync stage calls `load_profile()` at the start; never reads enrollment from module-level state.
 - Relevance engine calls `load_profile()` at comparison time (for potential future per-user config).
 - Timetable sync uses the profile's `enrolled_courses` and `section_labels` to match rows.
+
+**`RawProfile` / `load_raw_profile()` (added Phase 3, for the `/account` editor):** a second, separate read path that returns the profile's stored fields exactly as saved — `program`, `batch_year`, `enrollment_start_year`, `enrollment_start_term`, `enrollment` — as opposed to `UserAcademicProfile`'s *derived* shape, which computes `expected_semester` and does not carry the raw start year/term at all once they have been used. An editor needs to redisplay what a user actually saved, including fields `load_profile()` deliberately discards after consuming them; adding that need to `UserAcademicProfile` itself would have broken the "signature stays stable" commitment above. `RawProfile` has no consumer outside `ragra/web/app.py`'s account routes and carries no eligibility semantics of its own — it is a form-prefill read, not a second relevance/matching input.
 
 ---
 
@@ -215,7 +224,7 @@ Before implementation starts, confirm:
 
 - **NotificationProvider:** Never — it is the foundation of the pluggable architecture. Adding fields to `NotifyResult` requires cross-developer review (affects dispatch logic).
 - **Relevance Decision:** Never in v1. New cases must go through the five-case decision table, not improvised in code.
-- **UserAcademicProfile:** Can add fields in Phase 3+ for multi-user; signature stays stable. New fields must be in the dataclass, not as hardcoded per-user constants.
+- **UserAcademicProfile:** Can add fields in Phase 3+ for multi-user; the dataclass shape has stayed stable. `load_profile`'s *signature* did change in Phase 3 (a `conn` parameter, and `user_id` narrowed from `str` to `int`), which this contract anticipated as "different source, same signature" and which turned out not to be achievable — a profile that lives in the database needs a connection to read it. Recorded here rather than glossed over. New fields must be in the dataclass, not as hardcoded per-user constants.
 - **Task Source Boundary:** Never. The write-guard test must hold through all phases. Classroom tasks remain read-only forever.
 
 ---

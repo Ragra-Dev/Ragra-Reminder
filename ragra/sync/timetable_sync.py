@@ -82,7 +82,7 @@ def sync_timetable(
     derive different (and overlapping) external_ids from the same source
     sheet, which is why migration 0015 made external_id unique per user
     rather than globally."""
-    profile = load_profile()
+    profile = load_profile(conn, user_id=user_id)
     if enrollment is None:
         enrollment = profile.enrollment_config["enrollment"]
     repo.record_sync_start(conn, user_id=user_id, source="timetable")

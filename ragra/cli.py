@@ -28,40 +28,29 @@ from dotenv import load_dotenv
 
 from ragra.adapters import calendar as calendar_adapter
 from ragra.adapters import classroom as classroom_adapter
-from ragra.adapters.notify import EmailProvider, HermesProvider, NotificationProvider
+from ragra.adapters.notify import NotificationProvider
 from ragra.config import Config, load_config
 from ragra.db.connection import connect_closing
 from ragra.adapters.user_clients import UserCredentialsUnavailable, calendar_client_for, classroom_client_for
+from ragra.notifications.preferences import providers_for
 from ragra.reminders.dispatch import dispatch_due_reminders, preview_due_reminders
 from ragra.sync.calendar_sync import sync_all_task_events
 from ragra.sync.classroom_sync import sync_classroom
 
 
-def _build_providers(config: Config) -> list[NotificationProvider]:
-    """Builds the list of currently-configured notification providers.
-    Hermes and email are both optional - Hermes included only when
-    HERMES_BIN and RAGRA_NOTIFY_TARGET are set, email only when
-    RAGRA_SMTP_HOST, RAGRA_EMAIL_FROM, and RAGRA_EMAIL_TO are all set. An
-    empty list is normal and fully supported: core Ragra (Classroom/
-    Calendar/FAST sync, the reminder engine) never requires any provider to
-    be configured."""
-    providers: list[NotificationProvider] = []
-    if config.hermes_bin and config.notify_target:
-        providers.append(HermesProvider(hermes_bin=config.hermes_bin, target=config.notify_target))
-    if config.smtp_host and config.email_from and config.email_to:
-        providers.append(
-            EmailProvider(
-                host=config.smtp_host,
-                port=config.smtp_port,
-                from_address=config.email_from,
-                to_address=config.email_to,
-                username=config.smtp_username,
-                password=config.smtp_password,
-                use_ssl=config.smtp_use_ssl,
-                base_url=config.web_base_url,
-            )
-        )
-    return providers
+def _build_providers(conn, config: Config, *, user_id: int) -> list[NotificationProvider]:
+    """The notification providers for one user.
+
+    Destinations are per-user data and infrastructure is per-deployment
+    (see ragra/notifications/preferences.py). There is deliberately no
+    fallback to a globally configured recipient: that fallback is exactly
+    how a second user's reminders would be delivered to the first.
+
+    An empty list is normal and fully supported - core Ragra never requires
+    any provider, and reminders stay PENDING rather than being sent
+    somewhere they do not belong.
+    """
+    return providers_for(conn, config, user_id=user_id)
 
 
 class NoCurrentUser(RuntimeError):
@@ -243,7 +232,7 @@ def _run_calendar_sync(conn, config: Config, log, *, user_id: int) -> tuple[int,
 
 def _run_reminders_dispatch(conn, config: Config, log, *, user_id: int) -> tuple[int, str | None]:
     now = datetime.now(timezone.utc).isoformat()
-    providers = _build_providers(config)
+    providers = _build_providers(conn, config, user_id=user_id)
     try:
         summary = dispatch_due_reminders(conn, user_id=user_id, providers=providers, now=now)
     except Exception as exc:  # noqa: BLE001
@@ -256,10 +245,10 @@ def _run_reminders_dispatch(conn, config: Config, log, *, user_id: int) -> tuple
     )
     if summary.skipped_not_configured and not providers:
         log(
-            "  NOTE: no notification provider is configured (e.g. RAGRA_NOTIFY_TARGET and/or HERMES_BIN "
-            "for the optional Hermes integration), so due reminders are not being delivered anywhere. "
-            "This is safe (nothing invented, nothing lost - they stay PENDING) but not useful until "
-            "configured. See .env.example."
+            "  NOTE: this account has no notification destination configured, so due reminders "
+            "are not being delivered anywhere. This is safe (nothing invented, nothing lost - "
+            "they stay PENDING) but not useful until configured. Set one with: "
+            "ragra notify-set --email you@example.com"
         )
     for error in summary.errors:
         log(f"  reminder error: {error}")
@@ -276,7 +265,7 @@ def _run_class_reminders(conn, config: Config, log, *, user_id: int) -> tuple[in
     ragra/timetable/schedule.py)."""
     from ragra.reminders.class_reminders import run_class_reminders
 
-    providers = _build_providers(config)
+    providers = _build_providers(conn, config, user_id=user_id)
     try:
         summary = run_class_reminders(
             conn, user_id=user_id, providers=providers, now=datetime.now(timezone.utc)
@@ -356,12 +345,11 @@ def cmd_reminders(args: argparse.Namespace) -> int:
                 print(f"  [{p['reminder_type']}] due {p['scheduled_for']}: {p['message']!r}")
             return 0
 
-        if not _build_providers(config):
+        if not _build_providers(conn, config, user_id=user_id):
             print(
-                "No notification provider is configured (e.g. RAGRA_NOTIFY_TARGET and/or HERMES_BIN "
-                "for the optional Hermes integration) - reminders will stay PENDING rather than being "
-                "sent nowhere. See .env.example. (Use --dry-run to preview what would be sent once "
-                "configured.)"
+                "This account has no notification destination configured - reminders will stay "
+                "PENDING rather than being sent nowhere. Set one with `ragra notify-set`, or use "
+                "--dry-run to preview what would be sent once configured."
             )
 
         rc, _ = _run_reminders_dispatch(conn, config, print, user_id=user_id)
@@ -435,7 +423,7 @@ def cmd_tick(args: argparse.Namespace) -> int:
                         tick_errors.append(f"{component}: {error}")
 
             alerted = health.check_and_alert(
-                conn, user_id=user_id, providers=_build_providers(config)
+                conn, user_id=user_id, providers=_build_providers(conn, config, user_id=user_id)
             )
             if alerted:
                 logger.info("health alert sent for: %s", ", ".join(alerted))
@@ -619,6 +607,88 @@ def cmd_credentials_import(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_notify_status(args: argparse.Namespace) -> int:
+    """Answer the one question this needs to answer: where are my reminders
+    going? Destinations are shown in full - an address is not a secret, and
+    masking it would make this useless."""
+    from ragra.notifications.preferences import describe, load_preferences
+
+    config = load_config()
+    with connect_closing(config.db_path) as conn:
+        user_id = acting_user_id(conn)
+        for channel, state in describe(load_preferences(conn, user_id=user_id)).items():
+            print(f"{channel}: {state}")
+
+        if config.smtp_host is None:
+            print()
+            print("note: no SMTP relay is configured for this deployment, so email cannot be")
+            print("      delivered even when switched on here. See .env.example.")
+        if config.hermes_bin is None:
+            print("note: HERMES_BIN is not set, so Hermes delivery is unavailable on this")
+            print("      deployment even when switched on here.")
+    return 0
+
+
+def cmd_notify_set(args: argparse.Namespace) -> int:
+    """Set this account's delivery destinations.
+
+    Passing an empty value switches a channel off while keeping nothing
+    behind; omitting a flag leaves that channel exactly as it was, so
+    changing one destination never silently clears the other.
+    """
+    from ragra.notifications.preferences import (
+        NotificationPreferences,
+        describe,
+        load_preferences,
+        save_preferences,
+    )
+
+    config = load_config()
+    with connect_closing(config.db_path) as conn:
+        user_id = acting_user_id(conn)
+        current = load_preferences(conn, user_id=user_id)
+
+        email_to = current.email_to if args.email is None else (args.email.strip() or None)
+        hermes_target = (
+            current.hermes_target if args.hermes is None else (args.hermes.strip() or None)
+        )
+
+        updated = NotificationPreferences(
+            email_enabled=bool(email_to),
+            email_to=email_to,
+            hermes_enabled=bool(hermes_target),
+            hermes_target=hermes_target,
+        )
+        save_preferences(conn, user_id=user_id, preferences=updated)
+
+        for channel, state in describe(updated).items():
+            print(f"{channel}: {state}")
+    return 0
+
+
+def cmd_notify_adopt_env(args: argparse.Namespace) -> int:
+    """Move this deployment's environment-configured destinations onto this
+    account, once.
+
+    The migration path for the existing single-user setup: without it, the
+    owner's reminders would simply stop being delivered the moment
+    destinations became per-user data.
+    """
+    from ragra.notifications.preferences import adopt_environment_defaults, describe, load_preferences
+
+    config = load_config()
+    with connect_closing(config.db_path) as conn:
+        user_id = acting_user_id(conn)
+        if adopt_environment_defaults(conn, config, user_id=user_id):
+            print("Adopted the environment's destinations for this account:")
+        else:
+            print("Nothing adopted (this account already has preferences, or the")
+            print("environment configures no destination). Current settings:")
+        for channel, state in describe(load_preferences(conn, user_id=user_id)).items():
+            print(f"  {channel}: {state}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="ragra")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -667,6 +737,24 @@ def build_parser() -> argparse.ArgumentParser:
         "credentials-import",
         help="Adopt existing on-disk Google tokens into the encrypted per-user store",
     ).set_defaults(func=cmd_credentials_import)
+
+    sub.add_parser(
+        "notify-status", help="Show where this account's reminders are delivered"
+    ).set_defaults(func=cmd_notify_status)
+    notify_set = sub.add_parser(
+        "notify-set", help="Set this account's reminder delivery destinations"
+    )
+    notify_set.add_argument(
+        "--email", help="Email address to deliver to; pass an empty value to switch email off"
+    )
+    notify_set.add_argument(
+        "--hermes", help="Hermes delivery target; pass an empty value to switch Hermes off"
+    )
+    notify_set.set_defaults(func=cmd_notify_set)
+    sub.add_parser(
+        "notify-adopt-env",
+        help="Adopt the environment's configured destinations for this account (one-time migration)",
+    ).set_defaults(func=cmd_notify_adopt_env)
 
     return parser
 

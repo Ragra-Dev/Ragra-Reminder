@@ -318,6 +318,15 @@ def resolve_user(
     if settings.owner_email and email == settings.owner_email:
         unlinked = repo.unlinked_user_id(conn)
         if unlinked is not None:
+            # Persist the module-default academic profile first. Linking the
+            # account is what stops that user matching the "unlinked owner"
+            # fallback in ragra/relevance/profile.py, so their configuration
+            # has to exist as data *before* the UPDATE, not after - otherwise
+            # signing in for the first time would silently empty their
+            # enrollment.
+            from ragra.relevance.profile import adopt_legacy_profile
+
+            adopt_legacy_profile(conn, user_id=unlinked)
             conn.execute(
                 """UPDATE users SET google_sub = ?, email = ?, display_name = ?, updated_at = ?
                    WHERE id = ? AND google_sub IS NULL""",
