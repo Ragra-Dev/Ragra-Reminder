@@ -14,11 +14,13 @@ progress.
 
 ## Current State
 
-**Architecture (current phase, Phase 2):** Ragra is a single-user, local-first
-academic manager initially built for a FAST-NUCES Islamabad student, built on SQLite and
-Windows Task Scheduler. This is the foundation implementation, not the final
-product architecture. A multi-user, hosted version is planned for Phase 3+
-(see ROADMAP.md).
+**Architecture (current phase, Phase 3):** Ragra is a local-first academic
+manager initially built for a FAST-NUCES Islamabad student, built on SQLite and
+Windows Task Scheduler. As of Phase 3 it is **multi-user in code** while
+remaining local in infrastructure: every stored row has an owner, every query
+names one, sign-in is a real Google OAuth round trip, and the scheduled tick
+processes each account independently. Hosting, Postgres, and remote execution
+remain Phase 4+ (see ROADMAP.md).
 
 **Status:** Currently a working foundation, not a finished product.
 
@@ -160,9 +162,19 @@ implemented and ready for a remote worker to use instead of Hermes; Web Push
 ## Current Verification
 
 Last verified **2026-08-29**, directly from the running system (not
-estimated); test count reverified **2026-09-02** at the close of Phase 2 implementation:
+estimated); test count and the Phase 3 migration checks reverified
+**2026-09-03** at the close of Phase 3 implementation:
 
-- **397/397 tests passing**
+- **712/712 tests passing**
+- **Phase 3 migrations (0009-0025) verified against a COPY of the real
+  database**, never the original: 708 rows preserved with row contents
+  byte-identical, 15 user-owned tables with zero unowned and zero orphaned
+  rows, zero foreign-key violations, per-user uniqueness admitting a second
+  account while still rejecting same-account duplicates, isolation confirmed
+  through the real repository functions, and a full deletion cascade that
+  left the real owner's data untouched. Re-running the migrator applied
+  nothing further.
+- **397/397 tests passing** at the close of Phase 2
 - **8** Classroom courses synced
 - **175** persisted tasks
 - **18** Calendar events
@@ -274,6 +286,51 @@ text for `ragra plan` / `ragra brief --ai` to print.
 ## Current Limitations
 
 Verified against the actual code, not assumed:
+
+- **Profile and notification settings have both a web UI and CLI commands.**
+  `/account` lets a signed-in user edit their academic profile (program,
+  batch year, enrollment start term, enrolled courses as a plain-text list),
+  their notification destinations (email, Hermes target), see their Google
+  connection status, and delete their account - a typed `delete`
+  confirmation, not a checkbox, since it cannot be undone. The equivalent
+  CLI commands (`ragra notify-set`, `ragra notify-status`,
+  `ragra credentials-import`, `ragra account-delete`) still exist for
+  scripting and remain the only path for anything scheduled/unattended.
+  Both call the same underlying functions (`ragra/relevance/profile.py`,
+  `ragra/notifications/preferences.py`, `ragra/accounts.py`), so there is
+  one behavior, reachable two ways.
+- **The enrolled-courses editor is a plain-text list, not a dynamic
+  add-row form.** Each line is `Course Name | Section | REGULAR or REPEAT |
+  batch year | aliases`, parsed server-side with the same `EnrolledCourse`
+  validation the rest of the system uses. This needs no client-side
+  JavaScript and was the smallest reliable way to make the former
+  hand-edited `MY_ENROLLMENT` table user-editable; a friendlier per-row
+  widget is future frontend work, not a blocked dependency of anything.
+- **Connecting Classroom/Calendar access is still a CLI step, deliberately.**
+  `/account` shows connection status read-only. Granting or re-granting
+  that access has always been an interactive, local consent flow
+  (`ragra classroom-auth` / `calendar-auth`) that only proceeds after
+  explicit human go-ahead at a terminal; Phase 3 changed where the
+  resulting token is stored (encrypted, per account - see
+  `ragra/adapters/google_credentials.py`), not how it is granted. Building
+  a second, web-triggered OAuth consent screen for this was out of scope.
+- **Account deletion is local, and says so.** It removes every row the
+  account owned and destroys the stored Google credential, but it does not
+  withdraw the grant from the user's Google account - that has to be done at
+  myaccount.google.com/permissions. The deletion receipt states this
+  explicitly rather than letting the user assume otherwise.
+- **One deliberate authentication exception.** A deployment with sign-in
+  unconfigured, reached from loopback, holding exactly one never-signed-in
+  account continues to work without signing in. All three conditions are
+  required, so a second account or a request from the network ends it. This
+  exists so introducing identity did not lock the existing owner out of
+  their own dashboard; it is narrow, tested, and ends the moment sign-in is
+  configured.
+- **Credential encryption depends on an environment key.** With
+  `RAGRA_CREDENTIAL_KEY` unset, Google credentials cannot be stored or read
+  at all - Ragra fails closed rather than falling back to plaintext. Losing
+  the key means re-granting every authorization; there is no recovery path,
+  by design.
 
 - **Remote/always-on execution** - investigated and designed, not deployed
   (see "Remote Execution" above). Ragra still stops entirely when the

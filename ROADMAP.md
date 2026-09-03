@@ -464,6 +464,60 @@ mid-phase. Don't.
 **Exit criteria.** The isolation test suite passes, and independent attempts
 to break it have failed.
 
+**What actually shipped, and where it differs from the plan above.** Recorded
+here because a plan that is quietly not what was built stops being a plan.
+
+- *Two things the plan did not anticipate.* First, four **global `UNIQUE`
+  constraints** (`courses.external_id`, `reminders.idempotency_key`,
+  `calendar_events.google_event_id`, `timetable_events.external_id`) and two
+  **single-row primary keys** (`sync_state`, `pipeline_health`) would each have
+  broken the second real user — classmates legitimately share a Classroom
+  course id and a timetable slot. SQLite cannot alter any of these in place, so
+  the tenant-key migration became eleven table rebuilds rather than eleven
+  `ALTER TABLE`s. Second, `pipeline_health` being shared meant one user's
+  healthy run would reset another's failure streak, permanently suppressing the
+  self-alert for a genuinely broken account — a silent failure of the mechanism
+  that exists to catch silent failures.
+- *A structural guard instead of a review promise.* The plan mitigated "a
+  missed `WHERE user_id = ?`" with review. Review does not survive the next
+  contributor, so `tests/test_user_scoping_guard.py` walks the source and fails
+  if any function queries a user-owned table without naming an owner. Two
+  narrow, marked exemptions exist and their number is itself asserted.
+- *Sign-in is closed by default.* Anyone not named as owner or allow-listed is
+  refused rather than given a new empty account. The pre-identity owner row is
+  claimed once, by a configured email, and identity is the Google subject id
+  from then on.
+- *One deliberate compatibility exception.* A deployment with sign-in
+  unconfigured, on loopback, with exactly one never-signed-in account continues
+  to work. All three conditions are required, so the dangerous shape — bound to
+  a public interface with no sign-in — is precisely the one it refuses.
+- *The frontend work list was checked against, not silently narrowed.* An
+  earlier pass through this phase shipped the profile editor, notification
+  preferences, and delete-account flow as CLI commands only and drafted this
+  section to record that as an intentional deferral to Phase 4/5. On review
+  that was the wrong call — this phase's own "Frontend work" line names all
+  three explicitly, and "isolation was the obligation" does not license
+  quietly dropping a line item the plan already committed to. `/account` now
+  exists: profile editor (program, batch year, enrollment start term, the
+  enrolled-courses list — a plain-text one-course-per-line format rather than
+  a dynamic add-row widget, a genuinely smaller-scope call, not a dropped
+  one), notification preferences (email/Hermes destinations, independent of
+  whether each channel is switched on), and account deletion (typed `delete`
+  confirmation, not a checkbox — this is the one action that cannot be undone
+  by using the product again). The CLI commands
+  (`ragra notify-set`, `ragra credentials-import`, `ragra account-delete`)
+  remain, both for scripting and because they were already built and tested;
+  web and CLI call the same underlying functions. What is *still* CLI-only,
+  deliberately: granting or re-granting Classroom/Calendar access itself
+  (`ragra classroom-auth` / `calendar-auth`) — that has always been an
+  interactive, local consent flow requiring explicit human go-ahead at a
+  terminal, unchanged since before Phase 3, and building a second,
+  web-triggered OAuth screen for it was genuinely out of this phase's scope
+  rather than something quietly dropped. Account deletion removes every row
+  and destroys the stored credential, but does **not** revoke the grant at
+  Google — the receipt states this explicitly rather than implying
+  otherwise.
+
 ---
 
 ## 8. PHASE 4 — HOSTED BACKEND: POSTGRES + REMOTE EXECUTION
@@ -843,28 +897,46 @@ costs momentum, not value.
 ## 17. CURRENT POSITION (§27)
 
 ```
-CURRENT PHASE:                    Phase 2 — Complete the Single-User Product
-                                  (implementation complete; two-week soak
-                                  test outstanding — see exit criteria)
-CURRENT MILESTONE:                M2
+CURRENT PHASE:                    Phase 3 — Identity and User Isolation
+                                  (implementation complete; awaiting review)
+CURRENT MILESTONE:                M3
 PHASE 1 STATUS:                   COMPLETE. Landed as three
                                   logically separate, independently
                                   reviewed commits (migration framework,
                                   notification value object, EmailProvider)
                                   on top of the relevance engine + profile
                                   work already done. Suite: 290 passing
-                                  (was 211 at Phase 0 close). See
+                                  (was 211 at Phase 0 close).
+PHASE 2 STATUS:                   COMPLETE. Implemented end to end across
+                                  both originally-planned tracks. The two-week
+                                  soak test was explicitly waived by the
+                                  maintainer so Phase 3 could begin; the
+                                  deferred HTMX pass remains outstanding
+                                  (plain forms ship today and work).
+PHASE 3 STATUS:                   Implementation complete, both tracks. 17
+                                  migrations (0009–0025),
+                                  every user-owned table carries an owner,
+                                  Google sign-in with PKCE and single-use
+                                  state, server-side sessions, encrypted
+                                  per-user Google credentials, CSRF on
+                                  every mutating route, a multi-user tick,
+                                  and account deletion proven complete
+                                  against the schema — plus a real /account
+                                  web UI (profile editor, notification
+                                  preferences, delete-account flow) on top
+                                  of the per-user profile/preference
+                                  storage, matching the phase's original
+                                  frontend-work list rather than deferring
+                                  it. Migrations verified against a COPY of
+                                  the real database: 708 rows preserved
+                                  byte-for-byte, zero unowned rows, zero
+                                  foreign-key violations. Suite: 712
+                                  passing (was 290 at Phase 1 close). See
                                   docs/PROJECT_STATUS.md for the full
                                   verified snapshot.
-CURRENT TASK — MAINTAINER:        Phase 2 implemented end to end by the
-                                  sole active developer, covering both
-                                  originally-allocated tracks. Remaining
-                                  before Phase 2 can be called complete:
-                                  the two-week real-use soak test that is
-                                  this phase's actual exit criterion, and
-                                  the deferred HTMX pass (plain forms ship
-                                  today and work).
-NEXT MILESTONE AFTER PHASE 2:     M3 — Phase 3, identity and user isolation
+CURRENT TASK — MAINTAINER:        Review Phase 3 before it is committed.
+                                  Nothing has been committed or pushed.
+NEXT MILESTONE AFTER PHASE 3:     M4 — Phase 4, hosted backend (Postgres)
 NEXT MAJOR PRODUCT MILESTONE:     End of Phase 2 — Ragra is genuinely useful to you
 FIRST POINT REAL USERS CAN USE IT: End of Phase 6 (pilot), ~4–7 months out
 FIRST POINT IT IS A REAL HOSTED PRODUCT: End of Phase 4
