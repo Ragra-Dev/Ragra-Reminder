@@ -18,12 +18,20 @@ from ragra.adapters.ai import ask
 from ragra.db import repo
 
 
-def build_snapshot_prompt(conn: sqlite3.Connection, *, now_iso: str, week_end_iso: str) -> str:
+def build_snapshot_prompt(
+    conn: sqlite3.Connection, *, user_id: int, now_iso: str, week_end_iso: str
+) -> str:
     """Pure: assembles a deterministic, factual snapshot of overdue/due-soon
-    work and asks for a prioritized plan. No network call happens here."""
-    overdue = repo.overdue_tasks(conn, now=now_iso)
-    due_soon = repo.tasks_due_between(conn, start_iso=now_iso, end_iso=week_end_iso)
-    missing_target = repo.tasks_missing_personal_target(conn)
+    work and asks for a prioritized plan. No network call happens here.
+
+    Scoped to one user, and that matters more here than in a display path:
+    the snapshot leaves Ragra entirely, so an unscoped query would send one
+    student's coursework to a model on another student's behalf."""
+    overdue = repo.overdue_tasks(conn, user_id=user_id, now=now_iso)
+    due_soon = repo.tasks_due_between(
+        conn, user_id=user_id, start_iso=now_iso, end_iso=week_end_iso
+    )
+    missing_target = repo.tasks_missing_personal_target(conn, user_id=user_id)
 
     def _line(t: sqlite3.Row) -> str:
         course = t["course_code"] or t["course_name"]
@@ -54,7 +62,14 @@ def build_snapshot_prompt(conn: sqlite3.Connection, *, now_iso: str, week_end_is
 
 
 def ask_for_priorities(
-    conn: sqlite3.Connection, *, hermes_bin: Path | None, now_iso: str, week_end_iso: str
+    conn: sqlite3.Connection,
+    *,
+    user_id: int,
+    hermes_bin: Path | None,
+    now_iso: str,
+    week_end_iso: str,
 ) -> str:
-    prompt = build_snapshot_prompt(conn, now_iso=now_iso, week_end_iso=week_end_iso)
+    prompt = build_snapshot_prompt(
+        conn, user_id=user_id, now_iso=now_iso, week_end_iso=week_end_iso
+    )
     return ask(hermes_bin, prompt)

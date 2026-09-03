@@ -1,8 +1,20 @@
-"""Ragra dashboard: FastAPI app. Single user, no auth (localhost only)."""
+"""Ragra dashboard: FastAPI app.
+
+Every route resolves the acting user through `current_user_id()` and passes
+that id explicitly into the repository layer. Nothing here reads or writes
+a row without naming its owner - which is what makes the ownership filter,
+not the URL, decide what a request can see. Requesting another user's task
+id returns 404 from the scoped query rather than the row.
+
+Identity resolution is intentionally minimal for now: the single
+pre-identity owner row. Real sign-in (sessions, Google OAuth) is a
+follow-up piece that replaces `current_user_id()`'s body, not its callers.
+"""
 
 from __future__ import annotations
 
 import os
+import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -18,12 +30,31 @@ from ragra.tz import format_stored_local, local_day_bounds, utc_iso
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
 
 
-def _todays_classes(conn, *, now: datetime) -> list:
+class NoCurrentUser(RuntimeError):
+    """No acting user could be resolved. Raised rather than defaulting to
+    "the first user": silently picking an owner is how one account ends up
+    reading another's data."""
+
+
+def current_user_id(conn: sqlite3.Connection, request: Request | None = None) -> int:
+    """The user this request acts as.
+
+    Deliberately fails closed: if there is no unambiguous pre-identity
+    owner row, this raises instead of guessing, and the route returns 500
+    rather than operating on somebody's data by accident.
+    """
+    user_id = repo.unlinked_user_id(conn)
+    if user_id is None:
+        raise NoCurrentUser("no unambiguous current user; sign-in is required")
+    return user_id
+
+
+def _todays_classes(conn, *, user_id: int, now: datetime) -> list:
     """Today's classes, computed on demand from the weekly pattern. Failing
     softly on purpose: a timetable problem must not blank the whole
     dashboard, whose deadline data is unaffected and still correct."""
     try:
-        rows = repo.list_timetable_events(conn)
+        rows = repo.list_timetable_events(conn, user_id=user_id)
         return occurrences_for_local_day(
             [weekly_class_from_row(row) for row in rows], instant=now
         )
@@ -58,28 +89,40 @@ def create_app(db_path: Path) -> FastAPI:
         week_end_iso = utc_iso(now + timedelta(days=7))
 
         with connect_closing(db_path) as conn:
-            classes_today = _todays_classes(conn, now=now)
-            announcements = repo.open_announcements(conn, limit=ANNOUNCEMENT_PREVIEW_LIMIT)
-            personal_tasks = repo.manual_tasks(conn)
-            overdue = repo.overdue_tasks(conn, now=now_iso)
-            missed = repo.missed_tasks(conn, limit=MISSED_SECTION_PREVIEW_LIMIT)
-            missed_total = repo.count_missed_tasks(conn)
-            due_today = repo.tasks_due_between(conn, start_iso=now_iso, end_iso=end_of_today_iso)
+            user_id = current_user_id(conn, request)
+            classes_today = _todays_classes(conn, user_id=user_id, now=now)
+            announcements = repo.open_announcements(
+                conn, user_id=user_id, limit=ANNOUNCEMENT_PREVIEW_LIMIT
+            )
+            personal_tasks = repo.manual_tasks(conn, user_id=user_id)
+            overdue = repo.overdue_tasks(conn, user_id=user_id, now=now_iso)
+            missed = repo.missed_tasks(
+                conn, user_id=user_id, limit=MISSED_SECTION_PREVIEW_LIMIT
+            )
+            missed_total = repo.count_missed_tasks(conn, user_id=user_id)
+            due_today = repo.tasks_due_between(
+                conn, user_id=user_id, start_iso=now_iso, end_iso=end_of_today_iso
+            )
             due_today_ids = {t["id"] for t in due_today}
             due_soon = [
-                t for t in repo.tasks_due_between(conn, start_iso=now_iso, end_iso=week_end_iso)
+                t for t in repo.tasks_due_between(
+                    conn, user_id=user_id, start_iso=now_iso, end_iso=week_end_iso
+                )
                 if t["id"] not in due_today_ids
             ]
             needs_planning = conn.execute(
                 """SELECT tasks.*, courses.course_code, courses.name AS course_name
                    FROM tasks JOIN courses ON courses.id = tasks.course_id
-                   WHERE kind = 'ACTIONABLE' AND actual_deadline IS NULL
+                   WHERE tasks.user_id = ? AND kind = 'ACTIONABLE' AND actual_deadline IS NULL
                    AND personal_deadline IS NULL AND status NOT IN ('COMPLETED', 'CANCELLED')
-                   ORDER BY created_at DESC"""
+                   ORDER BY created_at DESC""",
+                (user_id,),
             ).fetchall()
-            needs_personal_target = repo.tasks_missing_personal_target(conn)
-            scheduled_reminders = repo.upcoming_scheduled_reminders(conn, now=now_iso)
-            recently_completed = repo.recently_completed_tasks(conn)
+            needs_personal_target = repo.tasks_missing_personal_target(conn, user_id=user_id)
+            scheduled_reminders = repo.upcoming_scheduled_reminders(
+                conn, user_id=user_id, now=now_iso
+            )
+            recently_completed = repo.recently_completed_tasks(conn, user_id=user_id)
 
         priority = due_today[0] if due_today else (overdue[0] if overdue else (due_soon[0] if due_soon else None))
 
@@ -107,28 +150,34 @@ def create_app(db_path: Path) -> FastAPI:
     @app.get("/missed")
     def missed_full(request: Request):
         with connect_closing(db_path) as conn:
-            missed = repo.missed_tasks(conn)  # no limit - the full, unfiltered list
+            # No limit - this user's full list, still only this user's.
+            missed = repo.missed_tasks(conn, user_id=current_user_id(conn, request))
 
         return templates.TemplateResponse(request, "missed.html", {"missed": missed})
 
     @app.get("/brief")
-    def brief():
+    def brief(request: Request):
         from fastapi.responses import PlainTextResponse
 
         from ragra.brief import build_deterministic_brief
 
         with connect_closing(db_path) as conn:
-            text = build_deterministic_brief(conn, now=datetime.now(timezone.utc))
+            text = build_deterministic_brief(
+                conn, user_id=current_user_id(conn, request), now=datetime.now(timezone.utc)
+            )
         return PlainTextResponse(text)
 
     @app.get("/tasks/{task_id}")
     def task_detail(request: Request, task_id: int):
         with connect_closing(db_path) as conn:
-            task = repo.get_task_by_id(conn, task_id=task_id)
+            user_id = current_user_id(conn, request)
+            # Scoped lookup: another user's task id is indistinguishable from
+            # a nonexistent one, so this is a 404 and not a disclosure.
+            task = repo.get_task_by_id(conn, user_id=user_id, task_id=task_id)
             if task is None:
                 raise HTTPException(status_code=404, detail="Task not found")
-            reminders = repo.reminders_for_task(conn, task_id=task_id)
-            history = repo.history_for_task(conn, task_id=task_id)
+            reminders = repo.reminders_for_task(conn, user_id=user_id, task_id=task_id)
+            history = repo.history_for_task(conn, user_id=user_id, task_id=task_id)
 
         return templates.TemplateResponse(
             request,
@@ -137,20 +186,26 @@ def create_app(db_path: Path) -> FastAPI:
         )
 
     @app.post("/tasks/{task_id}/complete")
-    def complete_task(task_id: int):
+    def complete_task(request: Request, task_id: int):
         with connect_closing(db_path) as conn:
-            repo.mark_completed(conn, task_id=task_id)
-            repo.cancel_pending_reminders(conn, task_id=task_id)
+            user_id = current_user_id(conn, request)
+            repo.mark_completed(conn, user_id=user_id, task_id=task_id)
+            repo.cancel_pending_reminders(conn, user_id=user_id, task_id=task_id)
         return RedirectResponse("/", status_code=303)
 
     @app.post("/tasks/{task_id}/personal-deadline")
-    def set_personal_deadline(task_id: int, personal_deadline: str = Form(...)):
+    def set_personal_deadline(
+        request: Request, task_id: int, personal_deadline: str = Form(...)
+    ):
         # Allowed on every task, Classroom-sourced included: a personal
         # completion target is Ragra-owned data about the user's own plan and
         # never touches anything Classroom is authoritative for. See
         # docs/INTERFACES.md contract #5.
         with connect_closing(db_path) as conn:
-            repo.set_personal_deadline(conn, task_id=task_id, personal_deadline=personal_deadline)
+            repo.set_personal_deadline(
+                conn, user_id=current_user_id(conn, request), task_id=task_id,
+                personal_deadline=personal_deadline,
+            )
         return RedirectResponse("/", status_code=303)
 
     # --- Manual tasks -----------------------------------------------------
@@ -165,11 +220,12 @@ def create_app(db_path: Path) -> FastAPI:
     @app.get("/tasks")
     def tasks_page(request: Request):
         with connect_closing(db_path) as conn:
-            personal = repo.manual_tasks(conn)
+            personal = repo.manual_tasks(conn, user_id=current_user_id(conn, request))
         return templates.TemplateResponse(request, "tasks.html", {"tasks": personal})
 
     @app.post("/tasks/new")
     def create_task(
+        request: Request,
         title: str = Form(...),
         description: str = Form(""),
         actual_deadline: str = Form(""),
@@ -179,6 +235,7 @@ def create_app(db_path: Path) -> FastAPI:
             try:
                 repo.create_manual_task(
                     conn,
+                    user_id=current_user_id(conn, request),
                     title=title,
                     description=description or None,
                     actual_deadline=_clean_deadline(actual_deadline),
@@ -190,6 +247,7 @@ def create_app(db_path: Path) -> FastAPI:
 
     @app.post("/tasks/{task_id}/edit")
     def edit_task(
+        request: Request,
         task_id: int,
         title: str = Form(...),
         description: str = Form(""),
@@ -199,6 +257,7 @@ def create_app(db_path: Path) -> FastAPI:
             try:
                 repo.update_manual_task(
                     conn,
+                    user_id=current_user_id(conn, request),
                     task_id=task_id,
                     title=title,
                     description=description or None,
@@ -211,13 +270,14 @@ def create_app(db_path: Path) -> FastAPI:
         return RedirectResponse("/tasks", status_code=303)
 
     @app.post("/tasks/{task_id}/cancel")
-    def cancel_task(task_id: int):
+    def cancel_task(request: Request, task_id: int):
         with connect_closing(db_path) as conn:
+            user_id = current_user_id(conn, request)
             try:
-                repo.cancel_task(conn, task_id=task_id)
+                repo.cancel_task(conn, user_id=user_id, task_id=task_id)
             except repo.TaskSourceViolation as exc:
                 raise HTTPException(status_code=403, detail=str(exc)) from exc
-            repo.cancel_pending_reminders(conn, task_id=task_id)
+            repo.cancel_pending_reminders(conn, user_id=user_id, task_id=task_id)
         return RedirectResponse("/tasks", status_code=303)
 
     # --- Announcements ----------------------------------------------------
@@ -229,11 +289,12 @@ def create_app(db_path: Path) -> FastAPI:
     @app.get("/announcements")
     def announcements_page(request: Request):
         with connect_closing(db_path) as conn:
-            rows = repo.open_announcements(conn)
+            rows = repo.open_announcements(conn, user_id=current_user_id(conn, request))
         return templates.TemplateResponse(request, "announcements.html", {"announcements": rows})
 
     @app.post("/announcements/{task_id}/create-task")
     def create_task_from_announcement(
+        request: Request,
         task_id: int,
         title: str = Form(""),
         actual_deadline: str = Form(""),
@@ -243,6 +304,7 @@ def create_app(db_path: Path) -> FastAPI:
             try:
                 repo.create_task_from_announcement(
                     conn,
+                    user_id=current_user_id(conn, request),
                     announcement_task_id=task_id,
                     title=title.strip() or None,
                     actual_deadline=_clean_deadline(actual_deadline),
@@ -253,15 +315,19 @@ def create_app(db_path: Path) -> FastAPI:
         return RedirectResponse("/announcements", status_code=303)
 
     @app.post("/announcements/{task_id}/archive")
-    def archive_announcement(task_id: int):
+    def archive_announcement(request: Request, task_id: int):
         with connect_closing(db_path) as conn:
-            repo.archive_task(conn, task_id=task_id)
+            repo.archive_task(
+                conn, user_id=current_user_id(conn, request), task_id=task_id
+            )
         return RedirectResponse("/announcements", status_code=303)
 
     @app.get("/deliveries")
     def deliveries(request: Request):
         with connect_closing(db_path) as conn:
-            rows = repo.recent_notification_deliveries(conn, limit=100)
+            rows = repo.recent_notification_deliveries(
+                conn, user_id=current_user_id(conn, request), limit=100
+            )
         return templates.TemplateResponse(request, "deliveries.html", {"deliveries": rows})
 
     return app

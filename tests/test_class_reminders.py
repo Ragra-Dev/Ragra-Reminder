@@ -17,6 +17,8 @@ from ragra.reminders.class_reminders import (
     schedule_class_reminders,
 )
 
+from tests.support import owner_id
+
 # 2026-09-07 is a Monday. 08:30 PKT == 03:30 UTC.
 CLASS_START_UTC = datetime(2026, 9, 7, 3, 30, tzinfo=timezone.utc)
 
@@ -49,7 +51,7 @@ def _add_class(conn, *, external_id="tt-1", day_of_week=0, start="08:30", end="0
         status=status,
         source_spreadsheet_id="sheet-1",
         source_sheet_gid="1",
-        source_sheet_title="Monday",
+        source_sheet_title="Monday", user_id=owner_id(conn),
     )
 
 
@@ -61,10 +63,10 @@ def test_class_within_the_window_is_claimed_once(conn):
     _add_class(conn)
     now = CLASS_START_UTC - timedelta(minutes=30)
 
-    assert schedule_class_reminders(conn, now=now) == 1
+    assert schedule_class_reminders(conn, now=now, user_id=owner_id(conn)) == 1
     # Re-running the tick claims nothing new - the occurrence is already
     # accounted for, so it can never be announced twice.
-    assert schedule_class_reminders(conn, now=now) == 0
+    assert schedule_class_reminders(conn, now=now, user_id=owner_id(conn)) == 0
     assert len(_pending(conn)) == 1
 
 
@@ -72,7 +74,7 @@ def test_class_outside_the_window_is_not_claimed_yet(conn):
     _add_class(conn)
     now = CLASS_START_UTC - timedelta(hours=6)
 
-    assert schedule_class_reminders(conn, now=now) == 0
+    assert schedule_class_reminders(conn, now=now, user_id=owner_id(conn)) == 0
     assert _pending(conn) == []
 
 
@@ -80,17 +82,17 @@ def test_cancelled_class_never_produces_a_reminder(conn):
     _add_class(conn, status="CANCELLED")
     now = CLASS_START_UTC - timedelta(minutes=30)
 
-    assert schedule_class_reminders(conn, now=now) == 0
+    assert schedule_class_reminders(conn, now=now, user_id=owner_id(conn)) == 0
     assert _pending(conn) == []
 
 
 def test_claimed_reminder_is_delivered_through_the_provider_layer(conn):
     _add_class(conn)
     now = CLASS_START_UTC - timedelta(minutes=30)
-    schedule_class_reminders(conn, now=now)
+    schedule_class_reminders(conn, now=now, user_id=owner_id(conn))
 
     provider = RecordingProvider()
-    summary = dispatch_class_reminders(conn, providers=[provider], now=now)
+    summary = dispatch_class_reminders(conn, providers=[provider], now=now, user_id=owner_id(conn))
 
     assert summary.sent == 1
     assert len(provider.calls) == 1
@@ -105,9 +107,9 @@ def test_a_sent_reminder_is_never_sent_again(conn):
     now = CLASS_START_UTC - timedelta(minutes=30)
     provider = RecordingProvider()
 
-    run_class_reminders(conn, providers=[provider], now=now)
-    run_class_reminders(conn, providers=[provider], now=now + timedelta(minutes=5))
-    run_class_reminders(conn, providers=[provider], now=now + timedelta(minutes=10))
+    run_class_reminders(conn, providers=[provider], now=now, user_id=owner_id(conn))
+    run_class_reminders(conn, providers=[provider], now=now + timedelta(minutes=5), user_id=owner_id(conn))
+    run_class_reminders(conn, providers=[provider], now=now + timedelta(minutes=10), user_id=owner_id(conn))
 
     assert len(provider.calls) == 1
 
@@ -115,11 +117,11 @@ def test_a_sent_reminder_is_never_sent_again(conn):
 def test_reminder_for_a_class_that_already_started_is_expired_not_sent(conn):
     _add_class(conn)
     now = CLASS_START_UTC - timedelta(minutes=30)
-    schedule_class_reminders(conn, now=now)
+    schedule_class_reminders(conn, now=now, user_id=owner_id(conn))
 
     provider = RecordingProvider()
     summary = dispatch_class_reminders(
-        conn, providers=[provider], now=CLASS_START_UTC + timedelta(minutes=1)
+        conn, providers=[provider], now=CLASS_START_UTC + timedelta(minutes=1), user_id=owner_id(conn)
     )
 
     assert provider.calls == []  # a late "starts soon" alert is worse than none
@@ -130,9 +132,9 @@ def test_reminder_for_a_class_that_already_started_is_expired_not_sent(conn):
 def test_no_provider_configured_leaves_the_reminder_pending(conn):
     _add_class(conn)
     now = CLASS_START_UTC - timedelta(minutes=30)
-    schedule_class_reminders(conn, now=now)
+    schedule_class_reminders(conn, now=now, user_id=owner_id(conn))
 
-    summary = dispatch_class_reminders(conn, providers=[], now=now)
+    summary = dispatch_class_reminders(conn, providers=[], now=now, user_id=owner_id(conn))
 
     assert summary.skipped_not_configured == 1
     assert _pending(conn)[0]["status"] == "PENDING"  # goes out once configured
@@ -141,16 +143,16 @@ def test_no_provider_configured_leaves_the_reminder_pending(conn):
 def test_failed_send_is_retried_while_the_class_is_still_ahead(conn):
     _add_class(conn)
     now = CLASS_START_UTC - timedelta(minutes=40)
-    schedule_class_reminders(conn, now=now)
+    schedule_class_reminders(conn, now=now, user_id=owner_id(conn))
 
     failing = RecordingProvider(NotifyResult(ok=False, error="channel down"))
-    first = dispatch_class_reminders(conn, providers=[failing], now=now)
+    first = dispatch_class_reminders(conn, providers=[failing], now=now, user_id=owner_id(conn))
     assert first.retrying == 1
     assert _pending(conn)[0]["status"] == "PENDING"
 
     succeeding = RecordingProvider()
     second = dispatch_class_reminders(
-        conn, providers=[succeeding], now=now + timedelta(minutes=15)
+        conn, providers=[succeeding], now=now + timedelta(minutes=15), user_id=owner_id(conn)
     )
     assert second.sent == 1
 
@@ -158,11 +160,11 @@ def test_failed_send_is_retried_while_the_class_is_still_ahead(conn):
 def test_delivers_via_any_successful_provider_when_others_fail(conn):
     _add_class(conn)
     now = CLASS_START_UTC - timedelta(minutes=30)
-    schedule_class_reminders(conn, now=now)
+    schedule_class_reminders(conn, now=now, user_id=owner_id(conn))
 
     failing = RecordingProvider(NotifyResult(ok=False, error="channel A down"))
     succeeding = RecordingProvider()
-    summary = dispatch_class_reminders(conn, providers=[failing, succeeding], now=now)
+    summary = dispatch_class_reminders(conn, providers=[failing, succeeding], now=now, user_id=owner_id(conn))
 
     assert summary.sent == 1
     assert len(failing.calls) == 1  # attempted, not skipped
@@ -171,11 +173,11 @@ def test_delivers_via_any_successful_provider_when_others_fail(conn):
 def test_stale_pending_reminder_is_expired_by_a_later_run(conn):
     _add_class(conn)
     now = CLASS_START_UTC - timedelta(minutes=30)
-    schedule_class_reminders(conn, now=now)
+    schedule_class_reminders(conn, now=now, user_id=owner_id(conn))
 
     # Nothing was configured at the time, so it sat PENDING past the class.
     summary = run_class_reminders(
-        conn, providers=[], now=CLASS_START_UTC + timedelta(hours=2)
+        conn, providers=[], now=CLASS_START_UTC + timedelta(hours=2), user_id=owner_id(conn)
     )
 
     assert summary.expired >= 1

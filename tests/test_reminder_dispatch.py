@@ -15,6 +15,8 @@ from ragra.adapters.notify import Notification, NotifyResult
 from ragra.db import repo
 from ragra.reminders.dispatch import MAX_ATTEMPTS, RETRY_DELAY, dispatch_due_reminders
 
+from tests.support import owner_id
+
 
 @dataclass
 class FakeProvider:
@@ -35,14 +37,14 @@ class FakeProvider:
 def _make_task_with_reminder(conn, *, scheduled_for, status="ACTION_REQUIRED"):
     course_id = repo.upsert_course(
         conn, external_id="course-1", name="OOP", section="BCS-3C",
-        teacher="Dr. Smith", course_code="CS1004", state="ACTIVE",
+        teacher="Dr. Smith", course_code="CS1004", state="ACTIVE", user_id=owner_id(conn),
     )
     result = repo.upsert_task_from_source(
         conn, course_id=course_id, source_type="coursework", external_id="cw-1",
         title="Assignment 2", description=None, link=None, kind="ACTIONABLE",
         actual_deadline="2026-09-10T23:59:00+00:00",
         source_published_at="2026-08-20T00:00:00+00:00",
-        source_updated_at="2026-08-20T00:00:00+00:00",
+        source_updated_at="2026-08-20T00:00:00+00:00", user_id=owner_id(conn),
     )
     task_id = result.task_id
     if status != "ACTION_REQUIRED":
@@ -50,7 +52,7 @@ def _make_task_with_reminder(conn, *, scheduled_for, status="ACTION_REQUIRED"):
         conn.commit()
     repo.insert_reminder_if_absent(
         conn, task_id=task_id, reminder_type="T_MINUS_1D",
-        scheduled_for=scheduled_for, idempotency_key=f"{task_id}:T_MINUS_1D:v1",
+        scheduled_for=scheduled_for, idempotency_key=f"{task_id}:T_MINUS_1D:v1", user_id=owner_id(conn),
     )
     return task_id
 
@@ -62,7 +64,7 @@ FUTURE = "2026-12-01T00:00:00+00:00"
 
 def test_not_configured_leaves_reminder_pending_and_is_reported(conn):
     _make_task_with_reminder(conn, scheduled_for=PAST)
-    summary = dispatch_due_reminders(conn, providers=[], now=NOW)
+    summary = dispatch_due_reminders(conn, providers=[], now=NOW, user_id=owner_id(conn))
 
     assert summary.sent == 0
     assert summary.skipped_not_configured == 1
@@ -74,7 +76,7 @@ def test_successful_send_marks_reminder_sent(conn):
     _make_task_with_reminder(conn, scheduled_for=PAST)
     provider = FakeProvider(NotifyResult(ok=True))
 
-    summary = dispatch_due_reminders(conn, providers=[provider], now=NOW)
+    summary = dispatch_due_reminders(conn, providers=[provider], now=NOW, user_id=owner_id(conn))
 
     assert summary.sent == 1
     row = conn.execute("SELECT status, sent_at FROM reminders").fetchone()
@@ -86,9 +88,9 @@ def test_dispatch_is_idempotent_never_resends_a_sent_reminder(conn):
     _make_task_with_reminder(conn, scheduled_for=PAST)
     provider = FakeProvider(NotifyResult(ok=True))
 
-    first = dispatch_due_reminders(conn, providers=[provider], now=NOW)
-    second = dispatch_due_reminders(conn, providers=[provider], now=NOW)
-    third = dispatch_due_reminders(conn, providers=[provider], now=NOW)
+    first = dispatch_due_reminders(conn, providers=[provider], now=NOW, user_id=owner_id(conn))
+    second = dispatch_due_reminders(conn, providers=[provider], now=NOW, user_id=owner_id(conn))
+    third = dispatch_due_reminders(conn, providers=[provider], now=NOW, user_id=owner_id(conn))
 
     assert first.sent == 1
     assert second.sent == 0
@@ -103,7 +105,7 @@ def test_failed_send_retries_rather_than_failing_immediately(conn):
     _make_task_with_reminder(conn, scheduled_for=PAST)
     provider = FakeProvider(NotifyResult(ok=False, error="platform rejected the message"))
 
-    first = dispatch_due_reminders(conn, providers=[provider], now=NOW)
+    first = dispatch_due_reminders(conn, providers=[provider], now=NOW, user_id=owner_id(conn))
 
     assert first.sent == 0
     assert first.retrying == 1
@@ -119,10 +121,10 @@ def test_retrying_reminder_is_not_picked_up_again_before_its_backoff_elapses(con
     _make_task_with_reminder(conn, scheduled_for=PAST)
     provider = FakeProvider(NotifyResult(ok=False, error="transient"))
 
-    dispatch_due_reminders(conn, providers=[provider], now=NOW)
+    dispatch_due_reminders(conn, providers=[provider], now=NOW, user_id=owner_id(conn))
     # Re-running immediately (before the retry backoff elapses) must not
     # attempt again - that would be a duplicate send attempt.
-    again = dispatch_due_reminders(conn, providers=[provider], now=NOW)
+    again = dispatch_due_reminders(conn, providers=[provider], now=NOW, user_id=owner_id(conn))
 
     assert again.retrying == 0
     assert again.sent == 0
@@ -141,9 +143,9 @@ def test_retry_eventually_succeeds_once_backoff_elapses(conn):
 
     provider = FakeProvider(fake_result)
 
-    dispatch_due_reminders(conn, providers=[provider], now=NOW)
+    dispatch_due_reminders(conn, providers=[provider], now=NOW, user_id=owner_id(conn))
     later = (datetime.fromisoformat(NOW) + RETRY_DELAY + timedelta(minutes=1)).isoformat()
-    result = dispatch_due_reminders(conn, providers=[provider], now=later)
+    result = dispatch_due_reminders(conn, providers=[provider], now=later, user_id=owner_id(conn))
 
     assert result.sent == 1
     assert attempts["n"] == 2  # exactly one retry attempt, not more
@@ -159,7 +161,7 @@ def test_retry_exhausted_becomes_permanently_failed_and_stops(conn):
     now_dt = datetime.fromisoformat(NOW)
     last_summary = None
     for _attempt in range(MAX_ATTEMPTS):
-        last_summary = dispatch_due_reminders(conn, providers=[provider], now=now_dt.isoformat())
+        last_summary = dispatch_due_reminders(conn, providers=[provider], now=now_dt.isoformat(), user_id=owner_id(conn))
         now_dt = now_dt + RETRY_DELAY + timedelta(minutes=1)
 
     # Exactly MAX_ATTEMPTS real send attempts happened - no duplicates, no
@@ -174,7 +176,7 @@ def test_retry_exhausted_becomes_permanently_failed_and_stops(conn):
     # A FAILED reminder is never picked up again, even long after the
     # backoff window - it is a genuinely terminal, surfaced failure.
     far_future = (now_dt + timedelta(days=1)).isoformat()
-    final = dispatch_due_reminders(conn, providers=[provider], now=far_future)
+    final = dispatch_due_reminders(conn, providers=[provider], now=far_future, user_id=owner_id(conn))
     assert final.sent == 0
     assert final.retrying == 0
     assert final.permanently_failed == 0
@@ -185,7 +187,7 @@ def test_future_reminder_is_not_dispatched_yet(conn):
     _make_task_with_reminder(conn, scheduled_for=FUTURE)
     provider = FakeProvider(NotifyResult(ok=True))
 
-    summary = dispatch_due_reminders(conn, providers=[provider], now=NOW)
+    summary = dispatch_due_reminders(conn, providers=[provider], now=NOW, user_id=owner_id(conn))
 
     assert summary.sent == 0
     row = conn.execute("SELECT status FROM reminders").fetchone()
@@ -194,12 +196,12 @@ def test_future_reminder_is_not_dispatched_yet(conn):
 
 def test_completed_task_reminder_is_never_dispatched(conn):
     task_id = _make_task_with_reminder(conn, scheduled_for=PAST)
-    repo.mark_completed(conn, task_id=task_id)
+    repo.mark_completed(conn, task_id=task_id, user_id=owner_id(conn))
     # Even if a PENDING row somehow still exists (defense in depth - the
     # normal path also calls cancel_pending_reminders on completion).
     provider = FakeProvider(NotifyResult(ok=True))
 
-    summary = dispatch_due_reminders(conn, providers=[provider], now=NOW)
+    summary = dispatch_due_reminders(conn, providers=[provider], now=NOW, user_id=owner_id(conn))
 
     assert summary.sent == 0
     assert provider.calls == []
@@ -207,10 +209,10 @@ def test_completed_task_reminder_is_never_dispatched(conn):
 
 def test_cancelled_task_reminder_is_never_dispatched(conn):
     task_id = _make_task_with_reminder(conn, scheduled_for=PAST)
-    repo.cancel_task_from_source(conn, task_id=task_id)
+    repo.cancel_task_from_source(conn, task_id=task_id, user_id=owner_id(conn))
     provider = FakeProvider(NotifyResult(ok=True))
 
-    summary = dispatch_due_reminders(conn, providers=[provider], now=NOW)
+    summary = dispatch_due_reminders(conn, providers=[provider], now=NOW, user_id=owner_id(conn))
 
     assert summary.sent == 0
     assert provider.calls == []
@@ -224,7 +226,7 @@ def test_missed_task_reminder_is_never_dispatched(conn):
     task_id = _make_task_with_reminder(conn, scheduled_for=PAST, status="MISSED")
     provider = FakeProvider(NotifyResult(ok=True))
 
-    summary = dispatch_due_reminders(conn, providers=[provider], now=NOW)
+    summary = dispatch_due_reminders(conn, providers=[provider], now=NOW, user_id=owner_id(conn))
 
     assert summary.sent == 0
     assert provider.calls == []
@@ -236,22 +238,22 @@ def test_archived_course_reminder_is_never_dispatched(conn):
     # eligible.
     course_id = repo.upsert_course(
         conn, external_id="course-1", name="OOP", section="BCS-3C",
-        teacher="Dr. Smith", course_code="CS1004", state="ARCHIVED",
+        teacher="Dr. Smith", course_code="CS1004", state="ARCHIVED", user_id=owner_id(conn),
     )
     result = repo.upsert_task_from_source(
         conn, course_id=course_id, source_type="coursework", external_id="cw-1",
         title="Assignment 2", description=None, link=None, kind="ACTIONABLE",
         actual_deadline="2026-09-10T23:59:00+00:00",
         source_published_at="2026-08-20T00:00:00+00:00",
-        source_updated_at="2026-08-20T00:00:00+00:00",
+        source_updated_at="2026-08-20T00:00:00+00:00", user_id=owner_id(conn),
     )
     repo.insert_reminder_if_absent(
         conn, task_id=result.task_id, reminder_type="T_MINUS_1D",
-        scheduled_for=PAST, idempotency_key=f"{result.task_id}:T_MINUS_1D:v1",
+        scheduled_for=PAST, idempotency_key=f"{result.task_id}:T_MINUS_1D:v1", user_id=owner_id(conn),
     )
     provider = FakeProvider(NotifyResult(ok=True))
 
-    summary = dispatch_due_reminders(conn, providers=[provider], now=NOW)
+    summary = dispatch_due_reminders(conn, providers=[provider], now=NOW, user_id=owner_id(conn))
 
     assert summary.sent == 0
     assert provider.calls == []
@@ -266,7 +268,7 @@ def test_delivers_via_any_successful_provider_when_others_fail(conn):
     failing = FakeProvider(NotifyResult(ok=False, error="channel A down"))
     succeeding = FakeProvider(NotifyResult(ok=True))
 
-    summary = dispatch_due_reminders(conn, providers=[failing, succeeding], now=NOW)
+    summary = dispatch_due_reminders(conn, providers=[failing, succeeding], now=NOW, user_id=owner_id(conn))
 
     assert summary.sent == 1
     assert len(failing.calls) == 1  # it was attempted, not skipped
@@ -280,7 +282,7 @@ def test_retries_when_every_configured_provider_fails(conn):
     provider_a = FakeProvider(NotifyResult(ok=False, error="channel A down"))
     provider_b = FakeProvider(NotifyResult(ok=False, error="channel B down"))
 
-    summary = dispatch_due_reminders(conn, providers=[provider_a, provider_b], now=NOW)
+    summary = dispatch_due_reminders(conn, providers=[provider_a, provider_b], now=NOW, user_id=owner_id(conn))
 
     assert summary.sent == 0
     assert summary.retrying == 1
@@ -294,7 +296,7 @@ def test_personal_deadline_change_does_not_touch_reminders(conn):
     task_id = _make_task_with_reminder(conn, scheduled_for=PAST)
     before = conn.execute("SELECT id, status, scheduled_for FROM reminders").fetchall()
 
-    repo.set_personal_deadline(conn, task_id=task_id, personal_deadline="2026-09-05")
+    repo.set_personal_deadline(conn, task_id=task_id, personal_deadline="2026-09-05", user_id=owner_id(conn))
 
     after = conn.execute("SELECT id, status, scheduled_for FROM reminders").fetchall()
     assert [dict(r) for r in before] == [dict(r) for r in after]
@@ -306,7 +308,7 @@ def test_restart_recovery_reminder_state_persists_across_reconnect(tmp_path):
     db_path = tmp_path / "restart-test.db"
     conn1 = connect(db_path)
     task_id = _make_task_with_reminder(conn1, scheduled_for=PAST)
-    dispatch_due_reminders(conn1, providers=[FakeProvider(NotifyResult(ok=True))], now=NOW)
+    dispatch_due_reminders(conn1, providers=[FakeProvider(NotifyResult(ok=True))], now=NOW, user_id=owner_id(conn1))
     conn1.close()
 
     # Simulate a process restart: fresh connection to the same database file.
@@ -316,7 +318,7 @@ def test_restart_recovery_reminder_state_persists_across_reconnect(tmp_path):
 
     # And dispatch again after "restart" - still no resend.
     provider = FakeProvider(NotifyResult(ok=True))
-    summary = dispatch_due_reminders(conn2, providers=[provider], now=NOW)
+    summary = dispatch_due_reminders(conn2, providers=[provider], now=NOW, user_id=owner_id(conn2))
     assert summary.sent == 0
     assert provider.calls == []
     conn2.close()

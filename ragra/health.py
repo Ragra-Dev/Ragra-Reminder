@@ -31,38 +31,56 @@ from ragra.db import repo
 FAILURE_ALERT_THRESHOLD = 3
 
 
-def record_result(conn: sqlite3.Connection, *, component: str, success: bool, error: str | None = None) -> int:
-    """Updates the component's streak. Returns the resulting
-    consecutive_failures count (0 after a success)."""
+def record_result(
+    conn: sqlite3.Connection,
+    *,
+    user_id: int,
+    component: str,
+    success: bool,
+    error: str | None = None,
+) -> int:
+    """Updates this user's streak for the component. Returns the resulting
+    consecutive_failures count (0 after a success).
+
+    The streak is per-user (migration 0019): one user's healthy run must not
+    reset another user's failure streak, which would permanently suppress
+    the alert for a genuinely broken account."""
     now = repo.now_iso()
     if success:
         conn.execute(
-            """INSERT INTO pipeline_health (component, consecutive_failures, last_success_at, last_alert_sent_at)
-               VALUES (?, 0, ?, NULL)
-               ON CONFLICT(component) DO UPDATE SET
+            """INSERT INTO pipeline_health
+                 (user_id, component, consecutive_failures, last_success_at, last_alert_sent_at)
+               VALUES (?, ?, 0, ?, NULL)
+               ON CONFLICT(user_id, component) DO UPDATE SET
                  consecutive_failures = 0,
                  last_success_at = excluded.last_success_at,
                  last_alert_sent_at = NULL""",
-            (component, now),
+            (user_id, component, now),
         )
         conn.commit()
         return 0
 
     conn.execute(
-        """INSERT INTO pipeline_health (component, consecutive_failures, last_failure_at, last_error)
-           VALUES (?, 1, ?, ?)
-           ON CONFLICT(component) DO UPDATE SET
+        """INSERT INTO pipeline_health
+             (user_id, component, consecutive_failures, last_failure_at, last_error)
+           VALUES (?, ?, 1, ?, ?)
+           ON CONFLICT(user_id, component) DO UPDATE SET
              consecutive_failures = consecutive_failures + 1,
              last_failure_at = excluded.last_failure_at,
              last_error = excluded.last_error""",
-        (component, now, error or "(no error detail)"),
+        (user_id, component, now, error or "(no error detail)"),
     )
     conn.commit()
-    row = conn.execute("SELECT consecutive_failures FROM pipeline_health WHERE component = ?", (component,)).fetchone()
+    row = conn.execute(
+        "SELECT consecutive_failures FROM pipeline_health WHERE user_id = ? AND component = ?",
+        (user_id, component),
+    ).fetchone()
     return row["consecutive_failures"]
 
 
-def check_and_alert(conn: sqlite3.Connection, *, providers: list[NotificationProvider]) -> list[str]:
+def check_and_alert(
+    conn: sqlite3.Connection, *, user_id: int, providers: list[NotificationProvider]
+) -> list[str]:
     """Sends at most one combined alert for every component that just
     crossed the threshold and hasn't already been alerted for this streak.
     Returns the component names actually alerted (empty if nothing crossed
@@ -72,8 +90,9 @@ def check_and_alert(conn: sqlite3.Connection, *, providers: list[NotificationPro
         return []
 
     rows = conn.execute(
-        "SELECT * FROM pipeline_health WHERE consecutive_failures >= ? AND last_alert_sent_at IS NULL",
-        (FAILURE_ALERT_THRESHOLD,),
+        """SELECT * FROM pipeline_health
+           WHERE user_id = ? AND consecutive_failures >= ? AND last_alert_sent_at IS NULL""",
+        (user_id, FAILURE_ALERT_THRESHOLD),
     ).fetchall()
     if not rows:
         return []
@@ -87,7 +106,7 @@ def check_and_alert(conn: sqlite3.Connection, *, providers: list[NotificationPro
 
     def _record(provider_name: str, result) -> None:
         repo.record_notification_delivery(
-            conn, provider=provider_name, ok=result.ok,
+            conn, user_id=user_id, provider=provider_name, ok=result.ok,
             category=notification.category, error=result.error,
         )
 
@@ -101,7 +120,10 @@ def check_and_alert(conn: sqlite3.Connection, *, providers: list[NotificationPro
     now = repo.now_iso()
     alerted = []
     for r in rows:
-        conn.execute("UPDATE pipeline_health SET last_alert_sent_at = ? WHERE component = ?", (now, r["component"]))
+        conn.execute(
+            "UPDATE pipeline_health SET last_alert_sent_at = ? WHERE user_id = ? AND component = ?",
+            (now, user_id, r["component"]),
+        )
         alerted.append(r["component"])
     conn.commit()
     return alerted

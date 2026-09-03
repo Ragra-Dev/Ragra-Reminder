@@ -62,6 +62,31 @@ def _build_providers(config: Config) -> list[NotificationProvider]:
     return providers
 
 
+class NoCurrentUser(RuntimeError):
+    """No acting user could be resolved. The CLI refuses to guess an owner
+    for the same reason the web layer does - picking "the first user" is how
+    one account's sync ends up writing into another's data."""
+
+
+def acting_user_id(conn) -> int:
+    """Which user this CLI invocation acts for.
+
+    Every command resolves this once and threads it explicitly through the
+    step runners, so no code path can reach the repository layer without
+    naming an owner. `tick` currently runs it for the single pre-identity
+    owner; P3-10 turns that into a loop over users, which changes this
+    resolution point rather than any runner.
+    """
+    from ragra.db import repo
+
+    user_id = repo.unlinked_user_id(conn)
+    if user_id is None:
+        raise NoCurrentUser(
+            "no unambiguous user to act for; sign-in is required before this command can run"
+        )
+    return user_id
+
+
 def cmd_classroom_status(args: argparse.Namespace) -> int:
     config = load_config()
     status = classroom_adapter.classroom_auth_status(config.classroom_paths)
@@ -106,7 +131,11 @@ def cmd_timetable_sync(args: argparse.Namespace) -> int:
 
     with connect_closing(config.db_path) as conn:
         try:
-            summary = sync_timetable(conn, client, spreadsheet_id=config.fast_timetable_spreadsheet_id)
+            summary = sync_timetable(
+                conn, client,
+                user_id=acting_user_id(conn),
+                spreadsheet_id=config.fast_timetable_spreadsheet_id,
+            )
         except (TimetableSyncError, FastTimetableAdapterError) as exc:
             print(f"Timetable sync failed - existing data left untouched: {redact_api_key(str(exc))}")
             return 1
@@ -149,7 +178,7 @@ def cmd_calendar_auth(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 
 
-def _run_classroom_sync(conn, config: Config, log) -> tuple[int, str | None]:
+def _run_classroom_sync(conn, config: Config, log, *, user_id: int) -> tuple[int, str | None]:
     try:
         client = classroom_adapter.get_classroom_client(config.classroom_paths, interactive=False)
     except classroom_adapter.ClassroomAdapterError as exc:
@@ -161,7 +190,7 @@ def _run_classroom_sync(conn, config: Config, log) -> tuple[int, str | None]:
         return 1, str(exc)
 
     try:
-        summary = sync_classroom(conn, client)
+        summary = sync_classroom(conn, client, user_id=user_id)
     except Exception as exc:  # noqa: BLE001
         log(f"Classroom sync failed unexpectedly: {exc}")
         return 1, str(exc)
@@ -185,7 +214,7 @@ def _run_classroom_sync(conn, config: Config, log) -> tuple[int, str | None]:
     return 0, None
 
 
-def _run_calendar_sync(conn, config: Config, log) -> tuple[int, str | None]:
+def _run_calendar_sync(conn, config: Config, log, *, user_id: int) -> tuple[int, str | None]:
     try:
         calendar_credentials = calendar_adapter.ensure_calendar_credentials(config.calendar_paths, interactive=False)
     except calendar_adapter.CalendarAdapterError as exc:
@@ -198,7 +227,9 @@ def _run_calendar_sync(conn, config: Config, log) -> tuple[int, str | None]:
 
     try:
         calendar_client = calendar_adapter.GoogleCalendarClient(calendar_credentials)
-        counts = sync_all_task_events(conn, calendar_client, calendar_id=config.calendar_id)
+        counts = sync_all_task_events(
+            conn, calendar_client, user_id=user_id, calendar_id=config.calendar_id
+        )
     except Exception as exc:  # noqa: BLE001 - a transient Calendar API failure must not abort the tick
         log(f"Calendar sync failed unexpectedly: {exc}")
         return 1, str(exc)
@@ -207,11 +238,11 @@ def _run_calendar_sync(conn, config: Config, log) -> tuple[int, str | None]:
     return 0, None
 
 
-def _run_reminders_dispatch(conn, config: Config, log) -> tuple[int, str | None]:
+def _run_reminders_dispatch(conn, config: Config, log, *, user_id: int) -> tuple[int, str | None]:
     now = datetime.now(timezone.utc).isoformat()
     providers = _build_providers(config)
     try:
-        summary = dispatch_due_reminders(conn, providers=providers, now=now)
+        summary = dispatch_due_reminders(conn, user_id=user_id, providers=providers, now=now)
     except Exception as exc:  # noqa: BLE001
         log(f"Reminder dispatch failed unexpectedly: {exc}")
         return 1, str(exc)
@@ -235,7 +266,7 @@ def _run_reminders_dispatch(conn, config: Config, log) -> tuple[int, str | None]
     return 0, None
 
 
-def _run_class_reminders(conn, config: Config, log) -> tuple[int, str | None]:
+def _run_class_reminders(conn, config: Config, log, *, user_id: int) -> tuple[int, str | None]:
     """Announce classes starting shortly. Runs after timetable sync so it
     always reasons about the freshest pattern, and computes occurrences on
     demand - nothing about a future class is stored (see
@@ -244,7 +275,9 @@ def _run_class_reminders(conn, config: Config, log) -> tuple[int, str | None]:
 
     providers = _build_providers(config)
     try:
-        summary = run_class_reminders(conn, providers=providers, now=datetime.now(timezone.utc))
+        summary = run_class_reminders(
+            conn, user_id=user_id, providers=providers, now=datetime.now(timezone.utc)
+        )
     except Exception as exc:  # noqa: BLE001
         log(f"Class reminders failed unexpectedly: {exc}")
         return 1, str(exc)
@@ -259,7 +292,7 @@ def _run_class_reminders(conn, config: Config, log) -> tuple[int, str | None]:
     return 0, None
 
 
-def _run_timetable_sync(conn, config: Config, log) -> tuple[int, str | None]:
+def _run_timetable_sync(conn, config: Config, log, *, user_id: int) -> tuple[int, str | None]:
     if not config.fast_timetable_spreadsheet_id:
         log("Timetable sync skipped - RAGRA_FAST_TIMETABLE_SPREADSHEET_ID not set. See .env.example.")
         return 0, None
@@ -269,7 +302,9 @@ def _run_timetable_sync(conn, config: Config, log) -> tuple[int, str | None]:
 
     client = FastTimetableClient(config.fast_timetable_spreadsheet_id, config.sheets_api_key)
     try:
-        summary = sync_timetable(conn, client, spreadsheet_id=config.fast_timetable_spreadsheet_id)
+        summary = sync_timetable(
+            conn, client, user_id=user_id, spreadsheet_id=config.fast_timetable_spreadsheet_id
+        )
     except (TimetableSyncError, FastTimetableAdapterError) as exc:
         # Defense in depth: the adapter already redacts the key at its own
         # raise sites, but this also sanitizes here so nothing this
@@ -297,8 +332,9 @@ def _run_timetable_sync(conn, config: Config, log) -> tuple[int, str | None]:
 def cmd_sync(args: argparse.Namespace) -> int:
     config = load_config()
     with connect_closing(config.db_path) as conn:
-        classroom_rc, _ = _run_classroom_sync(conn, config, print)
-        calendar_rc, _ = _run_calendar_sync(conn, config, print)
+        user_id = acting_user_id(conn)
+        classroom_rc, _ = _run_classroom_sync(conn, config, print, user_id=user_id)
+        calendar_rc, _ = _run_calendar_sync(conn, config, print, user_id=user_id)
     return classroom_rc or calendar_rc
 
 
@@ -306,8 +342,9 @@ def cmd_reminders(args: argparse.Namespace) -> int:
     config = load_config()
     now = datetime.now(timezone.utc).isoformat()
     with connect_closing(config.db_path) as conn:
+        user_id = acting_user_id(conn)
         if args.dry_run:
-            previews = preview_due_reminders(conn, now=now)
+            previews = preview_due_reminders(conn, user_id=user_id, now=now)
             if not previews:
                 print("No reminders are due right now.")
                 return 0
@@ -324,7 +361,7 @@ def cmd_reminders(args: argparse.Namespace) -> int:
                 "configured.)"
             )
 
-        rc, _ = _run_reminders_dispatch(conn, config, print)
+        rc, _ = _run_reminders_dispatch(conn, config, print, user_id=user_id)
         return rc
 
 
@@ -370,8 +407,12 @@ def cmd_tick(args: argparse.Namespace) -> int:
     exit_code = 0
     try:
         with connect_closing(config.db_path) as conn:
+            # Retention first, and deliberately not per-user (see
+            # repo.purge_old_tick_sessions): it prunes the whole log by age.
             cutoff = (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
             repo.purge_old_tick_sessions(conn, older_than_iso=cutoff)
+
+            user_id = acting_user_id(conn)
 
             for component, runner in (
                 ("classroom", _run_classroom_sync),
@@ -381,19 +422,24 @@ def cmd_tick(args: argparse.Namespace) -> int:
                 # After timetable sync, so it always sees the freshest pattern.
                 ("class_reminders", _run_class_reminders),
             ):
-                rc, error = runner(conn, config, _capturing_log(component))
-                health.record_result(conn, component=component, success=(rc == 0), error=error)
+                rc, error = runner(conn, config, _capturing_log(component), user_id=user_id)
+                health.record_result(
+                    conn, user_id=user_id, component=component, success=(rc == 0), error=error
+                )
                 if rc:
                     exit_code = 1
                     if error:
                         tick_errors.append(f"{component}: {error}")
 
-            alerted = health.check_and_alert(conn, providers=_build_providers(config))
+            alerted = health.check_and_alert(
+                conn, user_id=user_id, providers=_build_providers(config)
+            )
             if alerted:
                 logger.info("health alert sent for: %s", ", ".join(alerted))
 
             repo.record_tick_session(
                 conn,
+                user_id=user_id,
                 started_at=started_at,
                 finished_at=datetime.now(timezone.utc).isoformat(),
                 duration_seconds=time.monotonic() - started,
@@ -412,6 +458,7 @@ def cmd_tick(args: argparse.Namespace) -> int:
             with connect_closing(config.db_path) as conn:
                 repo.record_tick_session(
                     conn,
+                    user_id=acting_user_id(conn),
                     started_at=started_at,
                     finished_at=datetime.now(timezone.utc).isoformat(),
                     duration_seconds=time.monotonic() - started,
@@ -436,10 +483,11 @@ def cmd_brief(args: argparse.Namespace) -> int:
     config = load_config()
     now = datetime.now(timezone.utc)
     with connect_closing(config.db_path) as conn:
+        user_id = acting_user_id(conn)
         if args.ai:
-            print(build_full_brief(conn, now=now, hermes_bin=config.hermes_bin))
+            print(build_full_brief(conn, user_id=user_id, now=now, hermes_bin=config.hermes_bin))
         else:
-            print(build_deterministic_brief(conn, now=now))
+            print(build_deterministic_brief(conn, user_id=user_id, now=now))
     return 0
 
 
@@ -457,7 +505,11 @@ def cmd_plan(args: argparse.Namespace) -> int:
             from ragra.ai.advisor import ask_for_priorities
 
             result = ask_for_priorities(
-                conn, hermes_bin=config.hermes_bin, now_iso=now.isoformat(), week_end_iso=week_end.isoformat()
+                conn,
+                user_id=acting_user_id(conn),
+                hermes_bin=config.hermes_bin,
+                now_iso=now.isoformat(),
+                week_end_iso=week_end.isoformat(),
             )
         except ImportError as exc:
             print("AI advisor is not available:", exc)

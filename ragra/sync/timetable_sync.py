@@ -70,23 +70,32 @@ def sync_timetable(
     conn: sqlite3.Connection,
     client: FastTimetableClient,
     *,
+    user_id: int,
     spreadsheet_id: str,
     enrollment: tuple[EnrolledCourse, ...] | None = None,
 ) -> TimetableSyncSummary:
+    """Reconcile the shared FAST timetable into ONE user's timetable_events.
+
+    The spreadsheet itself is a public university artifact, but which of its
+    classes belong to a person is decided by that person's enrollment, so
+    every stored row is owned: two users in different sections legitimately
+    derive different (and overlapping) external_ids from the same source
+    sheet, which is why migration 0015 made external_id unique per user
+    rather than globally."""
     profile = load_profile()
     if enrollment is None:
         enrollment = profile.enrollment_config["enrollment"]
-    repo.record_sync_start(conn, source="timetable")
+    repo.record_sync_start(conn, user_id=user_id, source="timetable")
 
     try:
         weekday_tabs = client.discover_tabs()
     except (FastTimetableAdapterError, AmbiguousTimetableStructureError) as exc:
-        repo.record_sync_error(conn, source="timetable", error=str(exc))
+        repo.record_sync_error(conn, user_id=user_id, source="timetable", error=str(exc))
         raise TimetableSyncError(str(exc)) from exc
 
     if not weekday_tabs:
         msg = "No weekday tabs could be identified in the FAST timetable source."
-        repo.record_sync_error(conn, source="timetable", error=msg)
+        repo.record_sync_error(conn, user_id=user_id, source="timetable", error=msg)
         raise TimetableSyncError(msg)
 
     day_grids: list[tuple[int, SheetInfo, list[ExtractedClass]]] = []
@@ -94,7 +103,7 @@ def sync_timetable(
         try:
             grid = client.get_values(sheet.title)
         except FastTimetableAdapterError as exc:
-            repo.record_sync_error(conn, source="timetable", error=str(exc))
+            repo.record_sync_error(conn, user_id=user_id, source="timetable", error=str(exc))
             raise TimetableSyncError(str(exc)) from exc
         day_grids.append((day, sheet, extract_classes_from_grid(grid, day_of_week=day)))
 
@@ -140,6 +149,7 @@ def sync_timetable(
             status = "CANCELLED" if matched.cancelled else "SCHEDULED"
             result = repo.upsert_timetable_event(
                 conn,
+                user_id=user_id,
                 external_id=external_id,
                 course_name=course_name,
                 program=profile.program,
@@ -165,8 +175,10 @@ def sync_timetable(
                 summary.classes_unchanged += 1
 
     summary.classes_cancelled = len(
-        repo.cancel_timetable_events_missing_from_source(conn, seen_external_ids=seen_external_ids)
+        repo.cancel_timetable_events_missing_from_source(
+            conn, user_id=user_id, seen_external_ids=seen_external_ids
+        )
     )
 
-    repo.record_sync_success(conn, source="timetable")
+    repo.record_sync_success(conn, user_id=user_id, source="timetable")
     return summary

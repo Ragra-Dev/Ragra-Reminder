@@ -16,6 +16,8 @@ from ragra.db import repo
 from ragra.sync.classroom_sync import sync_classroom
 from tests.test_classroom_sync import COURSE, FakeClient
 
+from tests.support import owner_id
+
 
 def _due_at(dt: datetime) -> dict:
     return {"year": dt.year, "month": dt.month, "day": dt.day}
@@ -42,7 +44,7 @@ def test_historical_overdue_assignment_imported_first_time_gets_no_reminders(con
     long_past_due = datetime.now(timezone.utc) - timedelta(days=200)
     client = FakeClient([COURSE], coursework={"course-1": [_assignment("cw-hist", "Old Homework", long_past_due)]})
 
-    sync_classroom(conn, client)
+    sync_classroom(conn, client, user_id=owner_id(conn))
 
     task = conn.execute("SELECT * FROM tasks WHERE external_id = 'cw-hist'").fetchone()
     reminders = conn.execute("SELECT * FROM reminders WHERE task_id = ?", (task["id"],)).fetchall()
@@ -65,7 +67,7 @@ def test_newly_discovered_overdue_assignment_behaves_normally_ie_no_backlog_floo
     slightly_past_due = datetime.now(timezone.utc) - timedelta(hours=2)
     client = FakeClient([COURSE], coursework={"course-1": [_assignment("cw-recent", "Just Missed It", slightly_past_due)]})
 
-    sync_classroom(conn, client)
+    sync_classroom(conn, client, user_id=owner_id(conn))
 
     task = conn.execute("SELECT * FROM tasks WHERE external_id = 'cw-recent'").fetchone()
     reminders = conn.execute("SELECT * FROM reminders WHERE task_id = ?", (task["id"],)).fetchall()
@@ -76,7 +78,7 @@ def test_future_assignment_gets_normal_reminder_cadence(conn):
     due_in_10_days = datetime.now(timezone.utc) + timedelta(days=10)
     client = FakeClient([COURSE], coursework={"course-1": [_assignment("cw-future", "Upcoming Work", due_in_10_days)]})
 
-    sync_classroom(conn, client)
+    sync_classroom(conn, client, user_id=owner_id(conn))
 
     task = conn.execute("SELECT * FROM tasks WHERE external_id = 'cw-future'").fetchone()
     reminders = conn.execute(
@@ -92,10 +94,10 @@ def test_repeated_sync_produces_no_duplicate_reminders(conn):
     due_in_10_days = datetime.now(timezone.utc) + timedelta(days=10)
     client = FakeClient([COURSE], coursework={"course-1": [_assignment("cw-future", "Upcoming Work", due_in_10_days)]})
 
-    sync_classroom(conn, client)
+    sync_classroom(conn, client, user_id=owner_id(conn))
     count1 = conn.execute("SELECT COUNT(*) AS c FROM reminders").fetchone()["c"]
-    sync_classroom(conn, client)
-    sync_classroom(conn, client)
+    sync_classroom(conn, client, user_id=owner_id(conn))
+    sync_classroom(conn, client, user_id=owner_id(conn))
     count2 = conn.execute("SELECT COUNT(*) AS c FROM reminders").fetchone()["c"]
 
     assert count1 > 0
@@ -113,19 +115,19 @@ def test_completed_and_cancelled_tasks_never_produce_notifications(conn):
             ]
         },
     )
-    sync_classroom(conn, client)
+    sync_classroom(conn, client, user_id=owner_id(conn))
     done_task = conn.execute("SELECT id FROM tasks WHERE external_id = 'cw-done'").fetchone()
     gone_task = conn.execute("SELECT id FROM tasks WHERE external_id = 'cw-gone'").fetchone()
 
-    repo.mark_completed(conn, task_id=done_task["id"])
-    repo.cancel_pending_reminders(conn, task_id=done_task["id"])
-    repo.cancel_task_from_source(conn, task_id=gone_task["id"])
-    repo.cancel_pending_reminders(conn, task_id=gone_task["id"])
+    repo.mark_completed(conn, task_id=done_task["id"], user_id=owner_id(conn))
+    repo.cancel_pending_reminders(conn, task_id=done_task["id"], user_id=owner_id(conn))
+    repo.cancel_task_from_source(conn, task_id=gone_task["id"], user_id=owner_id(conn))
+    repo.cancel_pending_reminders(conn, task_id=gone_task["id"], user_id=owner_id(conn))
 
     from ragra.reminders.dispatch import preview_due_reminders
 
     far_future_now = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
-    previews = preview_due_reminders(conn, now=far_future_now)
+    previews = preview_due_reminders(conn, now=far_future_now, user_id=owner_id(conn))
     assert previews == []
 
 
@@ -136,7 +138,7 @@ def test_restart_preserves_backlog_suppressed_state(tmp_path):
     conn1 = connect(db_path)
     long_past_due = datetime.now(timezone.utc) - timedelta(days=200)
     client = FakeClient([COURSE], coursework={"course-1": [_assignment("cw-hist", "Old Homework", long_past_due)]})
-    sync_classroom(conn1, client)
+    sync_classroom(conn1, client, user_id=owner_id(conn1))
     conn1.close()
 
     conn2 = connect(db_path)
@@ -144,7 +146,7 @@ def test_restart_preserves_backlog_suppressed_state(tmp_path):
     reminders = conn2.execute("SELECT * FROM reminders WHERE task_id = ?", (task["id"],)).fetchall()
     assert reminders == []
     # Re-sync after "restart" - still no reminders resurrected.
-    sync_classroom(conn2, client)
+    sync_classroom(conn2, client, user_id=owner_id(conn2))
     reminders_after = conn2.execute("SELECT * FROM reminders WHERE task_id = ?", (task["id"],)).fetchall()
     assert reminders_after == []
     conn2.close()
@@ -157,18 +159,18 @@ def test_reconciliation_self_heals_reminders_scheduled_under_the_old_buggy_rule(
     up without touching a legitimately-current task's reminders."""
     course_id = repo.upsert_course(
         conn, external_id="course-1", name="OOP", section="BCS-3C",
-        teacher="Dr. Smith", course_code="CS1004", state="ACTIVE",
+        teacher="Dr. Smith", course_code="CS1004", state="ACTIVE", user_id=owner_id(conn),
     )
     long_past_due = (datetime.now(timezone.utc) - timedelta(days=200)).isoformat()
     bad = repo.upsert_task_from_source(
         conn, course_id=course_id, source_type="coursework", external_id="cw-bad",
         title="Bad Historical Task", description=None, link=None, kind="ACTIONABLE",
         actual_deadline=long_past_due,
-        source_published_at="2020-01-01T00:00:00+00:00", source_updated_at="2020-01-01T00:00:00+00:00",
+        source_published_at="2020-01-01T00:00:00+00:00", source_updated_at="2020-01-01T00:00:00+00:00", user_id=owner_id(conn),
     )
     repo.insert_reminder_if_absent(
         conn, task_id=bad.task_id, reminder_type="T_MINUS_1D",
-        scheduled_for="2020-01-05T00:00:00+00:00", idempotency_key="bad-key-1",
+        scheduled_for="2020-01-05T00:00:00+00:00", idempotency_key="bad-key-1", user_id=owner_id(conn),
     )
 
     due_in_5_days = (datetime.now(timezone.utc) + timedelta(days=5)).isoformat()
@@ -176,14 +178,14 @@ def test_reconciliation_self_heals_reminders_scheduled_under_the_old_buggy_rule(
         conn, course_id=course_id, source_type="coursework", external_id="cw-good",
         title="Legit Current Task", description=None, link=None, kind="ACTIONABLE",
         actual_deadline=due_in_5_days,
-        source_published_at=repo.now_iso(), source_updated_at=repo.now_iso(),
+        source_published_at=repo.now_iso(), source_updated_at=repo.now_iso(), user_id=owner_id(conn),
     )
     repo.insert_reminder_if_absent(
         conn, task_id=good.task_id, reminder_type="T_MINUS_1D",
-        scheduled_for=due_in_5_days, idempotency_key="good-key-1",
+        scheduled_for=due_in_5_days, idempotency_key="good-key-1", user_id=owner_id(conn),
     )
 
-    cancelled_count = repo.cancel_backlog_reminders_for_already_overdue_tasks(conn)
+    cancelled_count = repo.cancel_backlog_reminders_for_already_overdue_tasks(conn, user_id=owner_id(conn))
     assert cancelled_count == 1
 
     bad_reminder = conn.execute("SELECT status FROM reminders WHERE idempotency_key = 'bad-key-1'").fetchone()
@@ -192,4 +194,4 @@ def test_reconciliation_self_heals_reminders_scheduled_under_the_old_buggy_rule(
     assert good_reminder["status"] == "PENDING"
 
     # Idempotent - running it again cancels nothing further.
-    assert repo.cancel_backlog_reminders_for_already_overdue_tasks(conn) == 0
+    assert repo.cancel_backlog_reminders_for_already_overdue_tasks(conn, user_id=owner_id(conn)) == 0

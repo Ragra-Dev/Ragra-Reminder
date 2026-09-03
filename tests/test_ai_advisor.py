@@ -6,11 +6,13 @@ from ragra.adapters.ai import AIAdapterError
 from ragra.ai.advisor import ask_for_priorities, build_snapshot_prompt
 from ragra.db import repo
 
+from tests.support import owner_id
+
 
 def _make_course(conn):
     return repo.upsert_course(
         conn, external_id="course-1", name="OOP", section="BCS-3C",
-        teacher="Dr. Smith", course_code="CS1004", state="ACTIVE",
+        teacher="Dr. Smith", course_code="CS1004", state="ACTIVE", user_id=owner_id(conn),
     )
 
 
@@ -21,10 +23,10 @@ def test_snapshot_prompt_is_pure_and_contains_only_real_data(conn):
         conn, course_id=course_id, source_type="coursework", external_id="cw-1",
         title="Real Assignment", description=None, link=None, kind="ACTIONABLE",
         actual_deadline=(now + timedelta(days=2)).isoformat(),
-        source_published_at=repo.now_iso(), source_updated_at=repo.now_iso(),
+        source_published_at=repo.now_iso(), source_updated_at=repo.now_iso(), user_id=owner_id(conn),
     )
 
-    prompt = build_snapshot_prompt(conn, now_iso=now.isoformat(), week_end_iso=(now + timedelta(days=7)).isoformat())
+    prompt = build_snapshot_prompt(conn, now_iso=now.isoformat(), week_end_iso=(now + timedelta(days=7)).isoformat(), user_id=owner_id(conn))
 
     assert "Real Assignment" in prompt
     assert "Do not invent" in prompt
@@ -45,7 +47,7 @@ def test_ask_for_priorities_raises_when_ai_not_configured(conn):
         ask_for_priorities(
             conn, hermes_bin=None,
             now_iso=datetime.now(timezone.utc).isoformat(),
-            week_end_iso=(datetime.now(timezone.utc) + timedelta(days=7)).isoformat(),
+            week_end_iso=(datetime.now(timezone.utc) + timedelta(days=7)).isoformat(), user_id=owner_id(conn),
         )
 
 
@@ -55,13 +57,13 @@ def test_ask_for_priorities_never_writes_to_the_database(conn, monkeypatch):
         conn, course_id=course_id, source_type="coursework", external_id="cw-1",
         title="Real Assignment", description=None, link=None, kind="ACTIONABLE",
         actual_deadline="2026-09-10T23:59:00+00:00",
-        source_published_at=repo.now_iso(), source_updated_at=repo.now_iso(),
+        source_published_at=repo.now_iso(), source_updated_at=repo.now_iso(), user_id=owner_id(conn),
     )
     before = dict(conn.execute("SELECT * FROM tasks WHERE id = ?", (result.task_id,)).fetchone())
 
     monkeypatch.setattr("ragra.ai.advisor.ask", lambda *a, **kw: "Fake AI response suggesting a fake deadline change.")
     now = datetime.now(timezone.utc)
-    ask_for_priorities(conn, hermes_bin="fake", now_iso=now.isoformat(), week_end_iso=(now + timedelta(days=7)).isoformat())
+    ask_for_priorities(conn, hermes_bin="fake", now_iso=now.isoformat(), week_end_iso=(now + timedelta(days=7)).isoformat(), user_id=owner_id(conn))
 
     after = dict(conn.execute("SELECT * FROM tasks WHERE id = ?", (result.task_id,)).fetchone())
     assert before == after

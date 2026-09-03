@@ -11,6 +11,8 @@ from ragra.db import repo
 from ragra.relevance.engine import RelevanceDecision
 from ragra.sync.classroom_sync import sync_classroom
 
+from tests.support import owner_id
+
 
 class FakeClassroomClient:
     """Minimal ClassroomClient double: one course, controllable coursework."""
@@ -58,7 +60,7 @@ def test_matching_section_is_stored_as_relevant(conn):
     client = FakeClassroomClient(
         course_name="OOP Theory", coursework=[_item("cw-1", "Lab 02 Section C")]
     )
-    summary = sync_classroom(conn, client)
+    summary = sync_classroom(conn, client, user_id=owner_id(conn))
 
     assert summary.errors == []
     assert _task(conn, "cw-1")["relevance"] == RelevanceDecision.RELEVANT.value
@@ -71,7 +73,7 @@ def test_other_section_is_stored_but_the_task_is_still_present_and_visible(conn)
     item["dueDate"] = {"year": 2026, "month": 12, "day": 1}
     item["dueTime"] = {"hours": 23, "minutes": 59}
     client = FakeClassroomClient(course_name="OOP Theory", coursework=[item])
-    sync_classroom(conn, client)
+    sync_classroom(conn, client, user_id=owner_id(conn))
 
     task = _task(conn, "cw-other")
     assert task["relevance"] == RelevanceDecision.OTHER_SECTION.value
@@ -79,14 +81,14 @@ def test_other_section_is_stored_but_the_task_is_still_present_and_visible(conn)
     assert task["relevance_reason"]  # explains itself rather than silently hiding
 
     # Still returned by the ordinary listing paths - not filtered out anywhere.
-    assert any(r["id"] == task["id"] for r in repo.tasks_missing_personal_target(conn))
+    assert any(r["id"] == task["id"] for r in repo.tasks_missing_personal_target(conn, user_id=owner_id(conn)))
 
 
 def test_ambiguous_content_is_stored_as_unknown_and_never_suppressed(conn):
     client = FakeClassroomClient(
         course_name="OOP Theory", coursework=[_item("cw-amb", "Sections A-D")]
     )
-    sync_classroom(conn, client)
+    sync_classroom(conn, client, user_id=owner_id(conn))
 
     task = _task(conn, "cw-amb")
     assert task["relevance"] == RelevanceDecision.UNKNOWN.value
@@ -97,7 +99,7 @@ def test_all_sections_announcement_is_relevant(conn):
     client = FakeClassroomClient(
         course_name="OOP Theory", coursework=[_item("cw-all", "Quiz for all sections")]
     )
-    sync_classroom(conn, client)
+    sync_classroom(conn, client, user_id=owner_id(conn))
 
     assert _task(conn, "cw-all")["relevance"] == RelevanceDecision.RELEVANT.value
 
@@ -106,14 +108,14 @@ def test_resync_does_not_churn_the_stored_decision(conn):
     client = FakeClassroomClient(
         course_name="OOP Theory", coursework=[_item("cw-1", "Lab 02 Section C")]
     )
-    sync_classroom(conn, client)
+    sync_classroom(conn, client, user_id=owner_id(conn))
     first = _task(conn, "cw-1")["relevance_computed_at"]
     history_before = conn.execute(
         "SELECT COUNT(*) AS c FROM task_history WHERE field = 'relevance'"
     ).fetchone()["c"]
 
-    sync_classroom(conn, client)
-    sync_classroom(conn, client)
+    sync_classroom(conn, client, user_id=owner_id(conn))
+    sync_classroom(conn, client, user_id=owner_id(conn))
 
     assert _task(conn, "cw-1")["relevance_computed_at"] == first  # not rewritten
     history_after = conn.execute(
@@ -126,11 +128,11 @@ def test_relevance_change_is_recorded_in_history(conn):
     client = FakeClassroomClient(
         course_name="OOP Theory", coursework=[_item("cw-1", "Lab 02 Section C")]
     )
-    sync_classroom(conn, client)
+    sync_classroom(conn, client, user_id=owner_id(conn))
 
     # The teacher retitles the item to another section.
     client._coursework = [_item("cw-1", "Lab 02 Section E", updated="2026-09-02T00:00:00Z")]
-    sync_classroom(conn, client)
+    sync_classroom(conn, client, user_id=owner_id(conn))
 
     assert _task(conn, "cw-1")["relevance"] == RelevanceDecision.OTHER_SECTION.value
     changes = conn.execute(
@@ -147,7 +149,7 @@ def test_relevance_failure_never_fails_the_sync_or_loses_the_task(conn, monkeypa
     monkeypatch.setattr("ragra.sync.classroom_sync.is_relevant", _explode)
     client = FakeClassroomClient(coursework=[_item("cw-boom", "Lab 02 Section C")])
 
-    summary = sync_classroom(conn, client)
+    summary = sync_classroom(conn, client, user_id=owner_id(conn))
 
     assert summary.errors == []  # the academic sync itself succeeded
     assert summary.warnings  # but the problem is surfaced, not swallowed silently
@@ -163,7 +165,7 @@ def test_unavailable_profile_disables_relevance_without_breaking_sync(conn, monk
     monkeypatch.setattr("ragra.sync.classroom_sync.load_profile", _explode)
     client = FakeClassroomClient(coursework=[_item("cw-noprofile", "Lab 02 Section E")])
 
-    summary = sync_classroom(conn, client)
+    summary = sync_classroom(conn, client, user_id=owner_id(conn))
 
     assert summary.errors == []
     assert summary.warnings

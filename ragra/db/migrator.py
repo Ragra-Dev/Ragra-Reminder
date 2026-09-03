@@ -29,6 +29,14 @@ from ragra.db import repo
 _MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 _FILENAME_PATTERN = re.compile(r"^(?P<version>\d{4,})_(?P<name>[A-Za-z0-9_]+)\.sql$")
 
+# A migration containing this marker is applied with foreign keys disabled and
+# is automatically verified with PRAGMA foreign_key_check before being recorded
+# as applied. Required for the create-new/copy/drop/rename rebuild that SQLite
+# forces on any change to a UNIQUE constraint, a PRIMARY KEY, or a column's
+# NOT NULL-ness. Declared in the file itself so the requirement travels with
+# the migration rather than living in a caller that could forget it.
+FOREIGN_KEYS_OFF_MARKER = "ragra:foreign-keys-off"
+
 _CREATE_MIGRATIONS_TABLE = """
 CREATE TABLE IF NOT EXISTS schema_migrations (
     version INTEGER PRIMARY KEY,
@@ -101,11 +109,43 @@ def apply_pending_migrations(conn: sqlite3.Connection, *, migrations_dir: Path |
             continue
 
         sql_text = migration.path.read_text(encoding="utf-8")
+        rebuilds_tables = FOREIGN_KEYS_OFF_MARKER in sql_text
+
+        # SQLite cannot drop a UNIQUE/PRIMARY KEY constraint or change a
+        # column to NOT NULL in place, so those changes require the documented
+        # create-new/copy/drop/rename rebuild. Dropping a table that other
+        # tables reference is only safe with foreign keys disabled, and the
+        # pragma is a no-op inside a transaction - so it is set here, from
+        # Python, rather than inside the script itself.
+        baseline_violations: set[tuple] = set()
+        if rebuilds_tables:
+            conn.execute("PRAGMA foreign_keys=OFF")
+            # Captured before the script runs so the check below can attribute
+            # a violation to *this* migration. A database that arrived already
+            # holding an orphaned row must not be blocked from upgrading by a
+            # migration that did not create the problem and cannot fix it -
+            # that would leave the only recovery path outside Ragra entirely.
+            baseline_violations = set(conn.execute("PRAGMA foreign_key_check").fetchall())
         try:
             conn.executescript(sql_text)
+            if rebuilds_tables:
+                # A rebuild that silently orphaned a child row is exactly the
+                # failure this marker exists to catch, so the check is part of
+                # applying the migration, not a separate step someone can
+                # forget to run.
+                introduced = set(conn.execute("PRAGMA foreign_key_check").fetchall()) - baseline_violations
+                if introduced:
+                    conn.rollback()
+                    raise MigrationError(
+                        f"migration {migration.path.name} introduced {len(introduced)} foreign-key "
+                        f"violation(s); refusing to record it as applied"
+                    )
         except sqlite3.Error as exc:
             conn.rollback()
             raise MigrationError(f"migration {migration.path.name} failed to apply: {exc}") from exc
+        finally:
+            if rebuilds_tables:
+                conn.execute("PRAGMA foreign_keys=ON")
 
         conn.execute(
             "INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)",

@@ -41,7 +41,7 @@ MAX_ATTEMPTS = 3
 RETRY_DELAY = timedelta(minutes=15)
 
 
-def _delivery_recorder(conn: sqlite3.Connection, notification: Notification):
+def _delivery_recorder(conn: sqlite3.Connection, user_id: int, notification: Notification):
     """Per-provider delivery recording. Lives here rather than in
     ragra/adapters/notify.py so the notification layer never touches the
     database - see docs/INTERFACES.md contract #1."""
@@ -49,6 +49,7 @@ def _delivery_recorder(conn: sqlite3.Connection, notification: Notification):
     def record(provider_name: str, result) -> None:
         repo.record_notification_delivery(
             conn,
+            user_id=user_id,
             provider=provider_name,
             ok=result.ok,
             reminder_id=notification.reminder_id,
@@ -74,12 +75,12 @@ class DispatchSummary:
         return self.retrying + self.permanently_failed
 
 
-def preview_due_reminders(conn: sqlite3.Connection, *, now: str) -> list[dict]:
+def preview_due_reminders(conn: sqlite3.Connection, *, user_id: int, now: str) -> list[dict]:
     """Non-destructive: shows exactly what dispatch_due_reminders would
     attempt to send right now - reminder type, message, and course/task -
     without sending anything or changing any reminder's status."""
     previews = []
-    for reminder in repo.due_pending_reminders(conn, now=now):
+    for reminder in repo.due_pending_reminders(conn, user_id=user_id, now=now):
         message = reminder_message(
             reminder["reminder_type"], reminder["task_title"], reminder["course_code"]
         )
@@ -98,15 +99,21 @@ def preview_due_reminders(conn: sqlite3.Connection, *, now: str) -> list[dict]:
 def dispatch_due_reminders(
     conn: sqlite3.Connection,
     *,
+    user_id: int,
     providers: list[NotificationProvider],
     now: str,
 ) -> DispatchSummary:
+    """Deliver one user's due reminders through that user's providers.
+
+    `providers` belongs to the same user as `user_id`: the reminder pool and
+    the delivery channels must be selected together, or one account's
+    deadline would be sent to another account's phone."""
     summary = DispatchSummary()
     now_dt = datetime.fromisoformat(now)
     if now_dt.tzinfo is None:
         now_dt = now_dt.replace(tzinfo=timezone.utc)
 
-    for reminder in repo.due_pending_reminders(conn, now=now):
+    for reminder in repo.due_pending_reminders(conn, user_id=user_id, now=now):
         message = reminder_message(
             reminder["reminder_type"], reminder["task_title"], reminder["course_code"]
         )
@@ -122,23 +129,27 @@ def dispatch_due_reminders(
             text=message, reminder_id=reminder["id"], category=reminder["reminder_type"]
         )
         delivered, errors = send_to_all_providers(
-            providers, notification, on_attempt=_delivery_recorder(conn, notification)
+            providers, notification, on_attempt=_delivery_recorder(conn, user_id, notification)
         )
 
         if delivered:
-            repo.mark_reminder_sent(conn, reminder_id=reminder["id"])
+            repo.mark_reminder_sent(conn, user_id=user_id, reminder_id=reminder["id"])
             summary.sent += 1
             continue
 
         error = "; ".join(errors) or "unknown error"
         attempt = reminder["attempt_count"] + 1
         if attempt >= MAX_ATTEMPTS:
-            repo.mark_reminder_failed(conn, reminder_id=reminder["id"], error=error, attempt_count=attempt)
+            repo.mark_reminder_failed(
+                conn, user_id=user_id, reminder_id=reminder["id"], error=error,
+                attempt_count=attempt,
+            )
             summary.permanently_failed += 1
         else:
             next_retry_at = (now_dt + RETRY_DELAY).isoformat()
             repo.mark_reminder_for_retry(
-                conn, reminder_id=reminder["id"], error=error, attempt_count=attempt, next_retry_at=next_retry_at
+                conn, user_id=user_id, reminder_id=reminder["id"], error=error,
+                attempt_count=attempt, next_retry_at=next_retry_at,
             )
             summary.retrying += 1
         summary.errors.append(error)

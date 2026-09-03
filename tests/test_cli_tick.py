@@ -15,6 +15,8 @@ from ragra.adapters.fast_timetable import FastTimetableAdapterError, SheetInfo
 from ragra.config import Config
 from ragra.sync.timetable_sync import TimetableSyncError
 
+from tests.support import owner_id
+
 
 def _make_config(tmp_path: Path, *, spreadsheet_id: str | None, sheets_api_key: str | None = None) -> Config:
     return Config(
@@ -80,7 +82,7 @@ def test_skips_gracefully_when_spreadsheet_id_not_configured(conn, tmp_path):
     config = _make_config(tmp_path, spreadsheet_id=None)
     lines, log = _log_capture()
 
-    rc, error = cli._run_timetable_sync(conn, config, log)
+    rc, error = cli._run_timetable_sync(conn, config, log, user_id=owner_id(conn))
 
     assert rc == 0
     assert error is None
@@ -94,7 +96,7 @@ def test_success_logs_a_single_summary_line(conn, tmp_path, monkeypatch):
     )
     lines, log = _log_capture()
 
-    rc, error = cli._run_timetable_sync(conn, config, log)
+    rc, error = cli._run_timetable_sync(conn, config, log, user_id=owner_id(conn))
 
     assert rc == 0
     assert error is None
@@ -109,7 +111,7 @@ def test_sync_failure_returns_error_without_raising(conn, tmp_path, monkeypatch)
     )
     lines, log = _log_capture()
 
-    rc, error = cli._run_timetable_sync(conn, config, log)
+    rc, error = cli._run_timetable_sync(conn, config, log, user_id=owner_id(conn))
 
     assert rc == 1
     assert error is not None
@@ -124,7 +126,7 @@ def test_unexpected_exception_is_contained_not_propagated(conn, tmp_path, monkey
     )
     lines, log = _log_capture()
 
-    rc, error = cli._run_timetable_sync(conn, config, log)
+    rc, error = cli._run_timetable_sync(conn, config, log, user_id=owner_id(conn))
 
     assert rc == 1
     assert error is not None
@@ -137,9 +139,9 @@ def test_repeated_calls_are_idempotent(conn, tmp_path, monkeypatch):
     )
 
     lines1, log1 = _log_capture()
-    rc1, _ = cli._run_timetable_sync(conn, config, log1)
+    rc1, _ = cli._run_timetable_sync(conn, config, log1, user_id=owner_id(conn))
     lines2, log2 = _log_capture()
-    rc2, _ = cli._run_timetable_sync(conn, config, log2)
+    rc2, _ = cli._run_timetable_sync(conn, config, log2, user_id=owner_id(conn))
 
     assert rc1 == 0 and rc2 == 0
     first_summary = next(line for line in lines1 if line.startswith("Timetable sync:"))
@@ -159,7 +161,7 @@ def test_ambiguous_structure_does_not_wipe_existing_data(conn, tmp_path, monkeyp
         "ragra.adapters.fast_timetable.FastTimetableClient", lambda *a, **k: FakeClient(GRID)
     )
     _, log = _log_capture()
-    cli._run_timetable_sync(conn, config, log)
+    cli._run_timetable_sync(conn, config, log, user_id=owner_id(conn))
     before = conn.execute("SELECT COUNT(*) AS c FROM timetable_events").fetchone()["c"]
     assert before == 1
 
@@ -168,7 +170,7 @@ def test_ambiguous_structure_does_not_wipe_existing_data(conn, tmp_path, monkeyp
         lambda *a, **k: FakeClient(GRID, fail_with=TimetableSyncError("no weekday tabs found")),
     )
     _, log2 = _log_capture()
-    rc, error = cli._run_timetable_sync(conn, config, log2)
+    rc, error = cli._run_timetable_sync(conn, config, log2, user_id=owner_id(conn))
 
     assert rc == 1
     after = conn.execute("SELECT COUNT(*) AS c FROM timetable_events").fetchone()["c"]
@@ -185,7 +187,7 @@ def test_api_key_never_appears_in_a_failure_log_line(conn, tmp_path, monkeypatch
     )
     lines, log = _log_capture()
 
-    rc, error = cli._run_timetable_sync(conn, config, log)
+    rc, error = cli._run_timetable_sync(conn, config, log, user_id=owner_id(conn))
 
     assert rc == 1
     assert not any("super-secret-key-value" in line for line in lines)
@@ -268,7 +270,7 @@ def test_tick_records_a_structured_session_for_a_successful_stage(tmp_path, monk
 
     config = load_config()
     with connect_closing(config.db_path) as conn:
-        sessions = repo.list_recent_tick_sessions(conn)
+        sessions = repo.list_recent_tick_sessions(conn, user_id=owner_id(conn))
 
     assert len(sessions) == 1
     session = sessions[0]
@@ -298,7 +300,7 @@ def test_tick_records_a_structured_session_on_failure(tmp_path, monkeypatch):
 
     config = load_config()
     with connect_closing(config.db_path) as conn:
-        sessions = repo.list_recent_tick_sessions(conn)
+        sessions = repo.list_recent_tick_sessions(conn, user_id=owner_id(conn))
 
     assert exit_code == 1
     assert len(sessions) == 1
@@ -328,13 +330,13 @@ def test_purge_old_tick_sessions_removes_only_rows_past_the_cutoff(conn):
             calendar_result=None,
             reminders_result=None,
             timetable_result=None,
-            error=None,
+            error=None, user_id=owner_id(conn),
         )
 
     cutoff = (now - timedelta(hours=48)).isoformat()
     removed = repo.purge_old_tick_sessions(conn, older_than_iso=cutoff)
 
-    remaining = repo.list_recent_tick_sessions(conn)
+    remaining = repo.list_recent_tick_sessions(conn, user_id=owner_id(conn))
     assert removed == 1
     assert len(remaining) == 1
     assert remaining[0]["started_at"] == recent
@@ -363,13 +365,13 @@ def test_tick_purges_old_sessions_automatically(tmp_path, monkeypatch):
             calendar_result=None,
             reminders_result=None,
             timetable_result=None,
-            error=None,
+            error=None, user_id=owner_id(conn),
         )
 
     cli.cmd_tick(argparse_namespace())
 
     with connect_closing(config.db_path) as conn:
-        sessions = repo.list_recent_tick_sessions(conn)
+        sessions = repo.list_recent_tick_sessions(conn, user_id=owner_id(conn))
 
     assert all(s["started_at"] != old_started_at for s in sessions)  # the 72h-old row was purged
     assert len(sessions) == 1  # only this tick's own fresh session remains

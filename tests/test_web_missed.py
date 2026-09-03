@@ -14,6 +14,8 @@ from ragra.db import repo
 from ragra.db.connection import connect
 from ragra.web.app import MISSED_SECTION_PREVIEW_LIMIT, create_app
 
+from tests.support import owner_id
+
 
 @pytest.fixture
 def client(tmp_path: Path):
@@ -21,7 +23,7 @@ def client(tmp_path: Path):
     conn = connect(db_path)
     course_id = repo.upsert_course(
         conn, external_id="course-1", name="Expository Writing-Lab", section="BCS-2G2",
-        teacher="Dr. Smith", course_code=None, state="ACTIVE",
+        teacher="Dr. Smith", course_code=None, state="ACTIVE", user_id=owner_id(conn),
     )
     now = datetime.now(timezone.utc)
     # More missed tasks than the preview limit, spanning a wide age range -
@@ -32,9 +34,9 @@ def client(tmp_path: Path):
         result = repo.upsert_task_from_source(
             conn, course_id=course_id, source_type="coursework", external_id=f"cw-{i}",
             title=f"Task due {days_ago}d ago", description=None, link=None, kind="ACTIONABLE",
-            actual_deadline=deadline, source_published_at=repo.now_iso(), source_updated_at=repo.now_iso(),
+            actual_deadline=deadline, source_published_at=repo.now_iso(), source_updated_at=repo.now_iso(), user_id=owner_id(conn),
         )
-        repo.mark_missed(conn, task_id=result.task_id)
+        repo.mark_missed(conn, task_id=result.task_id, user_id=owner_id(conn))
     conn.close()
 
     app = create_app(db_path)

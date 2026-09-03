@@ -30,8 +30,16 @@ class TaskSourceViolation(RuntimeError):
     which are Classroom-authoritative (never user-writable)."""
 
 
-def _require_manual_task(conn: sqlite3.Connection, *, task_id: int, operation: str) -> sqlite3.Row:
-    row = conn.execute("SELECT id, source_type FROM tasks WHERE id = ?", (task_id,)).fetchone()
+def _require_manual_task(
+    conn: sqlite3.Connection, *, user_id: int, task_id: int, operation: str
+) -> sqlite3.Row:
+    """Guard for manual-task operations. Scoped by user_id as well as
+    source_type, so a task belonging to *another* user is indistinguishable
+    from one that does not exist - this is the IDOR defence for every
+    task-mutating route, not merely the manual/Classroom boundary check."""
+    row = conn.execute(
+        "SELECT id, source_type FROM tasks WHERE id = ? AND user_id = ?", (task_id, user_id)
+    ).fetchone()
     if row is None:
         raise TaskSourceViolation(f"cannot {operation}: task {task_id} does not exist")
     if row["source_type"] != MANUAL_SOURCE_TYPE:
@@ -79,7 +87,6 @@ def unlinked_user_id(conn: sqlite3.Connection) -> int | None:
     return rows[0]["id"] if len(rows) == 1 else None
 
 
-
 # ---------------------------------------------------------------------------
 # Courses
 # ---------------------------------------------------------------------------
@@ -88,6 +95,7 @@ def unlinked_user_id(conn: sqlite3.Connection) -> int | None:
 def upsert_course(
     conn: sqlite3.Connection,
     *,
+    user_id: int,
     external_id: str,
     name: str,
     section: str | None,
@@ -97,14 +105,14 @@ def upsert_course(
 ) -> int:
     now = now_iso()
     row = conn.execute(
-        "SELECT id FROM courses WHERE external_id = ?", (external_id,)
+        "SELECT id FROM courses WHERE user_id = ? AND external_id = ?", (user_id, external_id)
     ).fetchone()
     if row is None:
         cur = conn.execute(
             """INSERT INTO courses
-               (external_id, course_code, name, section, teacher, state, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (external_id, course_code, name, section, teacher, state, now, now),
+               (user_id, external_id, course_code, name, section, teacher, state, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (user_id, external_id, course_code, name, section, teacher, state, now, now),
         )
         conn.commit()
         return cur.lastrowid
@@ -112,14 +120,16 @@ def upsert_course(
     conn.execute(
         """UPDATE courses
            SET course_code = ?, name = ?, section = ?, teacher = ?, state = ?, updated_at = ?
-           WHERE id = ?""",
-        (course_code, name, section, teacher, state, now, row["id"]),
+           WHERE id = ? AND user_id = ?""",
+        (course_code, name, section, teacher, state, now, row["id"], user_id),
     )
     conn.commit()
     return row["id"]
 
 
-def update_course_state_if_known(conn: sqlite3.Connection, *, external_id: str, state: str) -> None:
+def update_course_state_if_known(
+    conn: sqlite3.Connection, *, user_id: int, external_id: str, state: str
+) -> None:
     """Keep a previously-synced course's stored state accurate even after
     Ragra stops actively syncing it (e.g. it goes ARCHIVED at the source and
     the sync loop stops discovering new items for it). Update-only - never
@@ -127,8 +137,8 @@ def update_course_state_if_known(conn: sqlite3.Connection, *, external_id: str, 
     simply irrelevant. This is what lets due_pending_reminders exclude tasks
     tied to a since-archived course without deleting any of their history."""
     conn.execute(
-        "UPDATE courses SET state = ?, updated_at = ? WHERE external_id = ?",
-        (state, now_iso(), external_id),
+        "UPDATE courses SET state = ?, updated_at = ? WHERE user_id = ? AND external_id = ?",
+        (state, now_iso(), user_id, external_id),
     )
     conn.commit()
 
@@ -152,18 +162,19 @@ _TRACKED_FIELDS = ("title", "description", "link", "actual_deadline")
 
 
 def get_task_by_source(
-    conn: sqlite3.Connection, *, course_id: int, source_type: str, external_id: str
+    conn: sqlite3.Connection, *, user_id: int, course_id: int, source_type: str, external_id: str
 ) -> sqlite3.Row | None:
     return conn.execute(
         """SELECT * FROM tasks
-           WHERE course_id = ? AND source_type = ? AND external_id = ?""",
-        (course_id, source_type, external_id),
+           WHERE user_id = ? AND course_id = ? AND source_type = ? AND external_id = ?""",
+        (user_id, course_id, source_type, external_id),
     ).fetchone()
 
 
 def upsert_task_from_source(
     conn: sqlite3.Connection,
     *,
+    user_id: int,
     course_id: int,
     source_type: str,
     external_id: str,
@@ -177,25 +188,28 @@ def upsert_task_from_source(
 ) -> TaskUpsertResult:
     now = now_iso()
     existing = get_task_by_source(
-        conn, course_id=course_id, source_type=source_type, external_id=external_id
+        conn, user_id=user_id, course_id=course_id, source_type=source_type, external_id=external_id
     )
 
     if existing is None:
         initial_status = "ACTION_REQUIRED" if kind == "ACTIONABLE" else "DISCOVERED"
         cur = conn.execute(
             """INSERT INTO tasks
-               (course_id, source_type, external_id, title, description, link, kind, status,
+               (user_id, course_id, source_type, external_id, title, description, link, kind, status,
                 actual_deadline, personal_deadline, source_published_at, source_updated_at,
                 created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)""",
             (
-                course_id, source_type, external_id, title, description, link, kind,
+                user_id, course_id, source_type, external_id, title, description, link, kind,
                 initial_status, actual_deadline, source_published_at, source_updated_at,
                 now, now,
             ),
         )
         task_id = cur.lastrowid
-        record_history(conn, task_id=task_id, field_name="created", old_value=None, new_value=title)
+        record_history(
+            conn, user_id=user_id, task_id=task_id, field_name="created",
+            old_value=None, new_value=title,
+        )
         conn.commit()
         return TaskUpsertResult(task_id=task_id, created=True)
 
@@ -222,7 +236,8 @@ def upsert_task_from_source(
         if old_value != new_value:
             changed.append(field_name)
             record_history(
-                conn, task_id=task_id, field_name=field_name, old_value=old_value, new_value=new_value
+                conn, user_id=user_id, task_id=task_id, field_name=field_name,
+                old_value=old_value, new_value=new_value,
             )
             if field_name == "actual_deadline":
                 deadline_changed = True
@@ -231,8 +246,8 @@ def upsert_task_from_source(
         """UPDATE tasks
            SET title = ?, description = ?, link = ?, actual_deadline = ?,
                source_updated_at = ?, updated_at = ?
-           WHERE id = ?""",
-        (title, description, link, actual_deadline, source_updated_at, now, task_id),
+           WHERE id = ? AND user_id = ?""",
+        (title, description, link, actual_deadline, source_updated_at, now, task_id, user_id),
     )
     conn.commit()
 
@@ -249,33 +264,47 @@ def upsert_task_from_source(
 def record_history(
     conn: sqlite3.Connection,
     *,
+    user_id: int,
     task_id: int,
     field_name: str,
     old_value: str | None,
     new_value: str | None,
 ) -> None:
     conn.execute(
-        """INSERT INTO task_history (task_id, changed_at, field, old_value, new_value)
-           VALUES (?, ?, ?, ?, ?)""",
-        (task_id, now_iso(), field_name, old_value, new_value),
+        """INSERT INTO task_history (user_id, task_id, changed_at, field, old_value, new_value)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (user_id, task_id, now_iso(), field_name, old_value, new_value),
     )
 
 
-def personal_course_id(conn: sqlite3.Connection) -> int:
-    """The pseudo-course every manual task belongs to (migration 0007)."""
+def personal_course_id(conn: sqlite3.Connection, *, user_id: int) -> int:
+    """The pseudo-course this user's manual tasks belong to.
+
+    Migration 0007 seeded one such course and migration 0010 handed it to the
+    first user. Every later user gets their own on demand, because the
+    pseudo-course is the parent of that user's manual tasks and so must never
+    be shared across accounts."""
     row = conn.execute(
-        "SELECT id FROM courses WHERE external_id = ?", (PERSONAL_COURSE_EXTERNAL_ID,)
+        "SELECT id FROM courses WHERE user_id = ? AND external_id = ?",
+        (user_id, PERSONAL_COURSE_EXTERNAL_ID),
     ).fetchone()
-    if row is None:
-        raise RuntimeError(
-            "the '__personal__' pseudo-course is missing; migration 0007 has not been applied"
-        )
-    return row["id"]
+    if row is not None:
+        return row["id"]
+
+    now = now_iso()
+    cur = conn.execute(
+        """INSERT INTO courses (user_id, external_id, name, course_code, section, state,
+                                created_at, updated_at)
+           VALUES (?, ?, 'Personal', NULL, NULL, 'ACTIVE', ?, ?)""",
+        (user_id, PERSONAL_COURSE_EXTERNAL_ID, now, now),
+    )
+    return cur.lastrowid
 
 
 def create_manual_task(
     conn: sqlite3.Connection,
     *,
+    user_id: int,
     title: str,
     description: str | None = None,
     actual_deadline: str | None = None,
@@ -303,17 +332,20 @@ def create_manual_task(
     initial_status = "PLANNED" if personal_deadline else "ACTION_REQUIRED"
     cur = conn.execute(
         """INSERT INTO tasks
-           (course_id, source_type, external_id, title, description, link, kind, status,
+           (user_id, course_id, source_type, external_id, title, description, link, kind, status,
             actual_deadline, personal_deadline, source_published_at, source_updated_at,
             created_at, updated_at)
-           VALUES (?, ?, NULL, ?, ?, NULL, 'ACTIONABLE', ?, ?, ?, NULL, NULL, ?, ?)""",
+           VALUES (?, ?, ?, NULL, ?, ?, NULL, 'ACTIONABLE', ?, ?, ?, NULL, NULL, ?, ?)""",
         (
-            personal_course_id(conn), MANUAL_SOURCE_TYPE, clean_title, description,
-            initial_status, actual_deadline, personal_deadline, now, now,
+            user_id, personal_course_id(conn, user_id=user_id), MANUAL_SOURCE_TYPE, clean_title,
+            description, initial_status, actual_deadline, personal_deadline, now, now,
         ),
     )
     task_id = cur.lastrowid
-    record_history(conn, task_id=task_id, field_name="created", old_value=None, new_value=clean_title)
+    record_history(
+        conn, user_id=user_id, task_id=task_id, field_name="created",
+        old_value=None, new_value=clean_title,
+    )
     conn.commit()
     return task_id
 
@@ -321,6 +353,7 @@ def create_manual_task(
 def update_manual_task(
     conn: sqlite3.Connection,
     *,
+    user_id: int,
     task_id: int,
     title: str | None = None,
     description: str | None = None,
@@ -333,7 +366,7 @@ def update_manual_task(
 
     Only the arguments actually supplied are changed; passing nothing is a
     no-op rather than a silent wipe of every field."""
-    _require_manual_task(conn, task_id=task_id, operation="edit task")
+    _require_manual_task(conn, user_id=user_id, task_id=task_id, operation="edit task")
 
     updates: dict[str, str | None] = {}
     if title is not None:
@@ -349,35 +382,41 @@ def update_manual_task(
         return
 
     existing = conn.execute(
-        "SELECT title, description, actual_deadline FROM tasks WHERE id = ?", (task_id,)
+        "SELECT title, description, actual_deadline FROM tasks WHERE id = ? AND user_id = ?",
+        (task_id, user_id),
     ).fetchone()
 
     assignments = ", ".join(f"{column} = ?" for column in updates)
     conn.execute(
-        f"UPDATE tasks SET {assignments}, updated_at = ? WHERE id = ?",
-        (*updates.values(), now_iso(), task_id),
+        f"UPDATE tasks SET {assignments}, updated_at = ? WHERE id = ? AND user_id = ?",
+        (*updates.values(), now_iso(), task_id, user_id),
     )
     for column, new_value in updates.items():
         if existing[column] != new_value:
             record_history(
-                conn, task_id=task_id, field_name=column,
+                conn, user_id=user_id, task_id=task_id, field_name=column,
                 old_value=existing[column], new_value=new_value,
             )
     conn.commit()
 
 
-def manual_tasks(conn: sqlite3.Connection, *, include_finished: bool = False) -> list[sqlite3.Row]:
+def manual_tasks(
+    conn: sqlite3.Connection, *, user_id: int, include_finished: bool = False
+) -> list[sqlite3.Row]:
     clause = "" if include_finished else "AND tasks.status NOT IN ('COMPLETED', 'CANCELLED')"
     return conn.execute(
         f"""SELECT tasks.*, courses.course_code, courses.name AS course_name
             FROM tasks JOIN courses ON courses.id = tasks.course_id
-            WHERE tasks.source_type = '{MANUAL_SOURCE_TYPE}' {clause}
+            WHERE tasks.user_id = ? AND tasks.source_type = '{MANUAL_SOURCE_TYPE}' {clause}
             ORDER BY COALESCE(tasks.actual_deadline, tasks.personal_deadline) IS NULL,
-                     COALESCE(tasks.actual_deadline, tasks.personal_deadline) ASC"""
+                     COALESCE(tasks.actual_deadline, tasks.personal_deadline) ASC""",
+        (user_id,),
     ).fetchall()
 
 
-def open_announcements(conn: sqlite3.Connection, *, limit: int | None = None) -> list[sqlite3.Row]:
+def open_announcements(
+    conn: sqlite3.Connection, *, user_id: int, limit: int | None = None
+) -> list[sqlite3.Row]:
     """Announcements still awaiting triage, newest first. Archived ones drop
     out; already-actioned ones stay but carry their child task's id so the
     UI can show that they were handled."""
@@ -387,15 +426,16 @@ def open_announcements(conn: sqlite3.Connection, *, limit: int | None = None) ->
                         AND child.status NOT IN ('CANCELLED')
                       LIMIT 1) AS child_task_id
              FROM tasks JOIN courses ON courses.id = tasks.course_id
-             WHERE tasks.source_type = 'announcement'
+             WHERE tasks.user_id = ?
+               AND tasks.source_type = 'announcement'
                AND tasks.status NOT IN ('ARCHIVED', 'CANCELLED')
              ORDER BY COALESCE(tasks.source_published_at, tasks.created_at) DESC"""
     if limit is not None:
-        return conn.execute(sql + " LIMIT ?", (limit,)).fetchall()
-    return conn.execute(sql).fetchall()
+        return conn.execute(sql + " LIMIT ?", (user_id, limit)).fetchall()
+    return conn.execute(sql, (user_id,)).fetchall()
 
 
-def archive_task(conn: sqlite3.Connection, *, task_id: int) -> None:
+def archive_task(conn: sqlite3.Connection, *, user_id: int, task_id: int) -> None:
     """Mark a task as triaged-and-done-with. Allowed on any task, including
     Classroom-sourced ones: like completion, this is a Ragra-owned fact
     about the user's own handling of the item, not a claim about whether it
@@ -403,14 +443,18 @@ def archive_task(conn: sqlite3.Connection, *, task_id: int) -> None:
     the task should not exist at all and is therefore restricted to manual
     tasks (docs/INTERFACES.md contract #5)."""
     now = now_iso()
-    row = conn.execute("SELECT status FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    row = conn.execute(
+        "SELECT status FROM tasks WHERE id = ? AND user_id = ?", (task_id, user_id)
+    ).fetchone()
     if row is None or row["status"] == "ARCHIVED":
         return
     conn.execute(
-        "UPDATE tasks SET status = 'ARCHIVED', updated_at = ? WHERE id = ?", (now, task_id)
+        "UPDATE tasks SET status = 'ARCHIVED', updated_at = ? WHERE id = ? AND user_id = ?",
+        (now, task_id, user_id),
     )
     record_history(
-        conn, task_id=task_id, field_name="status", old_value=row["status"], new_value="ARCHIVED"
+        conn, user_id=user_id, task_id=task_id, field_name="status",
+        old_value=row["status"], new_value="ARCHIVED",
     )
     conn.commit()
 
@@ -418,6 +462,7 @@ def archive_task(conn: sqlite3.Connection, *, task_id: int) -> None:
 def create_task_from_announcement(
     conn: sqlite3.Connection,
     *,
+    user_id: int,
     announcement_task_id: int,
     title: str | None = None,
     actual_deadline: str | None = None,
@@ -431,7 +476,8 @@ def create_task_from_announcement(
     stays exactly as Classroom published it.
     """
     announcement = conn.execute(
-        "SELECT id, title, source_type FROM tasks WHERE id = ?", (announcement_task_id,)
+        "SELECT id, title, source_type FROM tasks WHERE id = ? AND user_id = ?",
+        (announcement_task_id, user_id),
     ).fetchone()
     if announcement is None:
         raise ValueError(f"announcement task {announcement_task_id} does not exist")
@@ -443,20 +489,24 @@ def create_task_from_announcement(
 
     existing = conn.execute(
         """SELECT id FROM tasks
-           WHERE parent_task_id = ? AND status NOT IN ('CANCELLED') LIMIT 1""",
-        (announcement_task_id,),
+           WHERE user_id = ? AND parent_task_id = ? AND status NOT IN ('CANCELLED') LIMIT 1""",
+        (user_id, announcement_task_id),
     ).fetchone()
     if existing is not None:
         return existing["id"]
 
     task_id = create_manual_task(
         conn,
+        user_id=user_id,
         title=title or announcement["title"],
         description=None,
         actual_deadline=actual_deadline,
         personal_deadline=personal_deadline,
     )
-    conn.execute("UPDATE tasks SET parent_task_id = ? WHERE id = ?", (announcement_task_id, task_id))
+    conn.execute(
+        "UPDATE tasks SET parent_task_id = ? WHERE id = ? AND user_id = ?",
+        (announcement_task_id, task_id, user_id),
+    )
     conn.commit()
     return task_id
 
@@ -464,6 +514,7 @@ def create_task_from_announcement(
 def set_task_relevance(
     conn: sqlite3.Connection,
     *,
+    user_id: int,
     task_id: int,
     relevance: str,
     reason: str | None,
@@ -481,56 +532,94 @@ def set_task_relevance(
     the notification path consults. A task is always stored, always listed,
     and always visible regardless of the value written here.
     """
-    row = conn.execute("SELECT relevance, relevance_reason FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    row = conn.execute(
+        "SELECT relevance, relevance_reason FROM tasks WHERE id = ? AND user_id = ?",
+        (task_id, user_id),
+    ).fetchone()
     if row is None:
         return False
     if row["relevance"] == relevance and row["relevance_reason"] == reason:
         return False
 
     conn.execute(
-        "UPDATE tasks SET relevance = ?, relevance_reason = ?, relevance_computed_at = ? WHERE id = ?",
-        (relevance, reason, computed_at or now_iso(), task_id),
+        """UPDATE tasks SET relevance = ?, relevance_reason = ?, relevance_computed_at = ?
+           WHERE id = ? AND user_id = ?""",
+        (relevance, reason, computed_at or now_iso(), task_id, user_id),
     )
     record_history(
-        conn, task_id=task_id, field_name="relevance",
+        conn, user_id=user_id, task_id=task_id, field_name="relevance",
         old_value=row["relevance"], new_value=relevance,
     )
     conn.commit()
     return True
 
 
-def set_personal_deadline(conn: sqlite3.Connection, *, task_id: int, personal_deadline: str) -> None:
-    row = conn.execute("SELECT personal_deadline FROM tasks WHERE id = ?", (task_id,)).fetchone()
-    old_value = row["personal_deadline"] if row else None
+def set_personal_deadline(
+    conn: sqlite3.Connection, *, user_id: int, task_id: int, personal_deadline: str
+) -> None:
+    row = conn.execute(
+        "SELECT personal_deadline FROM tasks WHERE id = ? AND user_id = ?", (task_id, user_id)
+    ).fetchone()
+    if row is None:
+        # Somebody else's task, or none at all. Returning without writing is
+        # what keeps a rejected cross-account write from leaving a history
+        # row behind - the audit trail must record only changes that
+        # actually happened.
+        return
+    old_value = row["personal_deadline"]
     conn.execute(
-        "UPDATE tasks SET personal_deadline = ?, status = CASE WHEN status = 'ACTION_REQUIRED' THEN 'PLANNED' ELSE status END, updated_at = ? WHERE id = ?",
-        (personal_deadline, now_iso(), task_id),
+        """UPDATE tasks
+           SET personal_deadline = ?,
+               status = CASE WHEN status = 'ACTION_REQUIRED' THEN 'PLANNED' ELSE status END,
+               updated_at = ?
+           WHERE id = ? AND user_id = ?""",
+        (personal_deadline, now_iso(), task_id, user_id),
     )
-    record_history(conn, task_id=task_id, field_name="personal_deadline", old_value=old_value, new_value=personal_deadline)
+    record_history(
+        conn, user_id=user_id, task_id=task_id, field_name="personal_deadline",
+        old_value=old_value, new_value=personal_deadline,
+    )
     conn.commit()
 
 
-def mark_completed(conn: sqlite3.Connection, *, task_id: int) -> None:
+def mark_completed(conn: sqlite3.Connection, *, user_id: int, task_id: int) -> None:
     now = now_iso()
-    conn.execute(
-        "UPDATE tasks SET status = 'COMPLETED', completed_at = ?, updated_at = ? WHERE id = ?",
-        (now, now, task_id),
+    cur = conn.execute(
+        """UPDATE tasks SET status = 'COMPLETED', completed_at = ?, updated_at = ?
+           WHERE id = ? AND user_id = ?""",
+        (now, now, task_id, user_id),
     )
-    record_history(conn, task_id=task_id, field_name="status", old_value=None, new_value="COMPLETED")
+    # History follows the UPDATE's own rowcount rather than being written
+    # unconditionally: a write that the ownership filter rejected changed
+    # nothing, so recording it would both falsify the victim's audit trail
+    # and attach a row referencing their task to the caller.
+    if cur.rowcount:
+        record_history(
+            conn, user_id=user_id, task_id=task_id, field_name="status",
+            old_value=None, new_value="COMPLETED",
+        )
     conn.commit()
 
 
-def mark_missed(conn: sqlite3.Connection, *, task_id: int) -> None:
+def mark_missed(conn: sqlite3.Connection, *, user_id: int, task_id: int) -> None:
     now = now_iso()
-    conn.execute(
-        "UPDATE tasks SET status = 'MISSED', missed_at = ?, updated_at = ? WHERE id = ? AND status NOT IN ('COMPLETED', 'CANCELLED')",
-        (now, now, task_id),
+    cur = conn.execute(
+        """UPDATE tasks SET status = 'MISSED', missed_at = ?, updated_at = ?
+           WHERE id = ? AND user_id = ? AND status NOT IN ('COMPLETED', 'CANCELLED')""",
+        (now, now, task_id, user_id),
     )
-    record_history(conn, task_id=task_id, field_name="status", old_value=None, new_value="MISSED")
+    # See mark_completed: no change, no history row. This also removes the
+    # duplicate history the terminal-status guard above used to produce when
+    # called repeatedly on an already-completed task.
+    if cur.rowcount:
+        record_history(
+            conn, user_id=user_id, task_id=task_id, field_name="status",
+            old_value=None, new_value="MISSED",
+        )
     conn.commit()
 
 
-def mark_overdue_tasks_as_missed(conn: sqlite3.Connection, *, now: str) -> list[int]:
+def mark_overdue_tasks_as_missed(conn: sqlite3.Connection, *, user_id: int, now: str) -> list[int]:
     """Reconciliation pass: any task past its actual_deadline that isn't
     completed, cancelled, or already missed transitions to MISSED. Excludes
     already-MISSED tasks explicitly (not just relying on mark_missed's own
@@ -544,44 +633,54 @@ def mark_overdue_tasks_as_missed(conn: sqlite3.Connection, *, now: str) -> list[
     now-nonsensical "due soon"/"due in 1 hour" reminder after the fact."""
     rows = conn.execute(
         """SELECT id FROM tasks
-           WHERE actual_deadline IS NOT NULL AND actual_deadline < ?
+           WHERE user_id = ? AND actual_deadline IS NOT NULL AND actual_deadline < ?
            AND status NOT IN ('COMPLETED', 'CANCELLED', 'MISSED')""",
-        (now,),
+        (user_id, now),
     ).fetchall()
     missed_task_ids = []
     for row in rows:
-        mark_missed(conn, task_id=row["id"])
-        cancel_pending_reminders(conn, task_id=row["id"])
+        mark_missed(conn, user_id=user_id, task_id=row["id"])
+        cancel_pending_reminders(conn, user_id=user_id, task_id=row["id"])
         missed_task_ids.append(row["id"])
     return missed_task_ids
 
 
-def cancel_task_from_source(conn: sqlite3.Connection, *, task_id: int) -> None:
+def cancel_task_from_source(conn: sqlite3.Connection, *, user_id: int, task_id: int) -> None:
     """System-initiated cancellation, used when Classroom itself stops
     returning an item. Deliberately unguarded: the source is allowed to
     cancel its own tasks. Never call this from a user-facing route - use
     cancel_task, which enforces the boundary."""
     now = now_iso()
-    conn.execute(
-        "UPDATE tasks SET status = 'CANCELLED', cancelled_at = ?, updated_at = ? WHERE id = ?",
-        (now, now, task_id),
+    cur = conn.execute(
+        """UPDATE tasks SET status = 'CANCELLED', cancelled_at = ?, updated_at = ?
+           WHERE id = ? AND user_id = ?""",
+        (now, now, task_id, user_id),
     )
-    record_history(conn, task_id=task_id, field_name="status", old_value=None, new_value="CANCELLED")
+    if cur.rowcount:  # see mark_completed
+        record_history(
+            conn, user_id=user_id, task_id=task_id, field_name="status",
+            old_value=None, new_value="CANCELLED",
+        )
     conn.commit()
 
 
-def cancel_task(conn: sqlite3.Connection, *, task_id: int) -> None:
+def cancel_task(conn: sqlite3.Connection, *, user_id: int, task_id: int) -> None:
     """User-initiated cancellation. Raises TaskSourceViolation for a
     Classroom-sourced task: whether such a task exists is Classroom's
     decision, not the user's (docs/INTERFACES.md contract #5). Completing it
     is always allowed - that is a Ragra-owned fact about the user's own
     progress."""
-    _require_manual_task(conn, task_id=task_id, operation="cancel task")
-    cancel_task_from_source(conn, task_id=task_id)
+    _require_manual_task(conn, user_id=user_id, task_id=task_id, operation="cancel task")
+    cancel_task_from_source(conn, user_id=user_id, task_id=task_id)
 
 
 def cancel_tasks_missing_from_source(
-    conn: sqlite3.Connection, *, course_id: int, source_type: str, seen_external_ids: set[str]
+    conn: sqlite3.Connection,
+    *,
+    user_id: int,
+    course_id: int,
+    source_type: str,
+    seen_external_ids: set[str],
 ) -> list[int]:
     """A Classroom sync pass that no longer sees a previously-discovered
     coursework/announcement/material item (deleted or unpublished at the
@@ -590,30 +689,34 @@ def cancel_tasks_missing_from_source(
     erased by a source-side removal."""
     rows = conn.execute(
         """SELECT id, external_id FROM tasks
-           WHERE course_id = ? AND source_type = ? AND status NOT IN ('COMPLETED', 'CANCELLED')""",
-        (course_id, source_type),
+           WHERE user_id = ? AND course_id = ? AND source_type = ?
+           AND status NOT IN ('COMPLETED', 'CANCELLED')""",
+        (user_id, course_id, source_type),
     ).fetchall()
     cancelled_task_ids = []
     for row in rows:
         if row["external_id"] not in seen_external_ids:
-            cancel_task_from_source(conn, task_id=row["id"])
-            cancel_pending_reminders(conn, task_id=row["id"])
+            cancel_task_from_source(conn, user_id=user_id, task_id=row["id"])
+            cancel_pending_reminders(conn, user_id=user_id, task_id=row["id"])
             cancelled_task_ids.append(row["id"])
     return cancelled_task_ids
 
 
-def tasks_due_between(conn: sqlite3.Connection, *, start_iso: str, end_iso: str) -> list[sqlite3.Row]:
+def tasks_due_between(
+    conn: sqlite3.Connection, *, user_id: int, start_iso: str, end_iso: str
+) -> list[sqlite3.Row]:
     return conn.execute(
         """SELECT tasks.*, courses.course_code, courses.name AS course_name
            FROM tasks JOIN courses ON courses.id = tasks.course_id
-           WHERE actual_deadline IS NOT NULL AND actual_deadline BETWEEN ? AND ?
+           WHERE tasks.user_id = ?
+           AND actual_deadline IS NOT NULL AND actual_deadline BETWEEN ? AND ?
            AND status NOT IN ('COMPLETED', 'CANCELLED')
            ORDER BY actual_deadline ASC""",
-        (start_iso, end_iso),
+        (user_id, start_iso, end_iso),
     ).fetchall()
 
 
-def tasks_missing_personal_target(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+def tasks_missing_personal_target(conn: sqlite3.Connection, *, user_id: int) -> list[sqlite3.Row]:
     """Actionable tasks that already have an authoritative actual_deadline
     from Classroom but no personal completion target yet - Ragra should
     surface these so the user can decide when they plan to actually do the
@@ -621,24 +724,27 @@ def tasks_missing_personal_target(conn: sqlite3.Connection) -> list[sqlite3.Row]
     return conn.execute(
         """SELECT tasks.*, courses.course_code, courses.name AS course_name
            FROM tasks JOIN courses ON courses.id = tasks.course_id
-           WHERE kind = 'ACTIONABLE' AND actual_deadline IS NOT NULL
+           WHERE tasks.user_id = ? AND kind = 'ACTIONABLE' AND actual_deadline IS NOT NULL
            AND personal_deadline IS NULL AND status NOT IN ('COMPLETED', 'CANCELLED', 'MISSED')
-           ORDER BY actual_deadline ASC"""
+           ORDER BY actual_deadline ASC""",
+        (user_id,),
     ).fetchall()
 
 
-def overdue_tasks(conn: sqlite3.Connection, *, now: str) -> list[sqlite3.Row]:
+def overdue_tasks(conn: sqlite3.Connection, *, user_id: int, now: str) -> list[sqlite3.Row]:
     return conn.execute(
         """SELECT tasks.*, courses.course_code, courses.name AS course_name
            FROM tasks JOIN courses ON courses.id = tasks.course_id
-           WHERE actual_deadline IS NOT NULL AND actual_deadline < ?
+           WHERE tasks.user_id = ? AND actual_deadline IS NOT NULL AND actual_deadline < ?
            AND status NOT IN ('COMPLETED', 'CANCELLED', 'MISSED')
            ORDER BY actual_deadline ASC""",
-        (now,),
+        (user_id, now),
     ).fetchall()
 
 
-def missed_tasks(conn: sqlite3.Connection, *, limit: int | None = None) -> list[sqlite3.Row]:
+def missed_tasks(
+    conn: sqlite3.Connection, *, user_id: int, limit: int | None = None
+) -> list[sqlite3.Row]:
     """Tasks whose deadline passed without completion (status MISSED - see
     repo.mark_overdue_tasks_as_missed). Distinct from overdue_tasks(): an
     OVERDUE task is still actionable/pending; MISSED is the terminal state
@@ -654,53 +760,63 @@ def missed_tasks(conn: sqlite3.Connection, *, limit: int | None = None) -> list[
     long tail of old items - see count_missed_tasks() for the total."""
     query = """SELECT tasks.*, courses.course_code, courses.name AS course_name
                FROM tasks JOIN courses ON courses.id = tasks.course_id
-               WHERE status = 'MISSED'
+               WHERE tasks.user_id = ? AND status = 'MISSED'
                ORDER BY actual_deadline DESC"""
     if limit is None:
-        return conn.execute(query).fetchall()
-    return conn.execute(query + " LIMIT ?", (limit,)).fetchall()
+        return conn.execute(query, (user_id,)).fetchall()
+    return conn.execute(query + " LIMIT ?", (user_id, limit)).fetchall()
 
 
-def count_missed_tasks(conn: sqlite3.Connection) -> int:
-    return conn.execute("SELECT COUNT(*) AS c FROM tasks WHERE status = 'MISSED'").fetchone()["c"]
+def count_missed_tasks(conn: sqlite3.Connection, *, user_id: int) -> int:
+    return conn.execute(
+        "SELECT COUNT(*) AS c FROM tasks WHERE user_id = ? AND status = 'MISSED'", (user_id,)
+    ).fetchone()["c"]
 
 
-def get_task_by_id(conn: sqlite3.Connection, *, task_id: int) -> sqlite3.Row | None:
+def get_task_by_id(conn: sqlite3.Connection, *, user_id: int, task_id: int) -> sqlite3.Row | None:
+    """Returns None for a task belonging to anyone else, which is what makes
+    every task-detail route a 404 rather than a disclosure."""
     return conn.execute(
         """SELECT tasks.*, courses.course_code, courses.name AS course_name
            FROM tasks JOIN courses ON courses.id = tasks.course_id
-           WHERE tasks.id = ?""",
-        (task_id,),
+           WHERE tasks.id = ? AND tasks.user_id = ?""",
+        (task_id, user_id),
     ).fetchone()
 
 
-def reminders_for_task(conn: sqlite3.Connection, *, task_id: int) -> list[sqlite3.Row]:
+def reminders_for_task(
+    conn: sqlite3.Connection, *, user_id: int, task_id: int
+) -> list[sqlite3.Row]:
     return conn.execute(
-        """SELECT * FROM reminders WHERE task_id = ?
+        """SELECT * FROM reminders WHERE user_id = ? AND task_id = ?
            ORDER BY scheduled_for ASC""",
-        (task_id,),
+        (user_id, task_id),
     ).fetchall()
 
 
-def history_for_task(conn: sqlite3.Connection, *, task_id: int) -> list[sqlite3.Row]:
+def history_for_task(conn: sqlite3.Connection, *, user_id: int, task_id: int) -> list[sqlite3.Row]:
     return conn.execute(
-        """SELECT * FROM task_history WHERE task_id = ?
+        """SELECT * FROM task_history WHERE user_id = ? AND task_id = ?
            ORDER BY changed_at DESC""",
-        (task_id,),
+        (user_id, task_id),
     ).fetchall()
 
 
-def recently_completed_tasks(conn: sqlite3.Connection, *, limit: int = 10) -> list[sqlite3.Row]:
+def recently_completed_tasks(
+    conn: sqlite3.Connection, *, user_id: int, limit: int = 10
+) -> list[sqlite3.Row]:
     return conn.execute(
         """SELECT tasks.*, courses.course_code, courses.name AS course_name
            FROM tasks JOIN courses ON courses.id = tasks.course_id
-           WHERE status = 'COMPLETED'
+           WHERE tasks.user_id = ? AND status = 'COMPLETED'
            ORDER BY completed_at DESC LIMIT ?""",
-        (limit,),
+        (user_id, limit),
     ).fetchall()
 
 
-def upcoming_scheduled_reminders(conn: sqlite3.Connection, *, now: str, limit: int = 15) -> list[sqlite3.Row]:
+def upcoming_scheduled_reminders(
+    conn: sqlite3.Connection, *, user_id: int, now: str, limit: int = 15
+) -> list[sqlite3.Row]:
     """PENDING reminders not yet due - "what's coming" for the dashboard,
     distinct from due_pending_reminders (dispatch's "what's due right now")."""
     return conn.execute(
@@ -709,9 +825,10 @@ def upcoming_scheduled_reminders(conn: sqlite3.Connection, *, now: str, limit: i
            FROM reminders
            JOIN tasks ON tasks.id = reminders.task_id
            JOIN courses ON courses.id = tasks.course_id
-           WHERE reminders.status = 'PENDING' AND reminders.scheduled_for > ?
+           WHERE reminders.user_id = ?
+             AND reminders.status = 'PENDING' AND reminders.scheduled_for > ?
            ORDER BY reminders.scheduled_for ASC LIMIT ?""",
-        (now, limit),
+        (user_id, now, limit),
     ).fetchall()
 
 
@@ -720,15 +837,18 @@ def upcoming_scheduled_reminders(conn: sqlite3.Connection, *, now: str, limit: i
 # ---------------------------------------------------------------------------
 
 
-def cancel_pending_reminders(conn: sqlite3.Connection, *, task_id: int) -> None:
+def cancel_pending_reminders(conn: sqlite3.Connection, *, user_id: int, task_id: int) -> None:
     conn.execute(
-        "UPDATE reminders SET status = 'CANCELLED' WHERE task_id = ? AND status = 'PENDING'",
-        (task_id,),
+        """UPDATE reminders SET status = 'CANCELLED'
+           WHERE user_id = ? AND task_id = ? AND status = 'PENDING'""",
+        (user_id, task_id),
     )
     conn.commit()
 
 
-def cancel_backlog_reminders_for_already_overdue_tasks(conn: sqlite3.Connection) -> int:
+def cancel_backlog_reminders_for_already_overdue_tasks(
+    conn: sqlite3.Connection, *, user_id: int
+) -> int:
     """Safety net, not a one-off migration: a task whose actual_deadline was
     already at-or-before the moment Ragra first discovered it (its own
     created_at) must never carry pending pre-deadline reminders - those
@@ -741,23 +861,26 @@ def cancel_backlog_reminders_for_already_overdue_tasks(conn: sqlite3.Connection)
     actually cancelled."""
     rows = conn.execute(
         """SELECT tasks.id FROM tasks
-           WHERE actual_deadline IS NOT NULL AND actual_deadline <= created_at
-           AND status NOT IN ('COMPLETED', 'CANCELLED')"""
+           WHERE user_id = ? AND actual_deadline IS NOT NULL AND actual_deadline <= created_at
+           AND status NOT IN ('COMPLETED', 'CANCELLED')""",
+        (user_id,),
     ).fetchall()
 
     total_cancelled = 0
     for row in rows:
         task_id = row["id"]
         pending = conn.execute(
-            "SELECT COUNT(*) AS c FROM reminders WHERE task_id = ? AND status = 'PENDING'", (task_id,)
+            """SELECT COUNT(*) AS c FROM reminders
+               WHERE user_id = ? AND task_id = ? AND status = 'PENDING'""",
+            (user_id, task_id),
         ).fetchone()["c"]
         if pending:
-            cancel_pending_reminders(conn, task_id=task_id)
+            cancel_pending_reminders(conn, user_id=user_id, task_id=task_id)
             total_cancelled += pending
     return total_cancelled
 
 
-def cancel_stray_reminders_for_terminal_tasks(conn: sqlite3.Connection) -> int:
+def cancel_stray_reminders_for_terminal_tasks(conn: sqlite3.Connection, *, user_id: int) -> int:
     """Safety net, not a one-off migration (same style as
     cancel_backlog_reminders_for_already_overdue_tasks above): a task that is
     COMPLETED, CANCELLED, or MISSED must never carry a PENDING reminder - the
@@ -771,14 +894,15 @@ def cancel_stray_reminders_for_terminal_tasks(conn: sqlite3.Connection) -> int:
     rows = conn.execute(
         """SELECT reminders.id FROM reminders
            JOIN tasks ON tasks.id = reminders.task_id
-           WHERE reminders.status = 'PENDING'
-           AND tasks.status IN ('COMPLETED', 'CANCELLED', 'MISSED')"""
+           WHERE reminders.user_id = ? AND reminders.status = 'PENDING'
+           AND tasks.status IN ('COMPLETED', 'CANCELLED', 'MISSED')""",
+        (user_id,),
     ).fetchall()
     if not rows:
         return 0
     conn.executemany(
-        "UPDATE reminders SET status = 'CANCELLED' WHERE id = ?",
-        [(row["id"],) for row in rows],
+        "UPDATE reminders SET status = 'CANCELLED' WHERE id = ? AND user_id = ?",
+        [(row["id"], user_id) for row in rows],
     )
     conn.commit()
     return len(rows)
@@ -787,23 +911,28 @@ def cancel_stray_reminders_for_terminal_tasks(conn: sqlite3.Connection) -> int:
 def insert_reminder_if_absent(
     conn: sqlite3.Connection,
     *,
+    user_id: int,
     task_id: int,
     reminder_type: str,
     scheduled_for: str,
     idempotency_key: str,
 ) -> bool:
-    """Returns True if a new reminder row was inserted, False if it already existed."""
+    """Returns True if a new reminder row was inserted, False if it already existed.
+
+    Idempotency is per-user (migration 0013 made the key UNIQUE(user_id,
+    idempotency_key)); two users may legitimately hold the same key without
+    either silently suppressing the other's reminder."""
     cur = conn.execute(
         """INSERT OR IGNORE INTO reminders
-           (task_id, reminder_type, scheduled_for, status, idempotency_key, created_at)
-           VALUES (?, ?, ?, 'PENDING', ?, ?)""",
-        (task_id, reminder_type, scheduled_for, idempotency_key, now_iso()),
+           (user_id, task_id, reminder_type, scheduled_for, status, idempotency_key, created_at)
+           VALUES (?, ?, ?, ?, 'PENDING', ?, ?)""",
+        (user_id, task_id, reminder_type, scheduled_for, idempotency_key, now_iso()),
     )
     conn.commit()
     return cur.rowcount > 0
 
 
-def due_pending_reminders(conn: sqlite3.Connection, *, now: str) -> list[sqlite3.Row]:
+def due_pending_reminders(conn: sqlite3.Connection, *, user_id: int, now: str) -> list[sqlite3.Row]:
     """PENDING reminders due to fire, including ones currently waiting out a
     bounded retry backoff (excluded until next_retry_at passes).
 
@@ -820,38 +949,51 @@ def due_pending_reminders(conn: sqlite3.Connection, *, now: str) -> list[sqlite3
            FROM reminders
            JOIN tasks ON tasks.id = reminders.task_id
            JOIN courses ON courses.id = tasks.course_id
-           WHERE reminders.status = 'PENDING' AND reminders.scheduled_for <= ?
+           WHERE reminders.user_id = ?
+           AND reminders.status = 'PENDING' AND reminders.scheduled_for <= ?
            AND (reminders.next_retry_at IS NULL OR reminders.next_retry_at <= ?)
            AND tasks.status NOT IN ('COMPLETED', 'CANCELLED', 'MISSED')
            AND courses.state IN ('ACTIVE', 'PROVISIONED')
            ORDER BY reminders.scheduled_for ASC""",
-        (now, now),
+        (user_id, now, now),
     ).fetchall()
 
 
 def mark_reminder_for_retry(
-    conn: sqlite3.Connection, *, reminder_id: int, error: str, attempt_count: int, next_retry_at: str
+    conn: sqlite3.Connection,
+    *,
+    user_id: int,
+    reminder_id: int,
+    error: str,
+    attempt_count: int,
+    next_retry_at: str,
 ) -> None:
     """A send attempt failed but the bounded retry budget isn't exhausted
     yet - stays PENDING (still a legitimate candidate for dispatch), just
     not eligible again until next_retry_at."""
     conn.execute(
-        "UPDATE reminders SET attempt_count = ?, last_error = ?, next_retry_at = ? WHERE id = ?",
-        (attempt_count, error, next_retry_at, reminder_id),
+        """UPDATE reminders SET attempt_count = ?, last_error = ?, next_retry_at = ?
+           WHERE id = ? AND user_id = ?""",
+        (attempt_count, error, next_retry_at, reminder_id, user_id),
     )
     conn.commit()
 
 
-def mark_reminder_sent(conn: sqlite3.Connection, *, reminder_id: int) -> None:
+def mark_reminder_sent(conn: sqlite3.Connection, *, user_id: int, reminder_id: int) -> None:
     conn.execute(
-        "UPDATE reminders SET status = 'SENT', sent_at = ? WHERE id = ?",
-        (now_iso(), reminder_id),
+        "UPDATE reminders SET status = 'SENT', sent_at = ? WHERE id = ? AND user_id = ?",
+        (now_iso(), reminder_id, user_id),
     )
     conn.commit()
 
 
 def mark_reminder_failed(
-    conn: sqlite3.Connection, *, reminder_id: int, error: str, attempt_count: int | None = None
+    conn: sqlite3.Connection,
+    *,
+    user_id: int,
+    reminder_id: int,
+    error: str,
+    attempt_count: int | None = None,
 ) -> None:
     """Terminal, permanent failure - retries exhausted (or none apply).
     attempt_count is optional so this can still be called directly (e.g. by
@@ -859,13 +1001,14 @@ def mark_reminder_failed(
     retry path always passes the final attempt count so it's not lost."""
     if attempt_count is None:
         conn.execute(
-            "UPDATE reminders SET status = 'FAILED', last_error = ? WHERE id = ?",
-            (error, reminder_id),
+            "UPDATE reminders SET status = 'FAILED', last_error = ? WHERE id = ? AND user_id = ?",
+            (error, reminder_id, user_id),
         )
     else:
         conn.execute(
-            "UPDATE reminders SET status = 'FAILED', last_error = ?, attempt_count = ? WHERE id = ?",
-            (error, attempt_count, reminder_id),
+            """UPDATE reminders SET status = 'FAILED', last_error = ?, attempt_count = ?
+               WHERE id = ? AND user_id = ?""",
+            (error, attempt_count, reminder_id, user_id),
         )
     conn.commit()
 
@@ -887,6 +1030,7 @@ def mark_reminder_failed(
 def record_notification_delivery(
     conn: sqlite3.Connection,
     *,
+    user_id: int,
     provider: str,
     ok: bool,
     reminder_id: int | None = None,
@@ -898,24 +1042,29 @@ def record_notification_delivery(
     table the dashboard renders."""
     conn.execute(
         """INSERT INTO notification_deliveries
-           (reminder_id, category, provider, ok, error, attempted_at)
-           VALUES (?, ?, ?, ?, ?, ?)""",
-        (reminder_id, category, provider, 1 if ok else 0, error, now_iso()),
+           (user_id, reminder_id, category, provider, ok, error, attempted_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (user_id, reminder_id, category, provider, 1 if ok else 0, error, now_iso()),
     )
     conn.commit()
 
 
-def recent_notification_deliveries(conn: sqlite3.Connection, *, limit: int = 50) -> list[sqlite3.Row]:
+def recent_notification_deliveries(
+    conn: sqlite3.Connection, *, user_id: int, limit: int = 50
+) -> list[sqlite3.Row]:
     return conn.execute(
-        "SELECT * FROM notification_deliveries ORDER BY attempted_at DESC, id DESC LIMIT ?",
-        (limit,),
+        """SELECT * FROM notification_deliveries WHERE user_id = ?
+           ORDER BY attempted_at DESC, id DESC LIMIT ?""",
+        (user_id, limit),
     ).fetchall()
 
 
-def deliveries_for_reminder(conn: sqlite3.Connection, *, reminder_id: int) -> list[sqlite3.Row]:
+def deliveries_for_reminder(
+    conn: sqlite3.Connection, *, user_id: int, reminder_id: int
+) -> list[sqlite3.Row]:
     return conn.execute(
-        "SELECT * FROM notification_deliveries WHERE reminder_id = ? ORDER BY id",
-        (reminder_id,),
+        "SELECT * FROM notification_deliveries WHERE user_id = ? AND reminder_id = ? ORDER BY id",
+        (user_id, reminder_id),
     ).fetchall()
 
 
@@ -927,6 +1076,7 @@ def deliveries_for_reminder(conn: sqlite3.Connection, *, reminder_id: int) -> li
 def insert_class_reminder_if_absent(
     conn: sqlite3.Connection,
     *,
+    user_id: int,
     timetable_event_id: int,
     occurrence_date: str,
     reminder_type: str,
@@ -941,37 +1091,42 @@ def insert_class_reminder_if_absent(
     key = f"{timetable_event_id}:{occurrence_date}:{reminder_type}"
     cur = conn.execute(
         """INSERT OR IGNORE INTO class_reminders
-           (timetable_event_id, occurrence_date, reminder_type, scheduled_for,
+           (user_id, timetable_event_id, occurrence_date, reminder_type, scheduled_for,
             status, idempotency_key, created_at)
-           VALUES (?, ?, ?, ?, 'PENDING', ?, ?)""",
-        (timetable_event_id, occurrence_date, reminder_type, scheduled_for, key, now_iso()),
+           VALUES (?, ?, ?, ?, ?, 'PENDING', ?, ?)""",
+        (user_id, timetable_event_id, occurrence_date, reminder_type, scheduled_for, key, now_iso()),
     )
     conn.commit()
     return cur.lastrowid if cur.rowcount else None
 
 
-def pending_class_reminders(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+def pending_class_reminders(conn: sqlite3.Connection, *, user_id: int) -> list[sqlite3.Row]:
     return conn.execute(
         """SELECT class_reminders.*, timetable_events.course_name, timetable_events.room,
                   timetable_events.section, timetable_events.status AS class_status
            FROM class_reminders
            JOIN timetable_events ON timetable_events.id = class_reminders.timetable_event_id
-           WHERE class_reminders.status = 'PENDING'
-           ORDER BY class_reminders.scheduled_for ASC"""
+           WHERE class_reminders.user_id = ? AND class_reminders.status = 'PENDING'
+           ORDER BY class_reminders.scheduled_for ASC""",
+        (user_id,),
     ).fetchall()
 
 
-def mark_class_reminder_sent(conn: sqlite3.Connection, *, class_reminder_id: int) -> None:
+def mark_class_reminder_sent(
+    conn: sqlite3.Connection, *, user_id: int, class_reminder_id: int
+) -> None:
     now = now_iso()
     conn.execute(
-        "UPDATE class_reminders SET status = 'SENT', sent_at = ?, attempt_count = attempt_count + 1 WHERE id = ?",
-        (now, class_reminder_id),
+        """UPDATE class_reminders
+           SET status = 'SENT', sent_at = ?, attempt_count = attempt_count + 1
+           WHERE id = ? AND user_id = ?""",
+        (now, class_reminder_id, user_id),
     )
     conn.commit()
 
 
 def record_class_reminder_attempt(
-    conn: sqlite3.Connection, *, class_reminder_id: int, error: str, give_up: bool
+    conn: sqlite3.Connection, *, user_id: int, class_reminder_id: int, error: str, give_up: bool
 ) -> None:
     """A failed send. Stays PENDING (and is retried on the next tick) while
     the class has not started yet; becomes terminal FAILED once it has,
@@ -981,34 +1136,36 @@ def record_class_reminder_attempt(
         """UPDATE class_reminders
            SET status = CASE WHEN ? THEN 'FAILED' ELSE 'PENDING' END,
                last_error = ?, attempt_count = attempt_count + 1
-           WHERE id = ?""",
-        (1 if give_up else 0, error, class_reminder_id),
+           WHERE id = ? AND user_id = ?""",
+        (1 if give_up else 0, error, class_reminder_id, user_id),
     )
     conn.commit()
 
 
-def expire_stale_class_reminders(conn: sqlite3.Connection, *, now: str) -> int:
+def expire_stale_class_reminders(conn: sqlite3.Connection, *, user_id: int, now: str) -> int:
     """Any PENDING class reminder whose class has already started is stale -
     mark it FAILED rather than letting it fire late."""
     cur = conn.execute(
         """UPDATE class_reminders
            SET status = 'FAILED', last_error = 'class already started; reminder expired'
-           WHERE status = 'PENDING' AND scheduled_for <= ?""",
-        (now,),
+           WHERE user_id = ? AND status = 'PENDING' AND scheduled_for <= ?""",
+        (user_id, now),
     )
     conn.commit()
     return cur.rowcount
 
 
-def get_calendar_event(conn: sqlite3.Connection, *, task_id: int, kind: str) -> sqlite3.Row | None:
+def get_calendar_event(
+    conn: sqlite3.Connection, *, user_id: int, task_id: int, kind: str
+) -> sqlite3.Row | None:
     return conn.execute(
-        "SELECT * FROM calendar_events WHERE task_id = ? AND kind = ?",
-        (task_id, kind),
+        "SELECT * FROM calendar_events WHERE user_id = ? AND task_id = ? AND kind = ?",
+        (user_id, task_id, kind),
     ).fetchone()
 
 
 def record_calendar_event(
-    conn: sqlite3.Connection, *, task_id: int, kind: str, event_id: str
+    conn: sqlite3.Connection, *, user_id: int, task_id: int, kind: str, event_id: str
 ) -> None:
     """Insert or refresh the stored mapping for a Ragra-owned event.
 
@@ -1017,18 +1174,20 @@ def record_calendar_event(
     """
     now = now_iso()
     conn.execute(
-        """INSERT INTO calendar_events (task_id, kind, google_event_id, updated_at)
-           VALUES (?, ?, ?, ?)
-           ON CONFLICT(google_event_id) DO UPDATE SET updated_at = excluded.updated_at""",
-        (task_id, kind, event_id, now),
+        """INSERT INTO calendar_events (user_id, task_id, kind, google_event_id, updated_at)
+           VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(user_id, google_event_id) DO UPDATE SET updated_at = excluded.updated_at""",
+        (user_id, task_id, kind, event_id, now),
     )
     conn.commit()
 
 
-def delete_calendar_event_record(conn: sqlite3.Connection, *, task_id: int, kind: str) -> None:
+def delete_calendar_event_record(
+    conn: sqlite3.Connection, *, user_id: int, task_id: int, kind: str
+) -> None:
     conn.execute(
-        "DELETE FROM calendar_events WHERE task_id = ? AND kind = ?",
-        (task_id, kind),
+        "DELETE FROM calendar_events WHERE user_id = ? AND task_id = ? AND kind = ?",
+        (user_id, task_id, kind),
     )
     conn.commit()
 
@@ -1038,31 +1197,32 @@ def delete_calendar_event_record(conn: sqlite3.Connection, *, task_id: int, kind
 # ---------------------------------------------------------------------------
 
 
-def record_sync_start(conn: sqlite3.Connection, *, source: str) -> None:
+def record_sync_start(conn: sqlite3.Connection, *, user_id: int, source: str) -> None:
     now = now_iso()
     conn.execute(
-        """INSERT INTO sync_state (source, last_synced_at, status)
-           VALUES (?, ?, 'RUNNING')
-           ON CONFLICT(source) DO UPDATE SET last_synced_at = excluded.last_synced_at, status = 'RUNNING'""",
-        (source, now),
+        """INSERT INTO sync_state (user_id, source, last_synced_at, status)
+           VALUES (?, ?, ?, 'RUNNING')
+           ON CONFLICT(user_id, source) DO UPDATE
+             SET last_synced_at = excluded.last_synced_at, status = 'RUNNING'""",
+        (user_id, source, now),
     )
     conn.commit()
 
 
-def record_sync_success(conn: sqlite3.Connection, *, source: str) -> None:
+def record_sync_success(conn: sqlite3.Connection, *, user_id: int, source: str) -> None:
     now = now_iso()
     conn.execute(
         """UPDATE sync_state SET last_success_at = ?, status = 'OK', last_error = NULL
-           WHERE source = ?""",
-        (now, source),
+           WHERE user_id = ? AND source = ?""",
+        (now, user_id, source),
     )
     conn.commit()
 
 
-def record_sync_error(conn: sqlite3.Connection, *, source: str, error: str) -> None:
+def record_sync_error(conn: sqlite3.Connection, *, user_id: int, source: str, error: str) -> None:
     conn.execute(
-        "UPDATE sync_state SET status = 'ERROR', last_error = ? WHERE source = ?",
-        (error, source),
+        "UPDATE sync_state SET status = 'ERROR', last_error = ? WHERE user_id = ? AND source = ?",
+        (error, user_id, source),
     )
     conn.commit()
 
@@ -1082,15 +1242,19 @@ class TimetableUpsertResult:
 _TIMETABLE_TRACKED_FIELDS = ("day_of_week", "start_time", "end_time", "room", "section", "status")
 
 
-def get_timetable_event_by_external_id(conn: sqlite3.Connection, *, external_id: str) -> sqlite3.Row | None:
+def get_timetable_event_by_external_id(
+    conn: sqlite3.Connection, *, user_id: int, external_id: str
+) -> sqlite3.Row | None:
     return conn.execute(
-        "SELECT * FROM timetable_events WHERE external_id = ?", (external_id,)
+        "SELECT * FROM timetable_events WHERE user_id = ? AND external_id = ?",
+        (user_id, external_id),
     ).fetchone()
 
 
 def upsert_timetable_event(
     conn: sqlite3.Connection,
     *,
+    user_id: int,
     external_id: str,
     course_name: str,
     program: str | None,
@@ -1115,20 +1279,21 @@ def upsert_timetable_event(
     new one, so a class moving from one day/room/time to another is a
     single UPDATE, not a delete-then-insert pair."""
     now = now_iso()
-    existing = get_timetable_event_by_external_id(conn, external_id=external_id)
+    existing = get_timetable_event_by_external_id(conn, user_id=user_id, external_id=external_id)
 
     if existing is None:
         cur = conn.execute(
             """INSERT INTO timetable_events
-               (external_id, course_name, program, batch_year, enrollment_type, day_of_week,
-                occurrence_index, start_time, end_time, room, instructor, section, status,
-                source_spreadsheet_id, source_sheet_gid, source_sheet_title, last_synced_at,
-                created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               (user_id, external_id, course_name, program, batch_year, enrollment_type,
+                day_of_week, occurrence_index, start_time, end_time, room, instructor, section,
+                status, source_spreadsheet_id, source_sheet_gid, source_sheet_title,
+                last_synced_at, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
-                external_id, course_name, program, batch_year, enrollment_type, day_of_week,
-                occurrence_index, start_time, end_time, room, instructor, section, status,
-                source_spreadsheet_id, source_sheet_gid, source_sheet_title, now, now, now,
+                user_id, external_id, course_name, program, batch_year, enrollment_type,
+                day_of_week, occurrence_index, start_time, end_time, room, instructor, section,
+                status, source_spreadsheet_id, source_sheet_gid, source_sheet_title,
+                now, now, now,
             ),
         )
         conn.commit()
@@ -1150,11 +1315,11 @@ def upsert_timetable_event(
                occurrence_index = ?, start_time = ?, end_time = ?, room = ?, instructor = ?,
                section = ?, status = ?, source_spreadsheet_id = ?, source_sheet_gid = ?,
                source_sheet_title = ?, last_synced_at = ?, updated_at = ?
-           WHERE id = ?""",
+           WHERE id = ? AND user_id = ?""",
         (
             course_name, program, batch_year, enrollment_type, day_of_week, occurrence_index,
             start_time, end_time, room, instructor, section, status, source_spreadsheet_id,
-            source_sheet_gid, source_sheet_title, now, now, existing["id"],
+            source_sheet_gid, source_sheet_title, now, now, existing["id"], user_id,
         ),
     )
     conn.commit()
@@ -1162,7 +1327,7 @@ def upsert_timetable_event(
 
 
 def cancel_timetable_events_missing_from_source(
-    conn: sqlite3.Connection, *, seen_external_ids: set[str]
+    conn: sqlite3.Connection, *, user_id: int, seen_external_ids: set[str]
 ) -> list[int]:
     """A timetable sync that completed a structurally sound scrape (see
     ragra/sync/timetable_sync.py) but no longer sees a previously-known
@@ -1171,15 +1336,17 @@ def cancel_timetable_events_missing_from_source(
     scrape is never silently lost (callers must only call this after
     confirming the scrape was structurally sound)."""
     rows = conn.execute(
-        "SELECT id, external_id FROM timetable_events WHERE status != 'CANCELLED'"
+        "SELECT id, external_id FROM timetable_events WHERE user_id = ? AND status != 'CANCELLED'",
+        (user_id,),
     ).fetchall()
     cancelled_ids = []
     now = now_iso()
     for row in rows:
         if row["external_id"] not in seen_external_ids:
             conn.execute(
-                "UPDATE timetable_events SET status = 'CANCELLED', updated_at = ? WHERE id = ?",
-                (now, row["id"]),
+                """UPDATE timetable_events SET status = 'CANCELLED', updated_at = ?
+                   WHERE id = ? AND user_id = ?""",
+                (now, row["id"], user_id),
             )
             cancelled_ids.append(row["id"])
     if cancelled_ids:
@@ -1187,9 +1354,10 @@ def cancel_timetable_events_missing_from_source(
     return cancelled_ids
 
 
-def list_timetable_events(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+def list_timetable_events(conn: sqlite3.Connection, *, user_id: int) -> list[sqlite3.Row]:
     return conn.execute(
-        "SELECT * FROM timetable_events ORDER BY day_of_week, start_time"
+        "SELECT * FROM timetable_events WHERE user_id = ? ORDER BY day_of_week, start_time",
+        (user_id,),
     ).fetchall()
 
 
@@ -1201,6 +1369,7 @@ def list_timetable_events(conn: sqlite3.Connection) -> list[sqlite3.Row]:
 def record_tick_session(
     conn: sqlite3.Connection,
     *,
+    user_id: int,
     started_at: str,
     finished_at: str,
     duration_seconds: float,
@@ -1214,11 +1383,11 @@ def record_tick_session(
 ) -> int:
     cur = conn.execute(
         """INSERT INTO tick_sessions
-           (started_at, finished_at, duration_seconds, exit_code, classroom_result,
+           (user_id, started_at, finished_at, duration_seconds, exit_code, classroom_result,
             calendar_result, reminders_result, timetable_result, class_reminders_result, error)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
-            started_at, finished_at, duration_seconds, exit_code, classroom_result,
+            user_id, started_at, finished_at, duration_seconds, exit_code, classroom_result,
             calendar_result, reminders_result, timetable_result, class_reminders_result, error,
         ),
     )
@@ -1227,15 +1396,28 @@ def record_tick_session(
 
 
 def purge_old_tick_sessions(conn: sqlite3.Connection, *, older_than_iso: str) -> int:
-    """Deletes tick_sessions rows older than the given cutoff. Called at the
-    start of every tick with a ~48-hour cutoff, so this operational log
-    never grows without bound - it never touches any other table."""
+    """Deletes tick_sessions rows older than the given cutoff. Called once at
+    the start of every tick with a ~48-hour cutoff, so this operational log
+    never grows without bound - it never touches any other table.
+
+    ragra:cross-user - deliberately not scoped to one user. Retention is a
+    property of the log, not of any account: purging per-user would mean the
+    cutoff only ever applied to whichever users the tick happened to visit,
+    leaving a deleted user's rows behind forever. It only ever deletes by
+    age and returns no row content, so it discloses nothing across
+    accounts."""
     cur = conn.execute("DELETE FROM tick_sessions WHERE started_at < ?", (older_than_iso,))
     conn.commit()
     return cur.rowcount
 
 
-def list_recent_tick_sessions(conn: sqlite3.Connection, *, limit: int = 50) -> list[sqlite3.Row]:
+def list_recent_tick_sessions(
+    conn: sqlite3.Connection, *, user_id: int, limit: int = 50
+) -> list[sqlite3.Row]:
+    """This one is user-scoped even though it is only diagnostics: the health
+    page renders it, and a tick row carries that user's per-stage error
+    strings."""
     return conn.execute(
-        "SELECT * FROM tick_sessions ORDER BY started_at DESC LIMIT ?", (limit,)
+        "SELECT * FROM tick_sessions WHERE user_id = ? ORDER BY started_at DESC LIMIT ?",
+        (user_id, limit),
     ).fetchall()

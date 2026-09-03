@@ -17,6 +17,8 @@ from ragra.db import repo
 from ragra.db.connection import connect_closing
 from ragra.web.app import create_app
 
+from tests.support import owner_id
+
 CLASSROOM_FIELDS = (
     "title", "description", "link", "actual_deadline", "kind",
     "course_id", "source_type", "external_id", "source_published_at", "source_updated_at",
@@ -33,21 +35,22 @@ def db_path(tmp_path):
 
 @pytest.fixture
 def client(db_path):
-    return TestClient(create_app(db_path), follow_redirects=False)
+    c = TestClient(create_app(db_path), follow_redirects=False)
+    return c
 
 
 def _classroom_task(db_path) -> int:
     with connect_closing(db_path) as conn:
         course_id = repo.upsert_course(
             conn, external_id="course-1", name="OOP", section="BCS-3C",
-            teacher=None, course_code="CS1004", state="ACTIVE",
+            teacher=None, course_code="CS1004", state="ACTIVE", user_id=owner_id(conn),
         )
         result = repo.upsert_task_from_source(
             conn, course_id=course_id, source_type="coursework", external_id="cw-1",
             title="Real Classroom Assignment", description="from classroom", link="http://x",
             kind="ACTIONABLE", actual_deadline="2026-12-01T23:59:00+00:00",
             source_published_at="2026-08-01T00:00:00+00:00",
-            source_updated_at="2026-08-01T00:00:00+00:00",
+            source_updated_at="2026-08-01T00:00:00+00:00", user_id=owner_id(conn),
         )
         return result.task_id
 
@@ -62,30 +65,30 @@ def _snapshot(db_path, task_id) -> dict:
 
 
 def test_create_edit_complete_and_cancel_a_manual_task(conn):
-    task_id = repo.create_manual_task(conn, title="Write report", description="for me")
+    task_id = repo.create_manual_task(conn, title="Write report", description="for me", user_id=owner_id(conn))
     assert task_id
 
     row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
     assert row["source_type"] == "manual"
     assert row["external_id"] is None
 
-    repo.update_manual_task(conn, task_id=task_id, title="Write final report")
-    repo.set_personal_deadline(conn, task_id=task_id, personal_deadline="2026-09-20")
-    repo.mark_completed(conn, task_id=task_id)
+    repo.update_manual_task(conn, task_id=task_id, title="Write final report", user_id=owner_id(conn))
+    repo.set_personal_deadline(conn, task_id=task_id, personal_deadline="2026-09-20", user_id=owner_id(conn))
+    repo.mark_completed(conn, task_id=task_id, user_id=owner_id(conn))
     assert conn.execute("SELECT status FROM tasks WHERE id = ?", (task_id,)).fetchone()["status"] == "COMPLETED"
 
-    other = repo.create_manual_task(conn, title="Cancel me")
-    repo.cancel_task(conn, task_id=other)
+    other = repo.create_manual_task(conn, title="Cancel me", user_id=owner_id(conn))
+    repo.cancel_task(conn, task_id=other, user_id=owner_id(conn))
     assert conn.execute("SELECT status FROM tasks WHERE id = ?", (other,)).fetchone()["status"] == "CANCELLED"
 
 
 def test_manual_task_requires_a_title(conn):
     with pytest.raises(ValueError):
-        repo.create_manual_task(conn, title="   ")
+        repo.create_manual_task(conn, title="   ", user_id=owner_id(conn))
 
 
 def test_manual_task_belongs_to_the_personal_pseudo_course(conn):
-    task_id = repo.create_manual_task(conn, title="Task")
+    task_id = repo.create_manual_task(conn, title="Task", user_id=owner_id(conn))
     row = conn.execute(
         """SELECT courses.external_id FROM tasks JOIN courses ON courses.id = tasks.course_id
            WHERE tasks.id = ?""",
@@ -95,8 +98,8 @@ def test_manual_task_belongs_to_the_personal_pseudo_course(conn):
 
 
 def test_manual_task_edit_records_history(conn):
-    task_id = repo.create_manual_task(conn, title="Before")
-    repo.update_manual_task(conn, task_id=task_id, title="After")
+    task_id = repo.create_manual_task(conn, title="Before", user_id=owner_id(conn))
+    repo.update_manual_task(conn, task_id=task_id, title="After", user_id=owner_id(conn))
 
     changes = conn.execute(
         "SELECT * FROM task_history WHERE task_id = ? AND field = 'title'", (task_id,)
@@ -111,31 +114,31 @@ def test_manual_task_edit_records_history(conn):
 def test_editing_a_classroom_task_raises(conn):
     course_id = repo.upsert_course(
         conn, external_id="c1", name="OOP", section=None, teacher=None,
-        course_code=None, state="ACTIVE",
+        course_code=None, state="ACTIVE", user_id=owner_id(conn),
     )
     result = repo.upsert_task_from_source(
         conn, course_id=course_id, source_type="coursework", external_id="cw-1",
         title="Classroom Task", description=None, link=None, kind="ACTIONABLE",
-        actual_deadline=None, source_published_at=None, source_updated_at=None,
+        actual_deadline=None, source_published_at=None, source_updated_at=None, user_id=owner_id(conn),
     )
 
     with pytest.raises(repo.TaskSourceViolation):
-        repo.update_manual_task(conn, task_id=result.task_id, title="hijacked")
+        repo.update_manual_task(conn, task_id=result.task_id, title="hijacked", user_id=owner_id(conn))
 
 
 def test_cancelling_a_classroom_task_raises(conn):
     course_id = repo.upsert_course(
         conn, external_id="c1", name="OOP", section=None, teacher=None,
-        course_code=None, state="ACTIVE",
+        course_code=None, state="ACTIVE", user_id=owner_id(conn),
     )
     result = repo.upsert_task_from_source(
         conn, course_id=course_id, source_type="coursework", external_id="cw-1",
         title="Classroom Task", description=None, link=None, kind="ACTIONABLE",
-        actual_deadline=None, source_published_at=None, source_updated_at=None,
+        actual_deadline=None, source_published_at=None, source_updated_at=None, user_id=owner_id(conn),
     )
 
     with pytest.raises(repo.TaskSourceViolation):
-        repo.cancel_task(conn, task_id=result.task_id)
+        repo.cancel_task(conn, task_id=result.task_id, user_id=owner_id(conn))
 
 
 def test_personal_deadline_and_completion_remain_allowed_on_classroom_tasks(conn):
@@ -143,17 +146,17 @@ def test_personal_deadline_and_completion_remain_allowed_on_classroom_tasks(conn
     # Removing this would delete a correct, shipped feature.
     course_id = repo.upsert_course(
         conn, external_id="c1", name="OOP", section=None, teacher=None,
-        course_code=None, state="ACTIVE",
+        course_code=None, state="ACTIVE", user_id=owner_id(conn),
     )
     result = repo.upsert_task_from_source(
         conn, course_id=course_id, source_type="coursework", external_id="cw-1",
         title="Classroom Task", description=None, link=None, kind="ACTIONABLE",
         actual_deadline="2026-12-01T23:59:00+00:00",
-        source_published_at=None, source_updated_at=None,
+        source_published_at=None, source_updated_at=None, user_id=owner_id(conn),
     )
 
-    repo.set_personal_deadline(conn, task_id=result.task_id, personal_deadline="2026-11-28")
-    repo.mark_completed(conn, task_id=result.task_id)
+    repo.set_personal_deadline(conn, task_id=result.task_id, personal_deadline="2026-11-28", user_id=owner_id(conn))
+    repo.mark_completed(conn, task_id=result.task_id, user_id=owner_id(conn))
 
     row = conn.execute("SELECT * FROM tasks WHERE id = ?", (result.task_id,)).fetchone()
     assert row["personal_deadline"] == "2026-11-28"
@@ -163,7 +166,7 @@ def test_personal_deadline_and_completion_remain_allowed_on_classroom_tasks(conn
 
 def test_guard_rejects_a_nonexistent_task(conn):
     with pytest.raises(repo.TaskSourceViolation):
-        repo.update_manual_task(conn, task_id=999999, title="ghost")
+        repo.update_manual_task(conn, task_id=999999, title="ghost", user_id=owner_id(conn))
 
 
 # --- Adversarial route tests ----------------------------------------------
@@ -237,7 +240,7 @@ def test_create_route_cannot_forge_a_classroom_task(client, db_path):
 
 def test_manual_task_can_be_edited_through_the_route(client, db_path):
     with connect_closing(db_path) as conn:
-        task_id = repo.create_manual_task(conn, title="Original")
+        task_id = repo.create_manual_task(conn, title="Original", user_id=owner_id(conn))
 
     response = client.post(f"/tasks/{task_id}/edit", data={"title": "Updated"})
 
@@ -267,7 +270,7 @@ def test_empty_deadline_means_none_not_now(client, db_path):
 def test_tasks_page_lists_only_manual_tasks(client, db_path):
     _classroom_task(db_path)
     with connect_closing(db_path) as conn:
-        repo.create_manual_task(conn, title="My Own Task")
+        repo.create_manual_task(conn, title="My Own Task", user_id=owner_id(conn))
 
     body = client.get("/tasks").text
 

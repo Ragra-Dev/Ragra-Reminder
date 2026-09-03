@@ -9,11 +9,13 @@ from ragra.db import repo
 from ragra.sync.classroom_sync import sync_classroom
 from tests.test_classroom_sync import COURSE, FakeClient
 
+from tests.support import owner_id
+
 
 def _make_course(conn):
     return repo.upsert_course(
         conn, external_id="course-1", name="OOP", section="BCS-3C",
-        teacher="Dr. Smith", course_code="CS1004", state="ACTIVE",
+        teacher="Dr. Smith", course_code="CS1004", state="ACTIVE", user_id=owner_id(conn),
     )
 
 
@@ -23,10 +25,10 @@ def test_overdue_task_transitions_to_missed(conn):
     result = repo.upsert_task_from_source(
         conn, course_id=course_id, source_type="coursework", external_id="cw-1",
         title="Overdue Thing", description=None, link=None, kind="ACTIONABLE",
-        actual_deadline=past, source_published_at=repo.now_iso(), source_updated_at=repo.now_iso(),
+        actual_deadline=past, source_published_at=repo.now_iso(), source_updated_at=repo.now_iso(), user_id=owner_id(conn),
     )
 
-    missed = repo.mark_overdue_tasks_as_missed(conn, now=datetime.now(timezone.utc).isoformat())
+    missed = repo.mark_overdue_tasks_as_missed(conn, now=datetime.now(timezone.utc).isoformat(), user_id=owner_id(conn))
 
     assert missed == [result.task_id]
     row = conn.execute("SELECT status, missed_at FROM tasks WHERE id = ?", (result.task_id,)).fetchone()
@@ -50,18 +52,18 @@ def test_overdue_task_transition_cancels_its_pending_reminders(conn):
     result = repo.upsert_task_from_source(
         conn, course_id=course_id, source_type="coursework", external_id="cw-stray",
         title="Just Missed It", description=None, link=None, kind="ACTIONABLE",
-        actual_deadline=past, source_published_at=repo.now_iso(), source_updated_at=repo.now_iso(),
+        actual_deadline=past, source_published_at=repo.now_iso(), source_updated_at=repo.now_iso(), user_id=owner_id(conn),
     )
     repo.insert_reminder_if_absent(
         conn, task_id=result.task_id, reminder_type="FINAL_1H",
-        scheduled_for=past, idempotency_key=f"{result.task_id}:FINAL_1H:v1",
+        scheduled_for=past, idempotency_key=f"{result.task_id}:FINAL_1H:v1", user_id=owner_id(conn),
     )
     pending_before = conn.execute(
         "SELECT COUNT(*) AS c FROM reminders WHERE task_id = ? AND status = 'PENDING'", (result.task_id,)
     ).fetchone()["c"]
     assert pending_before == 1
 
-    repo.mark_overdue_tasks_as_missed(conn, now=datetime.now(timezone.utc).isoformat())
+    repo.mark_overdue_tasks_as_missed(conn, now=datetime.now(timezone.utc).isoformat(), user_id=owner_id(conn))
 
     reminder = conn.execute(
         "SELECT status FROM reminders WHERE task_id = ? AND reminder_type = 'FINAL_1H'", (result.task_id,)
@@ -75,11 +77,11 @@ def test_completed_task_is_not_marked_missed(conn):
     result = repo.upsert_task_from_source(
         conn, course_id=course_id, source_type="coursework", external_id="cw-2",
         title="Completed On Time", description=None, link=None, kind="ACTIONABLE",
-        actual_deadline=past, source_published_at=repo.now_iso(), source_updated_at=repo.now_iso(),
+        actual_deadline=past, source_published_at=repo.now_iso(), source_updated_at=repo.now_iso(), user_id=owner_id(conn),
     )
-    repo.mark_completed(conn, task_id=result.task_id)
+    repo.mark_completed(conn, task_id=result.task_id, user_id=owner_id(conn))
 
-    missed = repo.mark_overdue_tasks_as_missed(conn, now=datetime.now(timezone.utc).isoformat())
+    missed = repo.mark_overdue_tasks_as_missed(conn, now=datetime.now(timezone.utc).isoformat(), user_id=owner_id(conn))
 
     assert missed == []
     row = conn.execute("SELECT status FROM tasks WHERE id = ?", (result.task_id,)).fetchone()
@@ -92,11 +94,11 @@ def test_cancelled_task_is_not_marked_missed(conn):
     result = repo.upsert_task_from_source(
         conn, course_id=course_id, source_type="coursework", external_id="cw-3",
         title="Cancelled Assignment", description=None, link=None, kind="ACTIONABLE",
-        actual_deadline=past, source_published_at=repo.now_iso(), source_updated_at=repo.now_iso(),
+        actual_deadline=past, source_published_at=repo.now_iso(), source_updated_at=repo.now_iso(), user_id=owner_id(conn),
     )
-    repo.cancel_task_from_source(conn, task_id=result.task_id)
+    repo.cancel_task_from_source(conn, task_id=result.task_id, user_id=owner_id(conn))
 
-    missed = repo.mark_overdue_tasks_as_missed(conn, now=datetime.now(timezone.utc).isoformat())
+    missed = repo.mark_overdue_tasks_as_missed(conn, now=datetime.now(timezone.utc).isoformat(), user_id=owner_id(conn))
 
     assert missed == []
     row = conn.execute("SELECT status FROM tasks WHERE id = ?", (result.task_id,)).fetchone()
@@ -109,10 +111,10 @@ def test_future_task_is_not_marked_missed(conn):
     result = repo.upsert_task_from_source(
         conn, course_id=course_id, source_type="coursework", external_id="cw-4",
         title="Not Due Yet", description=None, link=None, kind="ACTIONABLE",
-        actual_deadline=future, source_published_at=repo.now_iso(), source_updated_at=repo.now_iso(),
+        actual_deadline=future, source_published_at=repo.now_iso(), source_updated_at=repo.now_iso(), user_id=owner_id(conn),
     )
 
-    missed = repo.mark_overdue_tasks_as_missed(conn, now=datetime.now(timezone.utc).isoformat())
+    missed = repo.mark_overdue_tasks_as_missed(conn, now=datetime.now(timezone.utc).isoformat(), user_id=owner_id(conn))
 
     assert missed == []
     row = conn.execute("SELECT status FROM tasks WHERE id = ?", (result.task_id,)).fetchone()
@@ -125,15 +127,15 @@ def test_repeated_reconciliation_is_idempotent(conn):
     result = repo.upsert_task_from_source(
         conn, course_id=course_id, source_type="coursework", external_id="cw-5",
         title="Overdue Thing", description=None, link=None, kind="ACTIONABLE",
-        actual_deadline=past, source_published_at=repo.now_iso(), source_updated_at=repo.now_iso(),
+        actual_deadline=past, source_published_at=repo.now_iso(), source_updated_at=repo.now_iso(), user_id=owner_id(conn),
     )
 
     now = datetime.now(timezone.utc).isoformat()
-    first = repo.mark_overdue_tasks_as_missed(conn, now=now)
+    first = repo.mark_overdue_tasks_as_missed(conn, now=now, user_id=owner_id(conn))
     row1 = conn.execute("SELECT missed_at FROM tasks WHERE id = ?", (result.task_id,)).fetchone()
 
-    second = repo.mark_overdue_tasks_as_missed(conn, now=now)
-    third = repo.mark_overdue_tasks_as_missed(conn, now=now)
+    second = repo.mark_overdue_tasks_as_missed(conn, now=now, user_id=owner_id(conn))
+    third = repo.mark_overdue_tasks_as_missed(conn, now=now, user_id=owner_id(conn))
     row2 = conn.execute("SELECT missed_at FROM tasks WHERE id = ?", (result.task_id,)).fetchone()
 
     assert first == [result.task_id]
@@ -156,16 +158,16 @@ def test_missed_tasks_ordered_most_recent_deadline_first(conn):
         result = repo.upsert_task_from_source(
             conn, course_id=course_id, source_type="coursework", external_id=external_id,
             title=title, description=None, link=None, kind="ACTIONABLE",
-            actual_deadline=deadline, source_published_at=repo.now_iso(), source_updated_at=repo.now_iso(),
+            actual_deadline=deadline, source_published_at=repo.now_iso(), source_updated_at=repo.now_iso(), user_id=owner_id(conn),
         )
-        repo.mark_missed(conn, task_id=result.task_id)
+        repo.mark_missed(conn, task_id=result.task_id, user_id=owner_id(conn))
         return result.task_id
 
     old_id = _missed("cw-old", "Old Historical Thing", 150)
     recent_id = _missed("cw-recent", "Recently Missed Thing", 2)
     mid_id = _missed("cw-mid", "Medium Age Thing", 30)
 
-    rows = repo.missed_tasks(conn)
+    rows = repo.missed_tasks(conn, user_id=owner_id(conn))
     assert [r["id"] for r in rows] == [recent_id, mid_id, old_id]
 
 
@@ -178,17 +180,17 @@ def test_missed_tasks_limit_returns_only_the_most_recent(conn):
         result = repo.upsert_task_from_source(
             conn, course_id=course_id, source_type="coursework", external_id=f"cw-{i}",
             title=f"Task {i}", description=None, link=None, kind="ACTIONABLE",
-            actual_deadline=deadline, source_published_at=repo.now_iso(), source_updated_at=repo.now_iso(),
+            actual_deadline=deadline, source_published_at=repo.now_iso(), source_updated_at=repo.now_iso(), user_id=owner_id(conn),
         )
-        repo.mark_missed(conn, task_id=result.task_id)
+        repo.mark_missed(conn, task_id=result.task_id, user_id=owner_id(conn))
         ids.append((result.task_id, days_ago))
 
     # Sorted by days_ago ascending = most recent deadline first.
     expected_top2 = [tid for tid, _ in sorted(ids, key=lambda pair: pair[1])[:2]]
 
-    limited = repo.missed_tasks(conn, limit=2)
+    limited = repo.missed_tasks(conn, limit=2, user_id=owner_id(conn))
     assert [r["id"] for r in limited] == expected_top2
-    assert repo.count_missed_tasks(conn) == 5
+    assert repo.count_missed_tasks(conn, user_id=owner_id(conn)) == 5
 
 
 def test_wired_into_real_sync_flow(conn):
@@ -208,8 +210,8 @@ def test_wired_into_real_sync_flow(conn):
     }
     client = FakeClient([COURSE], coursework={"course-1": [assignment]})
 
-    summary1 = sync_classroom(conn, client)
-    summary2 = sync_classroom(conn, client)
+    summary1 = sync_classroom(conn, client, user_id=owner_id(conn))
+    summary2 = sync_classroom(conn, client, user_id=owner_id(conn))
 
     assert summary1.tasks_marked_missed == 1
     assert summary2.tasks_marked_missed == 0  # idempotent on repeated tick/sync
@@ -232,12 +234,12 @@ def test_cancel_stray_reminders_for_terminal_tasks_cleans_up_each_terminal_statu
             conn, course_id=course_id, source_type="coursework", external_id=external_id,
             title=title, description=None, link=None, kind="ACTIONABLE",
             actual_deadline=(now + timedelta(days=5)).isoformat(),
-            source_published_at=repo.now_iso(), source_updated_at=repo.now_iso(),
+            source_published_at=repo.now_iso(), source_updated_at=repo.now_iso(), user_id=owner_id(conn),
         )
         repo.insert_reminder_if_absent(
             conn, task_id=result.task_id, reminder_type="T_MINUS_1D",
             scheduled_for=(now + timedelta(days=4)).isoformat(),
-            idempotency_key=f"{result.task_id}:T_MINUS_1D:v1",
+            idempotency_key=f"{result.task_id}:T_MINUS_1D:v1", user_id=owner_id(conn),
         )
         return result.task_id
 
@@ -254,7 +256,7 @@ def test_cancel_stray_reminders_for_terminal_tasks_cleans_up_each_terminal_statu
     conn.execute("UPDATE tasks SET status = 'MISSED' WHERE id = ?", (missed_id,))
     conn.commit()
 
-    cancelled_count = repo.cancel_stray_reminders_for_terminal_tasks(conn)
+    cancelled_count = repo.cancel_stray_reminders_for_terminal_tasks(conn, user_id=owner_id(conn))
     assert cancelled_count == 3
 
     def _status(task_id):
@@ -268,4 +270,4 @@ def test_cancel_stray_reminders_for_terminal_tasks_cleans_up_each_terminal_statu
     assert _status(current_id) == "PENDING"  # legitimately-current task untouched
 
     # Idempotent: nothing left to cancel on a second pass.
-    assert repo.cancel_stray_reminders_for_terminal_tasks(conn) == 0
+    assert repo.cancel_stray_reminders_for_terminal_tasks(conn, user_id=owner_id(conn)) == 0

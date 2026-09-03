@@ -10,6 +10,8 @@ from ragra.db import repo
 from ragra.db.connection import connect_closing
 from ragra.web.app import create_app
 
+from tests.support import owner_id
+
 
 @pytest.fixture
 def db_path(tmp_path):
@@ -21,19 +23,20 @@ def db_path(tmp_path):
 
 @pytest.fixture
 def client(db_path):
-    return TestClient(create_app(db_path), follow_redirects=False)
+    c = TestClient(create_app(db_path), follow_redirects=False)
+    return c
 
 
 def _announcement(conn, *, external_id="ann-1", title="Quiz on Friday") -> int:
     course_id = repo.upsert_course(
         conn, external_id="course-1", name="OOP", section=None, teacher=None,
-        course_code="CS1004", state="ACTIVE",
+        course_code="CS1004", state="ACTIVE", user_id=owner_id(conn),
     )
     result = repo.upsert_task_from_source(
         conn, course_id=course_id, source_type="announcement", external_id=external_id,
         title=title, description="Bring your notes.", link="http://classroom.example/a",
         kind="INFORMATIONAL", actual_deadline=None,
-        source_published_at="2026-09-01T10:00:00Z", source_updated_at="2026-09-01T10:00:00Z",
+        source_published_at="2026-09-01T10:00:00Z", source_updated_at="2026-09-01T10:00:00Z", user_id=owner_id(conn),
     )
     return result.task_id
 
@@ -41,7 +44,7 @@ def _announcement(conn, *, external_id="ann-1", title="Quiz on Friday") -> int:
 def test_creating_a_task_from_an_announcement_links_them(conn):
     announcement_id = _announcement(conn)
 
-    task_id = repo.create_task_from_announcement(conn, announcement_task_id=announcement_id)
+    task_id = repo.create_task_from_announcement(conn, announcement_task_id=announcement_id, user_id=owner_id(conn))
 
     row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
     assert row["parent_task_id"] == announcement_id
@@ -52,9 +55,9 @@ def test_creating_a_task_from_an_announcement_links_them(conn):
 def test_creating_twice_is_idempotent(conn):
     announcement_id = _announcement(conn)
 
-    first = repo.create_task_from_announcement(conn, announcement_task_id=announcement_id)
-    second = repo.create_task_from_announcement(conn, announcement_task_id=announcement_id)
-    third = repo.create_task_from_announcement(conn, announcement_task_id=announcement_id)
+    first = repo.create_task_from_announcement(conn, announcement_task_id=announcement_id, user_id=owner_id(conn))
+    second = repo.create_task_from_announcement(conn, announcement_task_id=announcement_id, user_id=owner_id(conn))
+    third = repo.create_task_from_announcement(conn, announcement_task_id=announcement_id, user_id=owner_id(conn))
 
     assert first == second == third
     count = conn.execute(
@@ -67,7 +70,7 @@ def test_the_announcement_itself_is_never_modified(conn):
     announcement_id = _announcement(conn)
     before = dict(conn.execute("SELECT * FROM tasks WHERE id = ?", (announcement_id,)).fetchone())
 
-    repo.create_task_from_announcement(conn, announcement_task_id=announcement_id)
+    repo.create_task_from_announcement(conn, announcement_task_id=announcement_id, user_id=owner_id(conn))
 
     after = dict(conn.execute("SELECT * FROM tasks WHERE id = ?", (announcement_id,)).fetchone())
     assert after == before
@@ -78,7 +81,7 @@ def test_created_task_can_carry_its_own_title_and_deadline(conn):
 
     task_id = repo.create_task_from_announcement(
         conn, announcement_task_id=announcement_id,
-        title="Revise for Friday quiz", actual_deadline="2026-09-11T09:00:00+00:00",
+        title="Revise for Friday quiz", actual_deadline="2026-09-11T09:00:00+00:00", user_id=owner_id(conn),
     )
 
     row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
@@ -89,33 +92,33 @@ def test_created_task_can_carry_its_own_title_and_deadline(conn):
 def test_non_announcement_tasks_are_rejected(conn):
     course_id = repo.upsert_course(
         conn, external_id="c1", name="OOP", section=None, teacher=None,
-        course_code=None, state="ACTIVE",
+        course_code=None, state="ACTIVE", user_id=owner_id(conn),
     )
     result = repo.upsert_task_from_source(
         conn, course_id=course_id, source_type="coursework", external_id="cw-1",
         title="Assignment", description=None, link=None, kind="ACTIONABLE",
-        actual_deadline=None, source_published_at=None, source_updated_at=None,
+        actual_deadline=None, source_published_at=None, source_updated_at=None, user_id=owner_id(conn),
     )
 
     with pytest.raises(ValueError):
-        repo.create_task_from_announcement(conn, announcement_task_id=result.task_id)
+        repo.create_task_from_announcement(conn, announcement_task_id=result.task_id, user_id=owner_id(conn))
 
 
 def test_archiving_removes_an_announcement_from_triage(conn):
     announcement_id = _announcement(conn)
-    assert len(repo.open_announcements(conn)) == 1
+    assert len(repo.open_announcements(conn, user_id=owner_id(conn))) == 1
 
-    repo.archive_task(conn, task_id=announcement_id)
+    repo.archive_task(conn, task_id=announcement_id, user_id=owner_id(conn))
 
-    assert repo.open_announcements(conn) == []
+    assert repo.open_announcements(conn, user_id=owner_id(conn)) == []
     row = conn.execute("SELECT status FROM tasks WHERE id = ?", (announcement_id,)).fetchone()
     assert row["status"] == "ARCHIVED"
 
 
 def test_archiving_is_idempotent_and_recorded(conn):
     announcement_id = _announcement(conn)
-    repo.archive_task(conn, task_id=announcement_id)
-    repo.archive_task(conn, task_id=announcement_id)
+    repo.archive_task(conn, task_id=announcement_id, user_id=owner_id(conn))
+    repo.archive_task(conn, task_id=announcement_id, user_id=owner_id(conn))
 
     history = conn.execute(
         "SELECT COUNT(*) AS c FROM task_history WHERE task_id = ? AND new_value = 'ARCHIVED'",
@@ -126,11 +129,11 @@ def test_archiving_is_idempotent_and_recorded(conn):
 
 def test_open_announcements_reports_whether_a_task_was_created(conn):
     announcement_id = _announcement(conn)
-    assert repo.open_announcements(conn)[0]["child_task_id"] is None
+    assert repo.open_announcements(conn, user_id=owner_id(conn))[0]["child_task_id"] is None
 
-    repo.create_task_from_announcement(conn, announcement_task_id=announcement_id)
+    repo.create_task_from_announcement(conn, announcement_task_id=announcement_id, user_id=owner_id(conn))
 
-    assert repo.open_announcements(conn)[0]["child_task_id"] is not None
+    assert repo.open_announcements(conn, user_id=owner_id(conn))[0]["child_task_id"] is not None
 
 
 # --- Routes ---------------------------------------------------------------

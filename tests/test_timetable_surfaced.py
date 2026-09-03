@@ -15,6 +15,8 @@ from ragra.db.connection import connect_closing
 from ragra.timetable.schedule import occurrences_for_local_day, weekly_class_from_row
 from ragra.web.app import create_app
 
+from tests.support import owner_id
+
 # 2026-09-07 is a Monday; 08:30 PKT == 03:30 UTC.
 MONDAY_MIDDAY_UTC = datetime(2026, 9, 7, 6, 0, tzinfo=timezone.utc)
 
@@ -28,7 +30,7 @@ def _add_class(conn, **overrides):
         source_sheet_gid="1", source_sheet_title="Monday",
     )
     defaults.update(overrides)
-    repo.upsert_timetable_event(conn, **defaults)
+    repo.upsert_timetable_event(conn, **defaults, user_id=owner_id(conn))
 
 
 @pytest.fixture
@@ -41,7 +43,8 @@ def db_path(tmp_path):
 
 @pytest.fixture
 def client(db_path):
-    return TestClient(create_app(db_path))
+    c = TestClient(create_app(db_path))
+    return c
 
 
 def test_occurrences_for_local_day_returns_that_days_classes(conn):
@@ -49,7 +52,7 @@ def test_occurrences_for_local_day_returns_that_days_classes(conn):
     _add_class(conn, external_id="tt-2", course_name="OOP", day_of_week=1)
 
     classes = occurrences_for_local_day(
-        [weekly_class_from_row(r) for r in repo.list_timetable_events(conn)],
+        [weekly_class_from_row(r) for r in repo.list_timetable_events(conn, user_id=owner_id(conn))],
         instant=MONDAY_MIDDAY_UTC,
     )
 
@@ -59,7 +62,7 @@ def test_occurrences_for_local_day_returns_that_days_classes(conn):
 def test_brief_lists_todays_classes_in_campus_time(conn):
     _add_class(conn)
 
-    text = build_deterministic_brief(conn, now=MONDAY_MIDDAY_UTC)
+    text = build_deterministic_brief(conn, now=MONDAY_MIDDAY_UTC, user_id=owner_id(conn))
 
     assert "CLASSES TODAY (1):" in text
     assert "08:30-09:50" in text  # campus wall clock, not the 03:30 UTC instant
@@ -68,7 +71,7 @@ def test_brief_lists_todays_classes_in_campus_time(conn):
 
 
 def test_brief_reports_no_classes_rather_than_omitting_the_section(conn):
-    text = build_deterministic_brief(conn, now=MONDAY_MIDDAY_UTC)
+    text = build_deterministic_brief(conn, now=MONDAY_MIDDAY_UTC, user_id=owner_id(conn))
 
     assert "CLASSES TODAY (0):" in text
     assert "(none)" in text
@@ -77,7 +80,7 @@ def test_brief_reports_no_classes_rather_than_omitting_the_section(conn):
 def test_brief_marks_a_cancelled_class(conn):
     _add_class(conn, status="CANCELLED")
 
-    text = build_deterministic_brief(conn, now=MONDAY_MIDDAY_UTC)
+    text = build_deterministic_brief(conn, now=MONDAY_MIDDAY_UTC, user_id=owner_id(conn))
 
     assert "[CANCELLED]" in text
 
@@ -87,7 +90,7 @@ def test_brief_survives_a_malformed_timetable_time(conn):
     # the deadline facts that make up the rest of the brief.
     _add_class(conn, start_time="not-a-time")
 
-    text = build_deterministic_brief(conn, now=MONDAY_MIDDAY_UTC)
+    text = build_deterministic_brief(conn, now=MONDAY_MIDDAY_UTC, user_id=owner_id(conn))
 
     assert "CLASSES TODAY (0):" in text
     assert "OVERDUE (0):" in text  # the rest of the brief is intact

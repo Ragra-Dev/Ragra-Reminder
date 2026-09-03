@@ -33,6 +33,8 @@ from ragra.adapters.classroom import ClassroomTokenPaths
 from ragra.adapters.fast_timetable import SheetInfo
 from ragra.config import Config
 
+from tests.support import owner_id
+
 # Core modules that must never reach for the optional AI package, by source
 # inspection - catches a reintroduced import even if no test happens to
 # exercise the exact code path that would trigger it. ragra.cli is
@@ -159,7 +161,7 @@ def test_reminders_command_works_with_ai_package_unavailable(tmp_path, monkeypat
         from ragra.reminders.dispatch import dispatch_due_reminders
 
         # Must not raise ImportError/AttributeError even though ragra.ai is poisoned.
-        summary = dispatch_due_reminders(conn, providers=[], now="2026-01-01T00:00:00+00:00")
+        summary = dispatch_due_reminders(conn, providers=[], now="2026-01-01T00:00:00+00:00", user_id=owner_id(conn))
 
     assert summary.errors == []
 
@@ -171,7 +173,7 @@ def test_sync_stages_work_with_ai_package_unavailable(tmp_path, monkeypatch):
 
     config = _make_config(tmp_path, spreadsheet_id="fake-id")
     with cli.connect_closing(config.db_path) as conn:
-        rc, error = cli._run_timetable_sync(conn, config, print)
+        rc, error = cli._run_timetable_sync(conn, config, print, user_id=owner_id(conn))
 
     assert rc == 0
     assert error is None

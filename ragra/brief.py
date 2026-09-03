@@ -19,7 +19,7 @@ from ragra.db import repo
 from ragra.tz import format_local, format_stored_local, local_day_bounds, utc_iso
 
 
-def _todays_classes(conn: sqlite3.Connection, *, now: datetime) -> list:
+def _todays_classes(conn: sqlite3.Connection, *, user_id: int, now: datetime) -> list:
     """Today's classes, computed on demand from the weekly timetable
     pattern. Best-effort: a timetable problem (a malformed stored time, or
     missing timezone data) must not take the whole brief down, since every
@@ -27,7 +27,7 @@ def _todays_classes(conn: sqlite3.Connection, *, now: datetime) -> list:
     from ragra.timetable.schedule import occurrences_for_local_day, weekly_class_from_row
 
     try:
-        rows = repo.list_timetable_events(conn)
+        rows = repo.list_timetable_events(conn, user_id=user_id)
         return occurrences_for_local_day(
             [weekly_class_from_row(row) for row in rows], instant=now
         )
@@ -35,7 +35,7 @@ def _todays_classes(conn: sqlite3.Connection, *, now: datetime) -> list:
         return []
 
 
-def build_deterministic_brief(conn: sqlite3.Connection, *, now: datetime) -> str:
+def build_deterministic_brief(conn: sqlite3.Connection, *, user_id: int, now: datetime) -> str:
     now_iso = utc_iso(now)
     # "Today" is the campus calendar day, not the UTC one. These differ for
     # five hours of every day, during which a UTC-day boundary silently
@@ -44,15 +44,21 @@ def build_deterministic_brief(conn: sqlite3.Connection, *, now: datetime) -> str
     end_of_today_iso = utc_iso(day_end)
     week_end_iso = utc_iso(now + timedelta(days=7))
 
-    overdue = repo.overdue_tasks(conn, now=now_iso)
-    due_today = repo.tasks_due_between(conn, start_iso=now_iso, end_iso=end_of_today_iso)
+    overdue = repo.overdue_tasks(conn, user_id=user_id, now=now_iso)
+    due_today = repo.tasks_due_between(
+        conn, user_id=user_id, start_iso=now_iso, end_iso=end_of_today_iso
+    )
     due_today_ids = {t["id"] for t in due_today}
     due_soon = [
-        t for t in repo.tasks_due_between(conn, start_iso=now_iso, end_iso=week_end_iso)
+        t for t in repo.tasks_due_between(
+            conn, user_id=user_id, start_iso=now_iso, end_iso=week_end_iso
+        )
         if t["id"] not in due_today_ids
     ]
     reminders_today = [
-        r for r in repo.upcoming_scheduled_reminders(conn, now=now_iso, limit=100)
+        r for r in repo.upcoming_scheduled_reminders(
+            conn, user_id=user_id, now=now_iso, limit=100
+        )
         if r["scheduled_for"] <= end_of_today_iso
     ]
 
@@ -62,7 +68,7 @@ def build_deterministic_brief(conn: sqlite3.Connection, *, now: datetime) -> str
 
     lines = [f"Good morning. Here is your academic status as of {format_local(now)}.", ""]
 
-    classes = _todays_classes(conn, now=now)
+    classes = _todays_classes(conn, user_id=user_id, now=now)
     lines.append(f"CLASSES TODAY ({len(classes)}):")
     if classes:
         for occurrence in classes:
@@ -111,12 +117,14 @@ def build_deterministic_brief(conn: sqlite3.Connection, *, now: datetime) -> str
     return "\n".join(lines)
 
 
-def build_full_brief(conn: sqlite3.Connection, *, now: datetime, hermes_bin: Path | None) -> str:
+def build_full_brief(
+    conn: sqlite3.Connection, *, user_id: int, now: datetime, hermes_bin: Path | None
+) -> str:
     """Deterministic brief plus an optional AI priority narrative. The AI
     section is best-effort and never blocks or replaces the facts above -
     it's imported lazily here so a missing/broken AI package degrades to a
     clear note rather than an import failure."""
-    text = build_deterministic_brief(conn, now=now)
+    text = build_deterministic_brief(conn, user_id=user_id, now=now)
 
     now_iso = utc_iso(now)
     week_end_iso = utc_iso(now + timedelta(days=7))
@@ -124,7 +132,10 @@ def build_full_brief(conn: sqlite3.Connection, *, now: datetime, hermes_bin: Pat
         from ragra.adapters.ai import AIAdapterError
         from ragra.ai.advisor import ask_for_priorities
 
-        ai_notes = ask_for_priorities(conn, hermes_bin=hermes_bin, now_iso=now_iso, week_end_iso=week_end_iso)
+        ai_notes = ask_for_priorities(
+            conn, user_id=user_id, hermes_bin=hermes_bin,
+            now_iso=now_iso, week_end_iso=week_end_iso,
+        )
     except ImportError as exc:
         return text + f"\n\n(AI priority notes unavailable - AI advisor not available: {exc})"
     except AIAdapterError as exc:

@@ -40,6 +40,7 @@ def sync_task_event(
     conn: sqlite3.Connection,
     client: CalendarClient,
     *,
+    user_id: int,
     calendar_id: str,
     task_id: int,
     kind: str = EVENT_KIND_ACTUAL_DEADLINE,
@@ -47,17 +48,22 @@ def sync_task_event(
     """Reconcile a single task's calendar event.
 
     Returns 'created', 'updated', 'removed', or 'skipped'.
+
+    `calendar_id` names a calendar in the *caller's* Google account, so the
+    task lookup is scoped to user_id: writing one user's deadline into
+    another user's calendar would be a disclosure the Calendar API itself
+    cannot catch.
     """
     task = conn.execute(
         """SELECT tasks.*, courses.course_code, courses.name AS course_name
            FROM tasks JOIN courses ON courses.id = tasks.course_id
-           WHERE tasks.id = ?""",
-        (task_id,),
+           WHERE tasks.id = ? AND tasks.user_id = ?""",
+        (task_id, user_id),
     ).fetchone()
     if task is None:
         return "skipped"
 
-    existing = repo.get_calendar_event(conn, task_id=task_id, kind=kind)
+    existing = repo.get_calendar_event(conn, user_id=user_id, task_id=task_id, kind=kind)
 
     should_have_event = (
         task["actual_deadline"] is not None
@@ -67,7 +73,7 @@ def sync_task_event(
     if not should_have_event:
         if existing is not None:
             client.delete_event(calendar_id, existing["google_event_id"])
-            repo.delete_calendar_event_record(conn, task_id=task_id, kind=kind)
+            repo.delete_calendar_event_record(conn, user_id=user_id, task_id=task_id, kind=kind)
             return "removed"
         return "skipped"
 
@@ -75,30 +81,42 @@ def sync_task_event(
 
     if existing is None:
         event = client.create_event(calendar_id, body)
-        repo.record_calendar_event(conn, task_id=task_id, kind=kind, event_id=event["id"])
+        repo.record_calendar_event(
+            conn, user_id=user_id, task_id=task_id, kind=kind, event_id=event["id"]
+        )
         return "created"
 
     client.update_event(calendar_id, existing["google_event_id"], body)
-    repo.record_calendar_event(conn, task_id=task_id, kind=kind, event_id=existing["google_event_id"])
+    repo.record_calendar_event(
+        conn, user_id=user_id, task_id=task_id, kind=kind, event_id=existing["google_event_id"]
+    )
     return "updated"
 
 
 def sync_all_task_events(
-    conn: sqlite3.Connection, client: CalendarClient, *, calendar_id: str
+    conn: sqlite3.Connection, client: CalendarClient, *, user_id: int, calendar_id: str
 ) -> dict[str, int]:
     """Reconcile every task that either has a deadline or still has a
     stored Ragra-owned event (so removal happens even if the deadline was
     since cleared). Safe to call every sync cycle - see sync_task_event."""
     task_ids = {
         row["id"]
-        for row in conn.execute("SELECT id FROM tasks WHERE actual_deadline IS NOT NULL").fetchall()
+        for row in conn.execute(
+            "SELECT id FROM tasks WHERE user_id = ? AND actual_deadline IS NOT NULL", (user_id,)
+        ).fetchall()
     }
     task_ids |= {
-        row["task_id"] for row in conn.execute("SELECT DISTINCT task_id FROM calendar_events").fetchall()
+        row["task_id"]
+        for row in conn.execute(
+            "SELECT DISTINCT task_id FROM calendar_events WHERE user_id = ? AND task_id IS NOT NULL",
+            (user_id,),
+        ).fetchall()
     }
 
     counts = {"created": 0, "updated": 0, "removed": 0, "skipped": 0}
     for task_id in sorted(task_ids):
-        outcome = sync_task_event(conn, client, calendar_id=calendar_id, task_id=task_id)
+        outcome = sync_task_event(
+            conn, client, user_id=user_id, calendar_id=calendar_id, task_id=task_id
+        )
         counts[outcome] += 1
     return counts

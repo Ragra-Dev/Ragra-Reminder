@@ -5,11 +5,13 @@ from ragra.adapters.ai import AIAdapterError
 from ragra.brief import build_deterministic_brief, build_full_brief
 from ragra.db import repo
 
+from tests.support import owner_id
+
 
 def _make_course(conn):
     return repo.upsert_course(
         conn, external_id="course-1", name="OOP", section="BCS-3C",
-        teacher="Dr. Smith", course_code="CS1004", state="ACTIVE",
+        teacher="Dr. Smith", course_code="CS1004", state="ACTIVE", user_id=owner_id(conn),
     )
 
 
@@ -23,16 +25,16 @@ def test_brief_is_deterministic_and_reflects_real_state(conn):
         conn, course_id=course_id, source_type="coursework", external_id="cw-overdue",
         title="Missed Thing", description=None, link=None, kind="ACTIONABLE",
         actual_deadline=(now - timedelta(days=1)).isoformat(),
-        source_published_at=repo.now_iso(), source_updated_at=repo.now_iso(),
+        source_published_at=repo.now_iso(), source_updated_at=repo.now_iso(), user_id=owner_id(conn),
     )
     repo.upsert_task_from_source(
         conn, course_id=course_id, source_type="coursework", external_id="cw-today",
         title="Due Now", description=None, link=None, kind="ACTIONABLE",
         actual_deadline=(now + timedelta(hours=3)).isoformat(),
-        source_published_at=repo.now_iso(), source_updated_at=repo.now_iso(),
+        source_published_at=repo.now_iso(), source_updated_at=repo.now_iso(), user_id=owner_id(conn),
     )
 
-    text = build_deterministic_brief(conn, now=now)
+    text = build_deterministic_brief(conn, now=now, user_id=owner_id(conn))
 
     assert "Missed Thing" in text
     assert "Due Now" in text
@@ -51,10 +53,10 @@ def test_due_today_uses_the_campus_calendar_day_not_the_utc_day(conn):
         conn, course_id=course_id, source_type="coursework", external_id="cw-next-campus-day",
         title="Next Campus Day Task", description=None, link=None, kind="ACTIONABLE",
         actual_deadline=datetime(2026, 1, 15, 20, 0, 0, tzinfo=timezone.utc).isoformat(),
-        source_published_at=repo.now_iso(), source_updated_at=repo.now_iso(),
+        source_published_at=repo.now_iso(), source_updated_at=repo.now_iso(), user_id=owner_id(conn),
     )
 
-    text = build_deterministic_brief(conn, now=now)
+    text = build_deterministic_brief(conn, now=now, user_id=owner_id(conn))
 
     assert "DUE TODAY (0):" in text
     # Fail-open: still fully visible, just not claimed to be due today.
@@ -68,10 +70,10 @@ def test_brief_renders_deadlines_in_campus_time_with_a_zone_label(conn):
         conn, course_id=course_id, source_type="coursework", external_id="cw-display",
         title="Display Check", description=None, link=None, kind="ACTIONABLE",
         actual_deadline="2026-01-16T23:59:00+00:00",
-        source_published_at=repo.now_iso(), source_updated_at=repo.now_iso(),
+        source_published_at=repo.now_iso(), source_updated_at=repo.now_iso(), user_id=owner_id(conn),
     )
 
-    text = build_deterministic_brief(conn, now=now)
+    text = build_deterministic_brief(conn, now=now, user_id=owner_id(conn))
 
     # 23:59 UTC is 04:59 the next campus morning - the raw UTC string would
     # have shown the wrong day to the reader.
@@ -82,7 +84,7 @@ def test_brief_renders_deadlines_in_campus_time_with_a_zone_label(conn):
 
 def test_brief_never_invents_data_when_database_is_empty(conn):
     now = datetime.now(timezone.utc)
-    text = build_deterministic_brief(conn, now=now)
+    text = build_deterministic_brief(conn, now=now, user_id=owner_id(conn))
     assert "OVERDUE (0):" in text
     assert "(none)" in text
 
@@ -95,7 +97,7 @@ def test_full_brief_falls_back_gracefully_when_ai_unavailable(conn, monkeypatch)
 
     monkeypatch.setattr("ragra.ai.advisor.ask_for_priorities", _raise)
 
-    text = build_full_brief(conn, now=now, hermes_bin=None)
+    text = build_full_brief(conn, now=now, hermes_bin=None, user_id=owner_id(conn))
     # The deterministic facts are still fully present even though the AI
     # call failed - the AI layer must never block the core brief.
     assert "OVERDUE (0):" in text
@@ -107,7 +109,7 @@ def test_full_brief_appends_ai_notes_when_available(conn, monkeypatch):
     now = datetime.now(timezone.utc)
     monkeypatch.setattr("ragra.ai.advisor.ask_for_priorities", lambda *a, **kw: "Do the overdue thing first.")
 
-    text = build_full_brief(conn, now=now, hermes_bin=None)
+    text = build_full_brief(conn, now=now, hermes_bin=None, user_id=owner_id(conn))
     assert "AI PRIORITY NOTES" in text
     assert "Do the overdue thing first." in text
 
@@ -129,7 +131,7 @@ def test_full_brief_degrades_gracefully_when_ai_package_is_unavailable(conn, mon
     monkeypatch.setitem(sys.modules, "ragra.ai.advisor", None)
 
     now = datetime.now(timezone.utc)
-    text = build_full_brief(conn, now=now, hermes_bin=None)
+    text = build_full_brief(conn, now=now, hermes_bin=None, user_id=owner_id(conn))
 
     assert "OVERDUE (0):" in text
     assert "AI PRIORITY NOTES" not in text

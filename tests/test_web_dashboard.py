@@ -8,6 +8,8 @@ from ragra.db import repo
 from ragra.db.connection import connect
 from ragra.web.app import create_app
 
+from tests.support import owner_id
+
 
 @pytest.fixture
 def client(tmp_path: Path):
@@ -15,14 +17,14 @@ def client(tmp_path: Path):
     conn = connect(db_path)
     course_id = repo.upsert_course(
         conn, external_id="course-1", name="OOP", section="BCS-3C",
-        teacher="Dr. Smith", course_code="CS1004", state="ACTIVE",
+        teacher="Dr. Smith", course_code="CS1004", state="ACTIVE", user_id=owner_id(conn),
     )
     result = repo.upsert_task_from_source(
         conn, course_id=course_id, source_type="coursework", external_id="cw-1",
         title="Assignment 2", description=None, link=None, kind="ACTIONABLE",
         actual_deadline="2020-01-01T00:00:00+00:00",
         source_published_at="2019-12-01T00:00:00+00:00",
-        source_updated_at="2019-12-01T00:00:00+00:00",
+        source_updated_at="2019-12-01T00:00:00+00:00", user_id=owner_id(conn),
     )
     conn.close()
 
@@ -86,19 +88,19 @@ def test_due_today_and_due_soon_are_separate_sections(client):
     conn = connect(client.db_path)
     course_id = repo.upsert_course(
         conn, external_id="course-1", name="OOP", section="BCS-3C",
-        teacher="Dr. Smith", course_code="CS1004", state="ACTIVE",
+        teacher="Dr. Smith", course_code="CS1004", state="ACTIVE", user_id=owner_id(conn),
     )
     repo.upsert_task_from_source(
         conn, course_id=course_id, source_type="coursework", external_id="cw-today",
         title="Due Today Task", description=None, link=None, kind="ACTIONABLE",
         actual_deadline=(now + timedelta(hours=2)).isoformat(),
-        source_published_at=repo.now_iso(), source_updated_at=repo.now_iso(),
+        source_published_at=repo.now_iso(), source_updated_at=repo.now_iso(), user_id=owner_id(conn),
     )
     repo.upsert_task_from_source(
         conn, course_id=course_id, source_type="coursework", external_id="cw-soon",
         title="Due In Three Days Task", description=None, link=None, kind="ACTIONABLE",
         actual_deadline=(now + timedelta(days=3)).isoformat(),
-        source_published_at=repo.now_iso(), source_updated_at=repo.now_iso(),
+        source_published_at=repo.now_iso(), source_updated_at=repo.now_iso(), user_id=owner_id(conn),
     )
     conn.close()
 
@@ -117,17 +119,17 @@ def test_scheduled_reminders_section_shows_upcoming_reminders(client):
     conn = connect(client.db_path)
     course_id = repo.upsert_course(
         conn, external_id="course-1", name="OOP", section="BCS-3C",
-        teacher="Dr. Smith", course_code="CS1004", state="ACTIVE",
+        teacher="Dr. Smith", course_code="CS1004", state="ACTIVE", user_id=owner_id(conn),
     )
     result = repo.upsert_task_from_source(
         conn, course_id=course_id, source_type="coursework", external_id="cw-r",
         title="Reminder Bearing Task", description=None, link=None, kind="ACTIONABLE",
         actual_deadline=(now + timedelta(days=5)).isoformat(),
-        source_published_at=repo.now_iso(), source_updated_at=repo.now_iso(),
+        source_published_at=repo.now_iso(), source_updated_at=repo.now_iso(), user_id=owner_id(conn),
     )
     repo.insert_reminder_if_absent(
         conn, task_id=result.task_id, reminder_type="T_MINUS_1D",
-        scheduled_for=(now + timedelta(days=4)).isoformat(), idempotency_key="k-upcoming",
+        scheduled_for=(now + timedelta(days=4)).isoformat(), idempotency_key="k-upcoming", user_id=owner_id(conn),
     )
     conn.close()
 
@@ -140,14 +142,14 @@ def test_scheduled_reminders_section_shows_upcoming_reminders(client):
 def _make_task(conn, *, external_id, title, status=None):
     course_id = repo.upsert_course(
         conn, external_id="course-1", name="OOP", section="BCS-3C",
-        teacher="Dr. Smith", course_code="CS1004", state="ACTIVE",
+        teacher="Dr. Smith", course_code="CS1004", state="ACTIVE", user_id=owner_id(conn),
     )
     result = repo.upsert_task_from_source(
         conn, course_id=course_id, source_type="coursework", external_id=external_id,
         title=title, description=None, link=None, kind="ACTIONABLE",
         actual_deadline="2020-01-01T00:00:00+00:00",
         source_published_at="2019-12-01T00:00:00+00:00",
-        source_updated_at="2019-12-01T00:00:00+00:00",
+        source_updated_at="2019-12-01T00:00:00+00:00", user_id=owner_id(conn),
     )
     if status:
         conn.execute("UPDATE tasks SET status = ? WHERE id = ?", (status, result.task_id))
@@ -157,7 +159,7 @@ def _make_task(conn, *, external_id, title, status=None):
 
 def test_missed_task_appears_in_missed_section(client):
     conn = connect(client.db_path)
-    repo.mark_missed(conn, task_id=client.task_id)
+    repo.mark_missed(conn, task_id=client.task_id, user_id=owner_id(conn))
     conn.close()
 
     resp = client.get("/")
@@ -179,7 +181,7 @@ def test_completed_task_does_not_appear_in_overdue_or_missed(client):
     completed_id = _make_task(conn, external_id="cw-completed", title="Completed Long Ago")
     conn.close()
     conn = connect(client.db_path)
-    repo.mark_completed(conn, task_id=completed_id)
+    repo.mark_completed(conn, task_id=completed_id, user_id=owner_id(conn))
     conn.close()
 
     resp = client.get("/")
@@ -194,7 +196,7 @@ def test_cancelled_task_does_not_appear_in_overdue_or_missed(client):
     cancelled_id = _make_task(conn, external_id="cw-cancelled", title="Cancelled Assignment")
     conn.close()
     conn = connect(client.db_path)
-    repo.cancel_task_from_source(conn, task_id=cancelled_id)
+    repo.cancel_task_from_source(conn, task_id=cancelled_id, user_id=owner_id(conn))
     conn.close()
 
     resp = client.get("/")
@@ -208,13 +210,13 @@ def test_set_personal_deadline(client):
     conn = connect(client.db_path)
     course_id = repo.upsert_course(
         conn, external_id="course-1", name="OOP", section="BCS-3C",
-        teacher="Dr. Smith", course_code="CS1004", state="ACTIVE",
+        teacher="Dr. Smith", course_code="CS1004", state="ACTIVE", user_id=owner_id(conn),
     )
     result = repo.upsert_task_from_source(
         conn, course_id=course_id, source_type="material", external_id="mat-1",
         title="Lecture slides", description=None, link=None, kind="ACTIONABLE",
         actual_deadline=None, source_published_at="2026-08-20T00:00:00+00:00",
-        source_updated_at="2026-08-20T00:00:00+00:00",
+        source_updated_at="2026-08-20T00:00:00+00:00", user_id=owner_id(conn),
     )
     conn.close()
 

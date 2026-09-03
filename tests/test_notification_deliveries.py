@@ -16,6 +16,8 @@ from ragra.reminders.dispatch import dispatch_due_reminders
 from ragra import health
 from tests.test_class_reminders import RecordingProvider, _add_class, CLASS_START_UTC
 
+from tests.support import owner_id
+
 NOW = "2026-09-09T12:00:00+00:00"
 PAST = "2026-09-09T08:00:00+00:00"
 
@@ -23,18 +25,18 @@ PAST = "2026-09-09T08:00:00+00:00"
 def _make_task_with_reminder(conn):
     course_id = repo.upsert_course(
         conn, external_id="course-1", name="OOP", section="BCS-3C",
-        teacher="Dr. Smith", course_code="CS1004", state="ACTIVE",
+        teacher="Dr. Smith", course_code="CS1004", state="ACTIVE", user_id=owner_id(conn),
     )
     result = repo.upsert_task_from_source(
         conn, course_id=course_id, source_type="coursework", external_id="cw-1",
         title="Assignment 2", description=None, link=None, kind="ACTIONABLE",
         actual_deadline="2026-09-10T23:59:00+00:00",
         source_published_at="2026-08-20T00:00:00+00:00",
-        source_updated_at="2026-08-20T00:00:00+00:00",
+        source_updated_at="2026-08-20T00:00:00+00:00", user_id=owner_id(conn),
     )
     repo.insert_reminder_if_absent(
         conn, task_id=result.task_id, reminder_type="T_MINUS_1D",
-        scheduled_for=PAST, idempotency_key=f"{result.task_id}:T_MINUS_1D:v1",
+        scheduled_for=PAST, idempotency_key=f"{result.task_id}:T_MINUS_1D:v1", user_id=owner_id(conn),
     )
     return result.task_id
 
@@ -44,9 +46,9 @@ def test_one_row_is_recorded_per_provider_per_reminder(conn):
     first = RecordingProvider()
     second = RecordingProvider()
 
-    dispatch_due_reminders(conn, providers=[first, second], now=NOW)
+    dispatch_due_reminders(conn, providers=[first, second], now=NOW, user_id=owner_id(conn))
 
-    rows = repo.recent_notification_deliveries(conn)
+    rows = repo.recent_notification_deliveries(conn, user_id=owner_id(conn))
     assert len(rows) == 2
     assert {r["provider"] for r in rows} == {"RecordingProvider"}
     assert all(r["ok"] == 1 for r in rows)
@@ -57,9 +59,9 @@ def test_failures_are_recorded_with_their_error(conn):
     _make_task_with_reminder(conn)
     failing = RecordingProvider(NotifyResult(ok=False, error="channel down"))
 
-    dispatch_due_reminders(conn, providers=[failing], now=NOW)
+    dispatch_due_reminders(conn, providers=[failing], now=NOW, user_id=owner_id(conn))
 
-    row = repo.recent_notification_deliveries(conn)[0]
+    row = repo.recent_notification_deliveries(conn, user_id=owner_id(conn))[0]
     assert row["ok"] == 0
     assert row["error"] == "channel down"
 
@@ -69,27 +71,27 @@ def test_partial_failure_records_both_outcomes(conn):
     failing = RecordingProvider(NotifyResult(ok=False, error="channel A down"))
     succeeding = RecordingProvider()
 
-    dispatch_due_reminders(conn, providers=[failing, succeeding], now=NOW)
+    dispatch_due_reminders(conn, providers=[failing, succeeding], now=NOW, user_id=owner_id(conn))
 
-    rows = repo.recent_notification_deliveries(conn)
+    rows = repo.recent_notification_deliveries(conn, user_id=owner_id(conn))
     assert sorted(r["ok"] for r in rows) == [0, 1]
 
 
 def test_deliveries_are_linked_to_their_reminder(conn):
     task_id = _make_task_with_reminder(conn)
-    dispatch_due_reminders(conn, providers=[RecordingProvider()], now=NOW)
+    dispatch_due_reminders(conn, providers=[RecordingProvider()], now=NOW, user_id=owner_id(conn))
 
     reminder_id = conn.execute("SELECT id FROM reminders WHERE task_id = ?", (task_id,)).fetchone()["id"]
-    assert len(repo.deliveries_for_reminder(conn, reminder_id=reminder_id)) == 1
+    assert len(repo.deliveries_for_reminder(conn, reminder_id=reminder_id, user_id=owner_id(conn))) == 1
 
 
 def test_health_alert_delivery_is_recorded_without_a_reminder_id(conn):
     for _ in range(health.FAILURE_ALERT_THRESHOLD):
-        health.record_result(conn, component="classroom", success=False, error="boom")
+        health.record_result(conn, component="classroom", success=False, error="boom", user_id=owner_id(conn))
 
-    health.check_and_alert(conn, providers=[RecordingProvider()])
+    health.check_and_alert(conn, providers=[RecordingProvider()], user_id=owner_id(conn))
 
-    row = repo.recent_notification_deliveries(conn)[0]
+    row = repo.recent_notification_deliveries(conn, user_id=owner_id(conn))[0]
     assert row["reminder_id"] is None  # health alerts have no reminder row
     assert row["category"] == "HEALTH_ALERT"
     assert row["ok"] == 1
@@ -98,11 +100,11 @@ def test_health_alert_delivery_is_recorded_without_a_reminder_id(conn):
 def test_class_reminder_delivery_is_recorded(conn):
     _add_class(conn)
     now = CLASS_START_UTC - timedelta(minutes=30)
-    schedule_class_reminders(conn, now=now)
+    schedule_class_reminders(conn, now=now, user_id=owner_id(conn))
 
-    dispatch_class_reminders(conn, providers=[RecordingProvider()], now=now)
+    dispatch_class_reminders(conn, providers=[RecordingProvider()], now=now, user_id=owner_id(conn))
 
-    row = repo.recent_notification_deliveries(conn)[0]
+    row = repo.recent_notification_deliveries(conn, user_id=owner_id(conn))[0]
     assert row["category"] == "CLASS_SOON"
     assert row["reminder_id"] is None
     assert row["ok"] == 1
@@ -110,9 +112,9 @@ def test_class_reminder_delivery_is_recorded(conn):
 
 def test_nothing_is_recorded_when_no_provider_is_configured(conn):
     _make_task_with_reminder(conn)
-    dispatch_due_reminders(conn, providers=[], now=NOW)
+    dispatch_due_reminders(conn, providers=[], now=NOW, user_id=owner_id(conn))
 
-    assert repo.recent_notification_deliveries(conn) == []
+    assert repo.recent_notification_deliveries(conn, user_id=owner_id(conn)) == []
 
 
 def test_delivery_rows_never_contain_a_credential(conn, monkeypatch):
@@ -146,9 +148,9 @@ def test_delivery_rows_never_contain_a_credential(conn, monkeypatch):
         to_address="student@example.com", username="ragra@example.com", password=secret,
     )
 
-    dispatch_due_reminders(conn, providers=[provider], now=NOW)
+    dispatch_due_reminders(conn, providers=[provider], now=NOW, user_id=owner_id(conn))
 
-    row = repo.recent_notification_deliveries(conn)[0]
+    row = repo.recent_notification_deliveries(conn, user_id=owner_id(conn))[0]
     assert row["ok"] == 0
     assert secret not in (row["error"] or "")
     assert "***" in row["error"]

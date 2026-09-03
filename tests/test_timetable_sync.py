@@ -10,6 +10,8 @@ from ragra.db import repo
 from ragra.sync.timetable_sync import TimetableSyncError, sync_timetable
 from ragra.timetable.enrollment import REGULAR, REPEAT, EnrolledCourse
 
+from tests.support import owner_id
+
 ENROLLMENT = (
     EnrolledCourse("Linear Algebra", "CS-G", REGULAR, batch_year="2025", aliases=("LA",)),
     EnrolledCourse("DLD", "CS-G", REGULAR, batch_year="2025"),
@@ -72,13 +74,13 @@ BASE_GRIDS = {"MONDAY": MONDAY_GRID, "TUESDAY": TUESDAY_GRID, "FRIDAY": FRIDAY_G
 
 def _sync(conn, sheets=None, grids=None, enrollment=ENROLLMENT):
     client = FakeFastTimetableClient(sheets or BASE_SHEETS, grids or BASE_GRIDS)
-    return sync_timetable(conn, client, spreadsheet_id="test-sheet-id", enrollment=enrollment)
+    return sync_timetable(conn, client, spreadsheet_id="test-sheet-id", enrollment=enrollment, user_id=owner_id(conn))
 
 
 def test_regular_enrollment_classes_are_synced(conn):
     summary = _sync(conn)
     assert summary.classes_created >= 3  # LA, UHQ, DLD Lab at minimum
-    events = {row["course_name"]: row for row in repo.list_timetable_events(conn)}
+    events = {row["course_name"]: row for row in repo.list_timetable_events(conn, user_id=owner_id(conn))}
     assert events["Linear Algebra"]["section"] == "CS-G"
     assert events["Linear Algebra"]["enrollment_type"] == REGULAR
     assert events["Linear Algebra"]["batch_year"] == "2025"
@@ -86,7 +88,7 @@ def test_regular_enrollment_classes_are_synced(conn):
 
 def test_repeat_enrollment_classes_are_synced_without_batch_year(conn):
     _sync(conn)
-    events = {row["course_name"]: row for row in repo.list_timetable_events(conn)}
+    events = {row["course_name"]: row for row in repo.list_timetable_events(conn, user_id=owner_id(conn))}
     assert events["OOP Theory"]["enrollment_type"] == REPEAT
     assert events["OOP Theory"]["batch_year"] is None
     assert events["Discrete Structures"]["enrollment_type"] == REPEAT
@@ -94,7 +96,7 @@ def test_repeat_enrollment_classes_are_synced_without_batch_year(conn):
 
 def test_repeat_theory_and_repeat_lab_persist_with_different_sections(conn):
     _sync(conn)
-    events = {row["course_name"]: row for row in repo.list_timetable_events(conn)}
+    events = {row["course_name"]: row for row in repo.list_timetable_events(conn, user_id=owner_id(conn))}
     assert events["OOP Theory"]["section"] == "CS-C"
     assert events["OOP Lab"]["section"] == "CS-A"
     assert events["OOP Theory"]["section"] != events["OOP Lab"]["section"]
@@ -116,13 +118,13 @@ def test_repeated_sync_is_idempotent_no_duplicates(conn):
 
 def test_time_and_room_change_updates_existing_row_not_a_duplicate(conn):
     _sync(conn)
-    before = {row["course_name"]: row["id"] for row in repo.list_timetable_events(conn)}
+    before = {row["course_name"]: row["id"] for row in repo.list_timetable_events(conn, user_id=owner_id(conn))}
 
     changed_tuesday = [row[:] for row in TUESDAY_GRID]
     changed_tuesday[2] = ["C-999", "DLD (CS-G)", "", ""]  # room changed from C-308 to C-999
     summary = _sync(conn, grids={**BASE_GRIDS, "TUESDAY": changed_tuesday})
 
-    after = {row["course_name"]: row for row in repo.list_timetable_events(conn)}
+    after = {row["course_name"]: row for row in repo.list_timetable_events(conn, user_id=owner_id(conn))}
     assert after["DLD"]["id"] == before["DLD"]  # same logical row, not a new one
     assert after["DLD"]["room"] == "C-999"
     assert summary.classes_updated >= 1
@@ -133,7 +135,7 @@ def test_time_and_room_change_updates_existing_row_not_a_duplicate(conn):
 
 def test_day_change_is_detected_as_a_modification_not_a_new_plus_removed_class(conn):
     _sync(conn)
-    before_id = {row["course_name"]: row["id"] for row in repo.list_timetable_events(conn)}["Discrete Structures"]
+    before_id = {row["course_name"]: row["id"] for row in repo.list_timetable_events(conn, user_id=owner_id(conn))}["Discrete Structures"]
 
     # Move Discrete Structures from Tuesday to Wednesday, same section.
     moved_grid = [
@@ -146,7 +148,7 @@ def test_day_change_is_detected_as_a_modification_not_a_new_plus_removed_class(c
     grids = {**BASE_GRIDS, "TUESDAY": [["Tuesday", "", "", ""]], "WEDNESDAY": moved_grid}
     _sync(conn, sheets=sheets, grids=grids)
 
-    after = {row["course_name"]: row for row in repo.list_timetable_events(conn)}
+    after = {row["course_name"]: row for row in repo.list_timetable_events(conn, user_id=owner_id(conn))}
     assert after["Discrete Structures"]["id"] == before_id
     assert after["Discrete Structures"]["day_of_week"] == 2  # Wednesday
 
@@ -157,7 +159,7 @@ def test_cancelled_cell_marks_existing_event_cancelled(conn):
     cancelled_tuesday[2] = ["C-308", "DLD (CS-G) Cancelled", "", ""]
     _sync(conn, grids={**BASE_GRIDS, "TUESDAY": cancelled_tuesday})
 
-    events = {row["course_name"]: row for row in repo.list_timetable_events(conn)}
+    events = {row["course_name"]: row for row in repo.list_timetable_events(conn, user_id=owner_id(conn))}
     assert events["DLD"]["status"] == "CANCELLED"
 
 
@@ -174,7 +176,7 @@ def test_missing_weekday_tabs_raises_and_preserves_existing_data(conn):
             raise AssertionError("should never be called - discovery must fail first")
 
     with pytest.raises(TimetableSyncError):
-        sync_timetable(conn, BrokenClient(), spreadsheet_id="test-sheet-id", enrollment=ENROLLMENT)
+        sync_timetable(conn, BrokenClient(), spreadsheet_id="test-sheet-id", enrollment=ENROLLMENT, user_id=owner_id(conn))
 
     after_count = conn.execute("SELECT COUNT(*) AS c FROM timetable_events").fetchone()["c"]
     assert after_count == before_count  # untouched, not wiped
@@ -194,7 +196,7 @@ def test_ambiguous_weekday_tabs_raises_and_preserves_existing_data(conn):
             raise AssertionError("should never be called - discovery must fail first")
 
     with pytest.raises(TimetableSyncError):
-        sync_timetable(conn, AmbiguousClient(), spreadsheet_id="test-sheet-id", enrollment=ENROLLMENT)
+        sync_timetable(conn, AmbiguousClient(), spreadsheet_id="test-sheet-id", enrollment=ENROLLMENT, user_id=owner_id(conn))
 
     after_count = conn.execute("SELECT COUNT(*) AS c FROM timetable_events").fetchone()["c"]
     assert after_count == before_count
@@ -212,7 +214,7 @@ def test_adapter_failure_mid_scrape_preserves_existing_data(conn):
             raise FastTimetableAdapterError("simulated network failure")
 
     with pytest.raises(TimetableSyncError):
-        sync_timetable(conn, FlakyClient(), spreadsheet_id="test-sheet-id", enrollment=ENROLLMENT)
+        sync_timetable(conn, FlakyClient(), spreadsheet_id="test-sheet-id", enrollment=ENROLLMENT, user_id=owner_id(conn))
 
     after_count = conn.execute("SELECT COUNT(*) AS c FROM timetable_events").fetchone()["c"]
     assert after_count == before_count
@@ -223,5 +225,5 @@ def test_someone_elses_section_is_not_synced(conn):
     tuesday_with_other_section.append(["C-310", "DLD (CS-A)", "", ""])  # not the user's section
     _sync(conn, grids={**BASE_GRIDS, "TUESDAY": tuesday_with_other_section})
 
-    events = repo.list_timetable_events(conn)
+    events = repo.list_timetable_events(conn, user_id=owner_id(conn))
     assert all(row["section"] != "CS-A" for row in events if row["course_name"] == "DLD")

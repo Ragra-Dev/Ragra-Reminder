@@ -217,3 +217,28 @@ Before implementation starts, confirm:
 - **Relevance Decision:** Never in v1. New cases must go through the five-case decision table, not improvised in code.
 - **UserAcademicProfile:** Can add fields in Phase 3+ for multi-user; signature stays stable. New fields must be in the dataclass, not as hardcoded per-user constants.
 - **Task Source Boundary:** Never. The write-guard test must hold through all phases. Classroom tasks remain read-only forever.
+
+---
+
+## 6. Ownership (Phase 3 freeze)
+
+**Status: implemented (Phase 3).**
+
+The invariant every other Phase 3 contract rests on: **every row belongs to
+exactly one account, and every query names the account it is acting for.**
+
+**Contracts:**
+
+- Every user-owned table carries `user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE`. There is no nullable-owner state and no shared row.
+- Every repository function that touches such a table takes a required `user_id` keyword and filters on it. This is enforced structurally by `tests/test_user_scoping_guard.py`, which walks the source and fails if any function queries a user-owned table without naming an owner — because the way this property decays is not an existing query changing, it is a *new* function next year that forgets.
+- Exactly two exemption markers exist, and their total number is itself asserted so it cannot drift:
+  - `ragra:cross-user` — retention housekeeping that deletes strictly by age and returns only a count. Scoping it per user would leave a departed account's rows behind forever.
+  - `ragra:token-scoped` — keyed by an unguessable secret rather than an owner. Session lookup is the only case: resolving the owner is what it does.
+- **Identity is the Google `sub`, never the email address.** An account's email can change while its subject id cannot, so email matching would let a reassigned address inherit somebody else's data. Email is used for exactly one decision — who may claim the pre-identity owner row, once — and that is configured out of band.
+- **Uniqueness is per-user, not global.** `courses.external_id`, `reminders.idempotency_key`, `calendar_events.google_event_id` and `timetable_events.external_id` are unique *within* an account. Classmates legitimately share a Classroom course id and a timetable slot; a global constraint would silently reject the second user's row, or suppress their reminder entirely.
+- **A rejected cross-account write leaves no trace.** History is recorded from the update's own rowcount, never unconditionally, so a blocked write does not append a false entry to the victim's audit trail.
+- **Account deletion is complete or it is loud.** Completeness comes from `ON DELETE CASCADE` on every owned table, verified by walking the schema rather than a written-down list; a leftover row raises rather than reporting success.
+
+**When this changes:** never. A new table carrying user data must carry
+`user_id NOT NULL` with a cascade, and must be added to the guard's table
+list — the guard's schema-completeness test fails until it is.

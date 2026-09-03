@@ -13,6 +13,8 @@ from ragra.reminders.engine import reminder_message
 from ragra.sync.classroom_sync import sync_classroom
 from tests.test_relevance_persistence import FakeClassroomClient, _item
 
+from tests.support import owner_id
+
 NOW = "2026-12-02T12:00:00+00:00"
 
 
@@ -41,57 +43,57 @@ def _change_reminders(conn):
 
 def test_deadline_change_queues_exactly_one_notification(conn):
     client = FakeClassroomClient(coursework=[_dated_item("cw-1", 10, updated="2026-09-01T00:00:00Z")])
-    sync_classroom(conn, client)
+    sync_classroom(conn, client, user_id=owner_id(conn))
     assert _change_reminders(conn) == []  # first discovery is not a "change"
 
     client._coursework = [_dated_item("cw-1", 15, updated="2026-09-02T00:00:00Z")]
-    sync_classroom(conn, client)
+    sync_classroom(conn, client, user_id=owner_id(conn))
 
     assert len(_change_reminders(conn)) == 1
 
 
 def test_unchanged_deadline_never_queues_a_notification(conn):
     client = FakeClassroomClient(coursework=[_dated_item("cw-1", 10, updated="2026-09-01T00:00:00Z")])
-    sync_classroom(conn, client)
-    sync_classroom(conn, client)
-    sync_classroom(conn, client)
+    sync_classroom(conn, client, user_id=owner_id(conn))
+    sync_classroom(conn, client, user_id=owner_id(conn))
+    sync_classroom(conn, client, user_id=owner_id(conn))
 
     assert _change_reminders(conn) == []
 
 
 def test_redetecting_the_same_change_does_not_duplicate(conn):
     client = FakeClassroomClient(coursework=[_dated_item("cw-1", 10, updated="2026-09-01T00:00:00Z")])
-    sync_classroom(conn, client)
+    sync_classroom(conn, client, user_id=owner_id(conn))
 
     changed = _dated_item("cw-1", 15, updated="2026-09-02T00:00:00Z")
     client._coursework = [changed]
-    sync_classroom(conn, client)
+    sync_classroom(conn, client, user_id=owner_id(conn))
     # Same change seen again with a newer updateTime but the same deadline.
     client._coursework = [_dated_item("cw-1", 15, updated="2026-09-03T00:00:00Z")]
-    sync_classroom(conn, client)
+    sync_classroom(conn, client, user_id=owner_id(conn))
 
     assert len(_change_reminders(conn)) == 1
 
 
 def test_a_second_genuine_change_does_notify_again(conn):
     client = FakeClassroomClient(coursework=[_dated_item("cw-1", 10, updated="2026-09-01T00:00:00Z")])
-    sync_classroom(conn, client)
+    sync_classroom(conn, client, user_id=owner_id(conn))
     client._coursework = [_dated_item("cw-1", 15, updated="2026-09-02T00:00:00Z")]
-    sync_classroom(conn, client)
+    sync_classroom(conn, client, user_id=owner_id(conn))
     client._coursework = [_dated_item("cw-1", 20, updated="2026-09-03T00:00:00Z")]
-    sync_classroom(conn, client)
+    sync_classroom(conn, client, user_id=owner_id(conn))
 
     assert len(_change_reminders(conn)) == 2
 
 
 def test_deadline_change_notification_is_delivered_through_the_provider_layer(conn):
     client = FakeClassroomClient(coursework=[_dated_item("cw-1", 10, updated="2026-09-01T00:00:00Z")])
-    sync_classroom(conn, client)
+    sync_classroom(conn, client, user_id=owner_id(conn))
     client._coursework = [_dated_item("cw-1", 15, updated="2026-09-02T00:00:00Z")]
-    sync_classroom(conn, client)
+    sync_classroom(conn, client, user_id=owner_id(conn))
 
     provider = RecordingProvider()
-    summary = dispatch_due_reminders(conn, providers=[provider], now=NOW)
+    summary = dispatch_due_reminders(conn, providers=[provider], now=NOW, user_id=owner_id(conn))
 
     assert summary.sent >= 1
     assert any("Deadline changed" in call.text for call in provider.calls)
@@ -100,9 +102,9 @@ def test_deadline_change_notification_is_delivered_through_the_provider_layer(co
 
 def test_old_reminders_are_cancelled_when_the_deadline_moves(conn):
     client = FakeClassroomClient(coursework=[_dated_item("cw-1", 10, updated="2026-09-01T00:00:00Z")])
-    sync_classroom(conn, client)
+    sync_classroom(conn, client, user_id=owner_id(conn))
     client._coursework = [_dated_item("cw-1", 15, updated="2026-09-02T00:00:00Z")]
-    sync_classroom(conn, client)
+    sync_classroom(conn, client, user_id=owner_id(conn))
 
     # No PENDING countdown reminder may still point at the old deadline.
     stale = conn.execute(
@@ -115,12 +117,12 @@ def test_old_reminders_are_cancelled_when_the_deadline_moves(conn):
 
 def test_failed_delivery_is_retried_not_lost(conn):
     client = FakeClassroomClient(coursework=[_dated_item("cw-1", 10, updated="2026-09-01T00:00:00Z")])
-    sync_classroom(conn, client)
+    sync_classroom(conn, client, user_id=owner_id(conn))
     client._coursework = [_dated_item("cw-1", 15, updated="2026-09-02T00:00:00Z")]
-    sync_classroom(conn, client)
+    sync_classroom(conn, client, user_id=owner_id(conn))
 
     failing = RecordingProvider(NotifyResult(ok=False, error="channel down"))
-    summary = dispatch_due_reminders(conn, providers=[failing], now=NOW)
+    summary = dispatch_due_reminders(conn, providers=[failing], now=NOW, user_id=owner_id(conn))
 
     assert summary.sent == 0
     assert summary.retrying == 1

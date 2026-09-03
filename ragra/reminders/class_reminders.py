@@ -47,13 +47,13 @@ class ClassReminderSummary:
 
 
 def schedule_class_reminders(
-    conn: sqlite3.Connection, *, now: datetime, lookahead: timedelta = LOOKAHEAD
+    conn: sqlite3.Connection, *, user_id: int, now: datetime, lookahead: timedelta = LOOKAHEAD
 ) -> int:
     """Claim every not-yet-announced class starting within the lookahead
     window. Returns how many were newly claimed. Idempotent: re-running
     claims nothing new."""
     occurrences = expand_occurrences(
-        [weekly_class_from_row(row) for row in repo.list_timetable_events(conn)],
+        [weekly_class_from_row(row) for row in repo.list_timetable_events(conn, user_id=user_id)],
         window_start=now,
         window_end=now + lookahead,
     )
@@ -66,6 +66,7 @@ def schedule_class_reminders(
             continue
         inserted = repo.insert_class_reminder_if_absent(
             conn,
+            user_id=user_id,
             timetable_event_id=occurrence.timetable_event_id,
             occurrence_date=occurrence.occurrence_date.isoformat(),
             reminder_type=CLASS_SOON,
@@ -91,20 +92,21 @@ def class_reminder_message(
 def dispatch_class_reminders(
     conn: sqlite3.Connection,
     *,
+    user_id: int,
     providers: list[NotificationProvider],
     now: datetime,
 ) -> ClassReminderSummary:
     """Send every claimed class reminder whose class has not started yet."""
     summary = ClassReminderSummary()
 
-    for row in repo.pending_class_reminders(conn):
+    for row in repo.pending_class_reminders(conn, user_id=user_id):
         starts_at = parse_instant(row["scheduled_for"])
 
         # Already started: too late to be useful. Expire rather than send -
         # a "starts in ~0 min" alert for a class in progress is noise.
         if starts_at <= now:
             repo.record_class_reminder_attempt(
-                conn, class_reminder_id=row["id"],
+                conn, user_id=user_id, class_reminder_id=row["id"],
                 error="class already started; reminder expired", give_up=True,
             )
             summary.expired += 1
@@ -126,7 +128,7 @@ def dispatch_class_reminders(
             # No reminder_id: a class reminder has no row in `reminders`
             # (see migration 0003), but its delivery is still auditable.
             repo.record_notification_delivery(
-                conn, provider=provider_name, ok=result.ok,
+                conn, user_id=user_id, provider=provider_name, ok=result.ok,
                 category=CLASS_SOON, error=result.error,
             )
 
@@ -135,7 +137,7 @@ def dispatch_class_reminders(
         )
 
         if delivered:
-            repo.mark_class_reminder_sent(conn, class_reminder_id=row["id"])
+            repo.mark_class_reminder_sent(conn, user_id=user_id, class_reminder_id=row["id"])
             summary.sent += 1
             continue
 
@@ -144,7 +146,7 @@ def dispatch_class_reminders(
         # Retry on the next tick while the class is still ahead; give up
         # once it has started.
         repo.record_class_reminder_attempt(
-            conn, class_reminder_id=row["id"], error=error, give_up=False
+            conn, user_id=user_id, class_reminder_id=row["id"], error=error, give_up=False
         )
         summary.retrying += 1
 
@@ -154,15 +156,21 @@ def dispatch_class_reminders(
 def run_class_reminders(
     conn: sqlite3.Connection,
     *,
+    user_id: int,
     providers: list[NotificationProvider],
     now: datetime,
 ) -> ClassReminderSummary:
-    """One full pass: expire anything stale, claim upcoming classes, deliver."""
+    """One full pass for one user: expire anything stale, claim upcoming
+    classes, deliver."""
     summary = ClassReminderSummary()
-    summary.expired += repo.expire_stale_class_reminders(conn, now=utc_iso(now))
-    summary.scheduled = schedule_class_reminders(conn, now=now)
+    summary.expired += repo.expire_stale_class_reminders(
+        conn, user_id=user_id, now=utc_iso(now)
+    )
+    summary.scheduled = schedule_class_reminders(conn, user_id=user_id, now=now)
 
-    dispatched = dispatch_class_reminders(conn, providers=providers, now=now)
+    dispatched = dispatch_class_reminders(
+        conn, user_id=user_id, providers=providers, now=now
+    )
     summary.sent = dispatched.sent
     summary.retrying = dispatched.retrying
     summary.expired += dispatched.expired

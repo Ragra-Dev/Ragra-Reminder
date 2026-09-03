@@ -7,6 +7,8 @@ from ragra.db import repo
 from ragra.db.connection import connect
 from ragra.web.app import create_app
 
+from tests.support import owner_id
+
 
 @pytest.fixture
 def client(tmp_path: Path):
@@ -14,7 +16,7 @@ def client(tmp_path: Path):
     conn = connect(db_path)
     course_id = repo.upsert_course(
         conn, external_id="course-1", name="Object Oriented Programming", section="BCS-3C",
-        teacher="Dr. Smith", course_code="CS1004", state="ACTIVE",
+        teacher="Dr. Smith", course_code="CS1004", state="ACTIVE", user_id=owner_id(conn),
     )
     result = repo.upsert_task_from_source(
         conn, course_id=course_id, source_type="coursework", external_id="cw-1",
@@ -22,12 +24,12 @@ def client(tmp_path: Path):
         link="https://classroom.google.com/c/x/a/y",
         kind="ACTIONABLE", actual_deadline="2026-09-10T23:59:00+00:00",
         source_published_at="2026-08-20T00:00:00+00:00",
-        source_updated_at="2026-08-20T00:00:00+00:00",
+        source_updated_at="2026-08-20T00:00:00+00:00", user_id=owner_id(conn),
     )
-    repo.set_personal_deadline(conn, task_id=result.task_id, personal_deadline="2026-09-08")
+    repo.set_personal_deadline(conn, task_id=result.task_id, personal_deadline="2026-09-08", user_id=owner_id(conn))
     repo.insert_reminder_if_absent(
         conn, task_id=result.task_id, reminder_type="T_MINUS_1D",
-        scheduled_for="2026-09-09T23:59:00+00:00", idempotency_key="k1",
+        scheduled_for="2026-09-09T23:59:00+00:00", idempotency_key="k1", user_id=owner_id(conn),
     )
     conn.close()
 
@@ -75,13 +77,13 @@ def test_task_without_description_or_link_renders_fine(client):
     conn = connect(client.db_path)
     course_id = repo.upsert_course(
         conn, external_id="course-1", name="Object Oriented Programming", section="BCS-3C",
-        teacher="Dr. Smith", course_code="CS1004", state="ACTIVE",
+        teacher="Dr. Smith", course_code="CS1004", state="ACTIVE", user_id=owner_id(conn),
     )
     result = repo.upsert_task_from_source(
         conn, course_id=course_id, source_type="material", external_id="mat-1",
         title="Bare Task", description=None, link=None, kind="INFORMATIONAL",
         actual_deadline=None, source_published_at="2026-08-20T00:00:00+00:00",
-        source_updated_at="2026-08-20T00:00:00+00:00",
+        source_updated_at="2026-08-20T00:00:00+00:00", user_id=owner_id(conn),
     )
     conn.close()
 
@@ -99,13 +101,13 @@ def test_dashboard_task_titles_link_to_detail_view(client):
     conn = connect(client.db_path)
     course_id = repo.upsert_course(
         conn, external_id="course-1", name="Object Oriented Programming", section="BCS-3C",
-        teacher="Dr. Smith", course_code="CS1004", state="ACTIVE",
+        teacher="Dr. Smith", course_code="CS1004", state="ACTIVE", user_id=owner_id(conn),
     )
     result = repo.upsert_task_from_source(
         conn, course_id=course_id, source_type="coursework", external_id="cw-soon",
         title="Due Soon Task", description=None, link=None, kind="ACTIONABLE",
         actual_deadline=(datetime.now(timezone.utc) + timedelta(days=2)).isoformat(),
-        source_published_at=repo.now_iso(), source_updated_at=repo.now_iso(),
+        source_published_at=repo.now_iso(), source_updated_at=repo.now_iso(), user_id=owner_id(conn),
     )
     conn.close()
 

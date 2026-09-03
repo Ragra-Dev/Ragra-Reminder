@@ -58,6 +58,7 @@ class _RelevanceContext:
 def _evaluate_relevance(
     conn: sqlite3.Connection,
     *,
+    user_id: int,
     task_id: int,
     item: dict[str, Any],
     context: _RelevanceContext | None,
@@ -95,7 +96,9 @@ def _evaluate_relevance(
     summary.relevance_evaluated += 1
     if decision is RelevanceDecision.OTHER_SECTION:
         summary.relevance_other_section += 1
-    repo.set_task_relevance(conn, task_id=task_id, relevance=decision.value, reason=reason)
+    repo.set_task_relevance(
+        conn, user_id=user_id, task_id=task_id, relevance=decision.value, reason=reason
+    )
 
 
 def _classroom_due_to_iso(due_date: dict | None, due_time: dict | None) -> str | None:
@@ -115,9 +118,15 @@ def _classroom_due_to_iso(due_date: dict | None, due_time: dict | None) -> str |
     return dt.isoformat()
 
 
-def sync_classroom(conn: sqlite3.Connection, client: ClassroomClient) -> SyncSummary:
+def sync_classroom(
+    conn: sqlite3.Connection, client: ClassroomClient, *, user_id: int
+) -> SyncSummary:
+    """Reconcile one user's Classroom account. `client` is authenticated as
+    that user, so every write here is scoped to the same user_id - the sync
+    never reads or writes another account's rows even when two users are
+    enrolled in the same Classroom course."""
     summary = SyncSummary()
-    repo.record_sync_start(conn, source="classroom")
+    repo.record_sync_start(conn, user_id=user_id, source="classroom")
 
     # Loaded once for the whole run. A failure here disables relevance
     # evaluation for this sync but must not stop academic data syncing -
@@ -153,11 +162,14 @@ def sync_classroom(conn: sqlite3.Connection, client: ClassroomClient) -> SyncSum
                 # what lets due_pending_reminders exclude tasks tied to a
                 # since-archived course, without deleting any history and
                 # without ever creating a row for a course never seen before.
-                repo.update_course_state_if_known(conn, external_id=course["id"], state=course_state)
+                repo.update_course_state_if_known(
+                    conn, user_id=user_id, external_id=course["id"], state=course_state
+                )
                 continue
             summary.courses_seen += 1
             course_id = repo.upsert_course(
                 conn,
+                user_id=user_id,
                 external_id=course["id"],
                 name=course.get("name", "Untitled course"),
                 section=course.get("section"),
@@ -184,9 +196,15 @@ def sync_classroom(conn: sqlite3.Connection, client: ClassroomClient) -> SyncSum
             course_name = course.get("name", "Untitled course")
             context = _RelevanceContext(course_name=course_name, profile=profile) if profile else None
 
-            seen_coursework = _sync_coursework(conn, client, course_id, course["id"], summary, context)
-            seen_announcements = _sync_announcements(conn, client, course_id, course["id"], summary, context)
-            seen_materials = _sync_materials(conn, client, course_id, course["id"], summary, context)
+            seen_coursework = _sync_coursework(
+                conn, client, user_id, course_id, course["id"], summary, context
+            )
+            seen_announcements = _sync_announcements(
+                conn, client, user_id, course_id, course["id"], summary, context
+            )
+            seen_materials = _sync_materials(
+                conn, client, user_id, course_id, course["id"], summary, context
+            )
 
             for source_type, seen_ids in (
                 ("coursework", seen_coursework),
@@ -194,22 +212,27 @@ def sync_classroom(conn: sqlite3.Connection, client: ClassroomClient) -> SyncSum
                 ("material", seen_materials),
             ):
                 cancelled = repo.cancel_tasks_missing_from_source(
-                    conn, course_id=course_id, source_type=source_type, seen_external_ids=seen_ids
+                    conn, user_id=user_id, course_id=course_id, source_type=source_type,
+                    seen_external_ids=seen_ids,
                 )
                 summary.tasks_cancelled += len(cancelled)
 
-        summary.backlog_reminders_suppressed = repo.cancel_backlog_reminders_for_already_overdue_tasks(conn)
-        summary.tasks_marked_missed = len(repo.mark_overdue_tasks_as_missed(conn, now=repo.now_iso()))
+        summary.backlog_reminders_suppressed = (
+            repo.cancel_backlog_reminders_for_already_overdue_tasks(conn, user_id=user_id)
+        )
+        summary.tasks_marked_missed = len(
+            repo.mark_overdue_tasks_as_missed(conn, user_id=user_id, now=repo.now_iso())
+        )
         # Self-healing safety net (idempotent, safe every sync): cleans up
         # any PENDING reminder left behind on an already-terminal task by
         # data written before a given state-transition call site paired
         # itself with cancel_pending_reminders.
-        repo.cancel_stray_reminders_for_terminal_tasks(conn)
+        repo.cancel_stray_reminders_for_terminal_tasks(conn, user_id=user_id)
 
-        repo.record_sync_success(conn, source="classroom")
+        repo.record_sync_success(conn, user_id=user_id, source="classroom")
     except Exception as exc:  # noqa: BLE001 - sync must never crash the process
         summary.errors.append(str(exc))
-        repo.record_sync_error(conn, source="classroom", error=str(exc))
+        repo.record_sync_error(conn, user_id=user_id, source="classroom", error=str(exc))
 
     return summary
 
@@ -217,6 +240,7 @@ def sync_classroom(conn: sqlite3.Connection, client: ClassroomClient) -> SyncSum
 def _apply_upsert(
     conn: sqlite3.Connection,
     *,
+    user_id: int,
     course_id: int,
     course_external_id: str,
     course_code: str | None,
@@ -229,6 +253,7 @@ def _apply_upsert(
 ) -> None:
     result = repo.upsert_task_from_source(
         conn,
+        user_id=user_id,
         course_id=course_id,
         source_type=source_type,
         external_id=item["id"],
@@ -245,7 +270,9 @@ def _apply_upsert(
     # depends on the user's enrollment profile, which can change without any
     # Classroom-side change. set_task_relevance skips the write when the
     # decision is unchanged, so a routine re-sync stays idempotent.
-    _evaluate_relevance(conn, task_id=result.task_id, item=item, context=context, summary=summary)
+    _evaluate_relevance(
+        conn, user_id=user_id, task_id=result.task_id, item=item, context=context, summary=summary
+    )
 
     if result.created:
         summary.tasks_created += 1
@@ -263,7 +290,8 @@ def _apply_upsert(
             # (compute_reminder_plan already returns [] for a non-positive
             # lead time), while a task discovered with real time left
             # before its deadline gets the normal countdown.
-            _schedule_reminders(conn, task_id=result.task_id, title=item.get("title") or "",
+            _schedule_reminders(conn, user_id=user_id, task_id=result.task_id,
+                                 title=item.get("title") or "",
                                  course_code=course_code, actual_deadline=actual_deadline,
                                  discovered_at=None)
         return
@@ -280,20 +308,22 @@ def _apply_upsert(
                 "new_deadline": result.new_deadline,
             }
         )
-        repo.cancel_pending_reminders(conn, task_id=result.task_id)
+        repo.cancel_pending_reminders(conn, user_id=user_id, task_id=result.task_id)
         # Queued after the cancel above, or it would be cancelled with the
         # stale countdown it is announcing. Keyed on the *new* deadline so
         # re-detecting the same change can never send twice, while a genuine
         # second change does produce a second alert.
         repo.insert_reminder_if_absent(
             conn,
+            user_id=user_id,
             task_id=result.task_id,
             reminder_type="DEADLINE_CHANGED",
             scheduled_for=repo.now_iso(),
             idempotency_key=f"{result.task_id}:DEADLINE_CHANGED:{result.new_deadline}",
         )
         if result.new_deadline:
-            _schedule_reminders(conn, task_id=result.task_id, title=item.get("title") or "",
+            _schedule_reminders(conn, user_id=user_id, task_id=result.task_id,
+                                 title=item.get("title") or "",
                                  course_code=course_code, actual_deadline=result.new_deadline,
                                  discovered_at=repo.now_iso())
 
@@ -301,6 +331,7 @@ def _apply_upsert(
 def _schedule_reminders(
     conn: sqlite3.Connection,
     *,
+    user_id: int,
     task_id: int,
     title: str,
     course_code: str | None,
@@ -317,6 +348,7 @@ def _schedule_reminders(
         idempotency_key = f"{task_id}:{plan_item.reminder_type}:{actual_deadline}"
         repo.insert_reminder_if_absent(
             conn,
+            user_id=user_id,
             task_id=task_id,
             reminder_type=plan_item.reminder_type,
             scheduled_for=scheduled_iso,
@@ -324,35 +356,41 @@ def _schedule_reminders(
         )
 
 
-def _sync_coursework(conn, client, course_id, course_external_id, summary, context=None) -> set[str]:
+def _sync_coursework(
+    conn, client, user_id, course_id, course_external_id, summary, context=None
+) -> set[str]:
     course_code = None
     items = client.list_course_work(course_external_id)
     for item in items:
         deadline = _classroom_due_to_iso(item.get("dueDate"), item.get("dueTime"))
         _apply_upsert(
-            conn, course_id=course_id, course_external_id=course_external_id,
+            conn, user_id=user_id, course_id=course_id, course_external_id=course_external_id,
             course_code=course_code, source_type="coursework", item=item,
             kind="ACTIONABLE", actual_deadline=deadline, summary=summary, context=context,
         )
     return {item["id"] for item in items}
 
 
-def _sync_announcements(conn, client, course_id, course_external_id, summary, context=None) -> set[str]:
+def _sync_announcements(
+    conn, client, user_id, course_id, course_external_id, summary, context=None
+) -> set[str]:
     items = client.list_announcements(course_external_id)
     for item in items:
         _apply_upsert(
-            conn, course_id=course_id, course_external_id=course_external_id,
+            conn, user_id=user_id, course_id=course_id, course_external_id=course_external_id,
             course_code=None, source_type="announcement", item=item,
             kind="INFORMATIONAL", actual_deadline=None, summary=summary, context=context,
         )
     return {item["id"] for item in items}
 
 
-def _sync_materials(conn, client, course_id, course_external_id, summary, context=None) -> set[str]:
+def _sync_materials(
+    conn, client, user_id, course_id, course_external_id, summary, context=None
+) -> set[str]:
     items = client.list_course_materials(course_external_id)
     for item in items:
         _apply_upsert(
-            conn, course_id=course_id, course_external_id=course_external_id,
+            conn, user_id=user_id, course_id=course_id, course_external_id=course_external_id,
             course_code=None, source_type="material", item=item,
             kind="INFORMATIONAL", actual_deadline=None, summary=summary, context=context,
         )

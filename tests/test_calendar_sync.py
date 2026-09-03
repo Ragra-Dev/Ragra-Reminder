@@ -3,6 +3,8 @@ import pytest
 from ragra.db import repo
 from ragra.sync.calendar_sync import sync_task_event
 
+from tests.support import owner_id
+
 
 class FakeCalendarClient:
     """In-memory stand-in for GoogleCalendarClient - no network calls."""
@@ -37,14 +39,14 @@ class FakeCalendarClient:
 def _make_task(conn, *, actual_deadline="2026-09-10T23:59:00+00:00", status="ACTION_REQUIRED"):
     course_id = repo.upsert_course(
         conn, external_id="course-1", name="OOP", section="BCS-3C",
-        teacher="Dr. Smith", course_code="CS1004", state="ACTIVE",
+        teacher="Dr. Smith", course_code="CS1004", state="ACTIVE", user_id=owner_id(conn),
     )
     result = repo.upsert_task_from_source(
         conn, course_id=course_id, source_type="coursework", external_id="cw-1",
         title="Assignment 2", description=None, link=None, kind="ACTIONABLE",
         actual_deadline=actual_deadline,
         source_published_at="2026-08-20T00:00:00+00:00",
-        source_updated_at="2026-08-20T00:00:00+00:00",
+        source_updated_at="2026-08-20T00:00:00+00:00", user_id=owner_id(conn),
     )
     if status != "ACTION_REQUIRED":
         conn.execute("UPDATE tasks SET status = ? WHERE id = ?", (status, result.task_id))
@@ -56,11 +58,11 @@ def test_creates_event_for_new_task_with_deadline(conn):
     task_id = _make_task(conn)
     client = FakeCalendarClient()
 
-    outcome = sync_task_event(conn, client, calendar_id="primary", task_id=task_id)
+    outcome = sync_task_event(conn, client, calendar_id="primary", task_id=task_id, user_id=owner_id(conn))
 
     assert outcome == "created"
     assert client.create_calls == 1
-    row = repo.get_calendar_event(conn, task_id=task_id, kind="ACTUAL_DEADLINE")
+    row = repo.get_calendar_event(conn, task_id=task_id, kind="ACTUAL_DEADLINE", user_id=owner_id(conn))
     assert row is not None
     assert row["google_event_id"] in client.events
 
@@ -69,9 +71,9 @@ def test_repeated_sync_updates_does_not_duplicate(conn):
     task_id = _make_task(conn)
     client = FakeCalendarClient()
 
-    sync_task_event(conn, client, calendar_id="primary", task_id=task_id)
-    sync_task_event(conn, client, calendar_id="primary", task_id=task_id)
-    outcome = sync_task_event(conn, client, calendar_id="primary", task_id=task_id)
+    sync_task_event(conn, client, calendar_id="primary", task_id=task_id, user_id=owner_id(conn))
+    sync_task_event(conn, client, calendar_id="primary", task_id=task_id, user_id=owner_id(conn))
+    outcome = sync_task_event(conn, client, calendar_id="primary", task_id=task_id, user_id=owner_id(conn))
 
     assert outcome == "updated"
     assert client.create_calls == 1
@@ -85,8 +87,8 @@ def test_repeated_sync_updates_does_not_duplicate(conn):
 def test_deadline_change_updates_existing_event_not_a_new_one(conn):
     task_id = _make_task(conn)
     client = FakeCalendarClient()
-    sync_task_event(conn, client, calendar_id="primary", task_id=task_id)
-    original_event_id = repo.get_calendar_event(conn, task_id=task_id, kind="ACTUAL_DEADLINE")["google_event_id"]
+    sync_task_event(conn, client, calendar_id="primary", task_id=task_id, user_id=owner_id(conn))
+    original_event_id = repo.get_calendar_event(conn, task_id=task_id, kind="ACTUAL_DEADLINE", user_id=owner_id(conn))["google_event_id"]
 
     conn.execute(
         "UPDATE tasks SET actual_deadline = ? WHERE id = ?",
@@ -94,11 +96,11 @@ def test_deadline_change_updates_existing_event_not_a_new_one(conn):
     )
     conn.commit()
 
-    outcome = sync_task_event(conn, client, calendar_id="primary", task_id=task_id)
+    outcome = sync_task_event(conn, client, calendar_id="primary", task_id=task_id, user_id=owner_id(conn))
 
     assert outcome == "updated"
     assert client.create_calls == 1  # still just one ever created
-    row = repo.get_calendar_event(conn, task_id=task_id, kind="ACTUAL_DEADLINE")
+    row = repo.get_calendar_event(conn, task_id=task_id, kind="ACTUAL_DEADLINE", user_id=owner_id(conn))
     assert row["google_event_id"] == original_event_id
     assert client.events[original_event_id]["end"]["dateTime"].startswith("2026-09-13")
 
@@ -106,48 +108,48 @@ def test_deadline_change_updates_existing_event_not_a_new_one(conn):
 def test_completed_task_removes_calendar_event(conn):
     task_id = _make_task(conn)
     client = FakeCalendarClient()
-    sync_task_event(conn, client, calendar_id="primary", task_id=task_id)
+    sync_task_event(conn, client, calendar_id="primary", task_id=task_id, user_id=owner_id(conn))
     assert len(client.events) == 1
 
-    repo.mark_completed(conn, task_id=task_id)
-    outcome = sync_task_event(conn, client, calendar_id="primary", task_id=task_id)
+    repo.mark_completed(conn, task_id=task_id, user_id=owner_id(conn))
+    outcome = sync_task_event(conn, client, calendar_id="primary", task_id=task_id, user_id=owner_id(conn))
 
     assert outcome == "removed"
     assert client.delete_calls == 1
     assert len(client.events) == 0
-    assert repo.get_calendar_event(conn, task_id=task_id, kind="ACTUAL_DEADLINE") is None
+    assert repo.get_calendar_event(conn, task_id=task_id, kind="ACTUAL_DEADLINE", user_id=owner_id(conn)) is None
 
 
 def test_cancelled_task_removes_calendar_event(conn):
     task_id = _make_task(conn)
     client = FakeCalendarClient()
-    sync_task_event(conn, client, calendar_id="primary", task_id=task_id)
+    sync_task_event(conn, client, calendar_id="primary", task_id=task_id, user_id=owner_id(conn))
 
-    repo.cancel_task_from_source(conn, task_id=task_id)
-    outcome = sync_task_event(conn, client, calendar_id="primary", task_id=task_id)
+    repo.cancel_task_from_source(conn, task_id=task_id, user_id=owner_id(conn))
+    outcome = sync_task_event(conn, client, calendar_id="primary", task_id=task_id, user_id=owner_id(conn))
 
     assert outcome == "removed"
-    assert repo.get_calendar_event(conn, task_id=task_id, kind="ACTUAL_DEADLINE") is None
+    assert repo.get_calendar_event(conn, task_id=task_id, kind="ACTUAL_DEADLINE", user_id=owner_id(conn)) is None
 
 
 def test_task_without_deadline_never_creates_an_event(conn):
     task_id = _make_task(conn, actual_deadline=None)
     client = FakeCalendarClient()
 
-    outcome = sync_task_event(conn, client, calendar_id="primary", task_id=task_id)
+    outcome = sync_task_event(conn, client, calendar_id="primary", task_id=task_id, user_id=owner_id(conn))
 
     assert outcome == "skipped"
     assert client.create_calls == 0
-    assert repo.get_calendar_event(conn, task_id=task_id, kind="ACTUAL_DEADLINE") is None
+    assert repo.get_calendar_event(conn, task_id=task_id, kind="ACTUAL_DEADLINE", user_id=owner_id(conn)) is None
 
 
 def test_missed_task_keeps_its_calendar_event(conn):
     task_id = _make_task(conn)
     client = FakeCalendarClient()
-    sync_task_event(conn, client, calendar_id="primary", task_id=task_id)
+    sync_task_event(conn, client, calendar_id="primary", task_id=task_id, user_id=owner_id(conn))
 
-    repo.mark_missed(conn, task_id=task_id)
-    outcome = sync_task_event(conn, client, calendar_id="primary", task_id=task_id)
+    repo.mark_missed(conn, task_id=task_id, user_id=owner_id(conn))
+    outcome = sync_task_event(conn, client, calendar_id="primary", task_id=task_id, user_id=owner_id(conn))
 
     assert outcome == "updated"
     assert len(client.events) == 1
