@@ -174,6 +174,158 @@ def delete_google_credentials(
 
 
 # ---------------------------------------------------------------------------
+# Credential health (migration 0026) - see ragra/adapters/credential_health.py
+# for the state machine and classification this table exists to persist.
+# ---------------------------------------------------------------------------
+
+
+# Three outcomes, not two. "The credential worked" and "there is no
+# credential to try" both end a failure streak, but only the first is
+# evidence the credential ever worked - conflating them made a
+# never-connected service report a `last_success_at`, which the account
+# page then rendered as "Last worked: <now>" for something that has never
+# worked at all.
+WORKED = "worked"        # a real credential was successfully used
+FAILED = "failed"        # a real credential was tried and failed
+NOTHING_TO_TRY = "none"  # no credential exists; not success, not failure
+
+
+def record_credential_attempt(
+    conn: sqlite3.Connection,
+    *,
+    user_id: int,
+    service: str,
+    state: str,
+    outcome: str,
+    error_category: str | None = None,
+    error_detail: str | None = None,
+    now: str | None = None,
+) -> None:
+    """Record the outcome of one credential use/refresh attempt.
+
+    Always writes last_attempt_at. last_success_at advances only on
+    WORKED - never on NOTHING_TO_TRY, which is what kept a
+    never-connected service from claiming it had once worked.
+    first_failure_at is set the moment a streak begins and cleared the
+    moment it ends (by either WORKED or NOTHING_TO_TRY), so it always
+    answers "how long has *this* outage lasted", not "when did this ever
+    first fail"."""
+    if outcome not in (WORKED, FAILED, NOTHING_TO_TRY):
+        raise ValueError(f"unknown credential attempt outcome {outcome!r}")
+
+    now = now or now_iso()
+    existing = conn.execute(
+        "SELECT first_failure_at FROM credential_health WHERE user_id = ? AND service = ?",
+        (user_id, service),
+    ).fetchone()
+
+    if outcome != FAILED:
+        first_failure_at = None
+    elif existing is not None and existing["first_failure_at"] is not None:
+        first_failure_at = existing["first_failure_at"]
+    else:
+        first_failure_at = now
+
+    worked = outcome == WORKED
+    conn.execute(
+        """INSERT INTO credential_health
+               (user_id, service, state, last_attempt_at, last_success_at,
+                first_failure_at, last_error_category, last_error_detail, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(user_id, service) DO UPDATE SET
+             state = excluded.state,
+             last_attempt_at = excluded.last_attempt_at,
+             last_success_at = CASE WHEN ? THEN excluded.last_attempt_at
+                                     ELSE credential_health.last_success_at END,
+             first_failure_at = excluded.first_failure_at,
+             last_error_category = excluded.last_error_category,
+             last_error_detail = excluded.last_error_detail,
+             updated_at = excluded.updated_at""",
+        (
+            user_id, service, state, now, now if worked else None,
+            first_failure_at, error_category, error_detail, now,
+            worked,
+        ),
+    )
+    conn.commit()
+
+
+def get_credential_health(
+    conn: sqlite3.Connection, *, user_id: int, service: str
+) -> sqlite3.Row | None:
+    return conn.execute(
+        "SELECT * FROM credential_health WHERE user_id = ? AND service = ?",
+        (user_id, service),
+    ).fetchone()
+
+
+def list_credential_health(conn: sqlite3.Connection, *, user_id: int) -> list[sqlite3.Row]:
+    """Every service's credential health for one account - what the account
+    page renders, in one query."""
+    return conn.execute(
+        "SELECT * FROM credential_health WHERE user_id = ? ORDER BY service", (user_id,)
+    ).fetchall()
+
+
+# ---------------------------------------------------------------------------
+# Google reconnect flow (migration 0027) - the low-friction "Reconnect"
+# action on the account page. See ragra/web/google_reconnect.py.
+# ---------------------------------------------------------------------------
+
+
+def begin_google_reconnect(
+    conn: sqlite3.Connection,
+    *,
+    state_hash: str,
+    user_id: int,
+    service: str,
+    code_verifier: str,
+    now: str,
+    expires_at: str,
+) -> None:
+    conn.execute(
+        """INSERT INTO google_reconnect_states
+               (state_hash, user_id, service, code_verifier, created_at, expires_at)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (state_hash, user_id, service, code_verifier, now, expires_at),
+    )
+    conn.commit()
+
+
+def consume_google_reconnect(
+    conn: sqlite3.Connection, *, state_hash: str
+) -> sqlite3.Row | None:
+    """Look up and delete a reconnect attempt by its state hash, atomically.
+
+    ragra:token-scoped - like oauth state and session lookup, resolving
+    which user/service this callback belongs to is exactly what this
+    function does, so it cannot itself require the user_id it is about to
+    reveal.
+
+    `DELETE ... RETURNING` rather than SELECT-then-DELETE deliberately:
+    the two-statement form leaves a window in which two concurrent
+    callbacks presenting the same state can both read the row before
+    either deletes it, so "single use" would be enforced by Google
+    rejecting the replayed authorization code rather than by Ragra. One
+    statement makes exactly one caller receive the row."""
+    row = conn.execute(
+        "DELETE FROM google_reconnect_states WHERE state_hash = ? RETURNING *", (state_hash,)
+    ).fetchone()
+    conn.commit()
+    return row
+
+
+def purge_expired_google_reconnect_states(conn: sqlite3.Connection, *, now: str) -> int:
+    """Housekeeping for abandoned reconnect attempts.
+
+    ragra:cross-user - strictly age-based, returns only a count, same
+    reasoning as purge_old_tick_sessions and purge_expired_sessions."""
+    cur = conn.execute("DELETE FROM google_reconnect_states WHERE expires_at <= ?", (now,))
+    conn.commit()
+    return cur.rowcount
+
+
+# ---------------------------------------------------------------------------
 # Courses
 # ---------------------------------------------------------------------------
 

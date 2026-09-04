@@ -22,6 +22,14 @@
   .danger { border-color: #f3d4d4; background: #fff7f7; }
   .danger a { color: #9c1c1c; }
   form.inline { display: inline; }
+  .badge { display: inline-block; padding: 0.1rem 0.5rem; border-radius: 999px; font-size: 0.78rem; font-weight: 600; }
+  .badge-healthy { background: #e3f6e8; color: #146c2e; }
+  .badge-degraded { background: #fff3d6; color: #8a5a00; }
+  .badge-reauth_required { background: #fde3e3; color: #9c1c1c; }
+  .badge-not_connected { background: #eee; color: #555; }
+  .badge-config_error { background: #fde3e3; color: #9c1c1c; }
+  .service-row { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 0.4rem 0; }
+  .service-row .name { font-weight: 600; }
 </style>
 </head>
 <body>
@@ -79,13 +87,25 @@
 
 <h2>Connected Google services</h2>
 <section>
-  <div class="status-line"><span class="label">Encryption key configured:</span> {{ credentials.encryption_key_configured }}</div>
-  <div class="status-line"><span class="label">Classroom:</span> {{ credentials.classroom }}</div>
-  <div class="status-line"><span class="label">Calendar:</span> {{ credentials.calendar }}</div>
-  <p class="hint">Connecting or reconnecting Classroom/Calendar access is done at a terminal
-    (<code>ragra classroom-auth</code>, <code>ragra calendar-auth</code>) rather than from this page -
-    that consent screen has always required a deliberate, interactive step, and Phase 3 only changed
-    where the resulting token is stored (encrypted, per account), not how it's granted.</p>
+  {% for service, status in google_status.items() %}
+  <div class="service-row">
+    <div>
+      <span class="name">{{ service | capitalize }}</span>
+      <span class="badge badge-{{ status.state }}">{{ status.state | replace("_", " ") }}</span>
+      {% if status.detail %}<div class="hint">{{ status.detail }}</div>{% endif %}
+      {% if status.last_success_at %}<div class="hint">Last worked: {{ status.last_success_at }}</div>{% endif %}
+    </div>
+    <form class="inline" method="post" action="/account/google/reconnect/{{ service }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token_for(request) }}">
+      <button type="submit">
+        {% if status.state == "not_connected" %}Connect{% else %}Reconnect{% endif %} {{ service | capitalize }}
+      </button>
+    </form>
+  </div>
+  {% endfor %}
+  <p class="hint">Reconnecting opens Google's real consent screen in this browser tab - the same one
+    <code>ragra classroom-auth</code>/<code>calendar-auth</code> open at a terminal, which remain
+    available too. Nothing is granted without your approval on that screen.</p>
 </section>
 
 <h2 class="danger-heading">Danger zone</h2>

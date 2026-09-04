@@ -29,7 +29,8 @@ from fastapi.responses import PlainTextResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from ragra import accounts as accounts_module
-from ragra.adapters import google_credentials
+from ragra import crypto
+from ragra.adapters import credential_health, google_credentials
 from ragra.db import repo
 from ragra.db.connection import connect_closing
 from ragra.notifications.preferences import (
@@ -41,7 +42,7 @@ from ragra.relevance.profile import load_raw_profile, save_profile
 from ragra.timetable.enrollment import EnrolledCourse
 from ragra.timetable.schedule import occurrences_for_local_day, weekly_class_from_row
 from ragra.tz import format_stored_local, local_day_bounds, utc_iso
-from ragra.web import auth, csrf, sessions
+from ragra.web import auth, csrf, google_reconnect, sessions
 
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
 
@@ -158,6 +159,7 @@ def create_app(
     *,
     auth_settings: auth.AuthSettings | None = None,
     identity_provider: auth.IdentityProvider | None = None,
+    data_auth_provider: google_reconnect.GoogleDataAuthProvider | None = None,
 ) -> FastAPI:
     """Build the app.
 
@@ -166,6 +168,11 @@ def create_app(
     adoption - can be tested end to end without a network round trip. A
     security control that can only be exercised against Google's live
     servers is a security control that does not get exercised.
+
+    `data_auth_provider` is the same principle applied to the "Reconnect
+    Google" flow (ragra/web/google_reconnect.py): injectable so its state/
+    PKCE/ownership handling is testable without a real Classroom/Calendar
+    consent round trip.
     """
     app = FastAPI(title="Ragra")
     templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
@@ -222,6 +229,22 @@ def create_app(
         if identity_provider is not None:
             return identity_provider
         return auth.GoogleIdentityProvider(settings)
+
+    def _data_provider() -> google_reconnect.GoogleDataAuthProvider:
+        if data_auth_provider is not None:
+            return data_auth_provider
+        from ragra.adapters.calendar import CALENDAR_SCOPES
+        from ragra.adapters.classroom import CLASSROOM_SCOPES
+        from ragra.config import load_config
+
+        config = load_config()
+        base = (config.web_base_url or f"http://{config.web_host}:{config.web_port}").rstrip("/")
+        return google_reconnect.GoogleOAuthDataProvider(
+            client_secrets_file=config.classroom_paths.credentials_file,
+            redirect_uri=f"{base}/account/google/callback",
+            classroom_scopes=CLASSROOM_SCOPES,
+            calendar_scopes=CALENDAR_SCOPES,
+        )
 
     def _acting_user(conn, request: Request) -> int:
         return current_user_id(conn, request, settings=settings)
@@ -302,6 +325,113 @@ def create_app(
         response = RedirectResponse(consumed.redirect_to, status_code=303)
         _set_session_cookie(response, token, settings)
         return response
+
+    # --- Reconnect Google (Classroom/Calendar data authorization) ---------
+    #
+    # Distinct from sign-in above: these two routes let an already-signed-in
+    # user grant/replace Ragra's Classroom or Calendar authorization from
+    # the account page instead of a terminal command. Same Google consent
+    # screen, same OAuth client, same PKCE/single-use-state protections as
+    # ragra/web/auth.py - only the redirect target and the scopes differ.
+    # ragra classroom-auth/calendar-auth remain available unchanged; this is
+    # an additional, lower-friction path to the same result, not a
+    # replacement for the CLI flow.
+
+    # A reconnect *attempt* failing says nothing about the credential
+    # currently in storage, so none of the failure paths below write to
+    # credential_health: that table describes whether the stored
+    # credential works, and a user who opens the consent screen and
+    # changes their mind has not changed it. Writing a failure there would
+    # flip a perfectly healthy integration to "degraded" until the next
+    # tick corrected it. Only a *completed* reconnect writes, because only
+    # then is there a new credential whose health is known.
+    _RECONNECT_FAILED = "Reconnect could not be completed. Nothing was changed - your existing Google connection is untouched."
+
+    @app.post("/account/google/reconnect/{service}")
+    def google_reconnect_begin(request: Request, service: str):  # CSRF-checked by the middleware above
+        if service not in google_reconnect.SERVICES:
+            raise HTTPException(status_code=404)
+        with connect_closing(db_path) as conn:
+            user_id = _acting_user(conn, request)
+            try:
+                url = google_reconnect.begin_reconnect(
+                    conn, _data_provider(), user_id=user_id, service=service, now=datetime.now(timezone.utc)
+                )
+            except google_reconnect.ReconnectNotConfigured:
+                return PlainTextResponse(
+                    "Google reconnect is not configured on this deployment.", status_code=503
+                )
+            except Exception:  # noqa: BLE001 - never surface an internal error (or a local path) to a browser
+                return PlainTextResponse(_RECONNECT_FAILED, status_code=400)
+        return RedirectResponse(url, status_code=303)
+
+    @app.get("/account/google/callback")
+    def google_reconnect_callback(request: Request, code: str = "", state: str = "", error: str = ""):
+        now = datetime.now(timezone.utc)
+        with connect_closing(db_path) as conn:
+            # Spend the state first, whatever else is wrong with the
+            # request - same reasoning as /auth/callback.
+            try:
+                consumed = google_reconnect.consume_reconnect(conn, state=state, now=now)
+            except google_reconnect.ReconnectError:
+                return PlainTextResponse("Reconnect could not be completed.", status_code=400)
+
+            # The user declined at Google's consent screen, or came back
+            # without a code. Their existing credential is untouched.
+            if error or not code:
+                return PlainTextResponse(_RECONNECT_FAILED, status_code=400)
+
+            try:
+                credentials = _data_provider().exchange_code(
+                    service=consumed.service, code=code, code_verifier=consumed.code_verifier
+                )
+            except google_reconnect.ReconnectNotConfigured:
+                return PlainTextResponse(
+                    "Google reconnect is not configured on this deployment.", status_code=503
+                )
+            except Exception:  # noqa: BLE001 - the real provider can also raise network, JSON and
+                # filesystem errors; none of their messages (which can carry request detail or a
+                # local path) may reach a browser, and none of them justify a 500.
+                return PlainTextResponse(_RECONNECT_FAILED, status_code=400)
+
+            if not getattr(credentials, "refresh_token", None):
+                # Enforced here, not only inside the real provider: a
+                # credential the unattended tick can't actually use later
+                # must never be accepted as "reconnected", regardless of
+                # which provider produced it.
+                return PlainTextResponse(_RECONNECT_FAILED, status_code=400)
+
+            # Verified before storing, not after: a grant that is missing
+            # scopes this service needs would otherwise be recorded as
+            # HEALTHY and fail on some later unattended tick, and a grant
+            # for the *other* service would be filed under this one.
+            absent = google_reconnect.missing_scopes(
+                service=consumed.service, granted=getattr(credentials, "scopes", None)
+            )
+            if absent:
+                return PlainTextResponse(
+                    "Reconnect could not be completed: the approval did not include everything "
+                    f"Ragra needs for {consumed.service}. Missing: {', '.join(absent)}. "
+                    "Nothing was changed - your existing Google connection is untouched.",
+                    status_code=400,
+                )
+
+            try:
+                google_credentials.store(
+                    conn, user_id=consumed.user_id, service=consumed.service, payload=credentials.to_json()
+                )
+            except crypto.CredentialKeyMissing:
+                return PlainTextResponse(
+                    "This deployment has no credential encryption key configured - an operator must set "
+                    "RAGRA_CREDENTIAL_KEY before reconnecting can succeed.",
+                    status_code=503,
+                )
+            except Exception:  # noqa: BLE001 - storage failure must not 500 or leak a path either
+                return PlainTextResponse(_RECONNECT_FAILED, status_code=400)
+
+            credential_health.record_success(conn, user_id=consumed.user_id, service=consumed.service)
+
+        return RedirectResponse("/account", status_code=303)
 
     @app.post("/logout")
     def logout(request: Request):  # CSRF-checked by the middleware above
@@ -587,7 +717,21 @@ def create_app(
             user_row = repo.get_user(conn, user_id=user_id)
             profile = load_raw_profile(conn, user_id=user_id)
             preferences = load_preferences(conn, user_id=user_id)
-            credentials = google_credentials.status(conn, user_id=user_id)
+            health_rows = {
+                row["service"]: row for row in repo.list_credential_health(conn, user_id=user_id)
+            }
+            # A service with no credential_health row yet (never attempted
+            # this tick cycle) is exactly NOT_CONNECTED - the same state a
+            # fresh account starts in, not an error.
+            google_status = {
+                service: {
+                    "state": (health_rows.get(service)["state"] if service in health_rows
+                              else credential_health.CredentialState.NOT_CONNECTED.value),
+                    "detail": health_rows.get(service)["last_error_detail"] if service in health_rows else None,
+                    "last_success_at": health_rows.get(service)["last_success_at"] if service in health_rows else None,
+                }
+                for service in google_reconnect.SERVICES
+            }
 
         return templates.TemplateResponse(
             request,
@@ -597,7 +741,7 @@ def create_app(
                 "profile": profile,
                 "enrollment_text": _enrollment_to_text(profile.enrollment),
                 "preferences": preferences,
-                "credentials": credentials,
+                "google_status": google_status,
             },
         )
 

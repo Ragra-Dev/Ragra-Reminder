@@ -148,8 +148,10 @@ def test_core_tick_runs_with_ai_package_unavailable(tmp_path, monkeypatch):
     log_text = log_path.read_text(encoding="utf-8")
     assert "tick end" in log_text  # tick completed rather than crashing on the poisoned AI import
     # timetable succeeds regardless of AI availability; classroom/calendar
-    # fail only because this sandbox has no real credentials, not because of AI.
-    assert exit_code == 1
+    # were never connected in this sandbox, which is NOT_CONNECTED - a
+    # normal, expected state (ragra/adapters/credential_health.py), not a
+    # failure - so the tick exits clean rather than because of AI.
+    assert exit_code == 0
     assert "Timetable sync:" in log_text
 
 

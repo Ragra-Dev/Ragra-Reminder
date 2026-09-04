@@ -96,6 +96,17 @@ class ClassroomAdapterError(RuntimeError):
     an interactive browser step."""
 
 
+class NoClassroomCredential(ClassroomAdapterError):
+    """No Classroom token has ever been stored at this path.
+
+    A distinct subclass, not just a different message, because this is a
+    different *state* from every other ClassroomAdapterError: "never
+    connected" is a normal, expected condition
+    (ragra/adapters/credential_health.py's NOT_CONNECTED), not a failure -
+    unlike a credential that exists but won't refresh, which genuinely is
+    one."""
+
+
 class ClassroomGoogleError(RuntimeError):
     """Raised when a Google API call fails in a user-safe way."""
 
@@ -172,7 +183,7 @@ def _load_and_refresh(paths: ClassroomTokenPaths) -> Any:
 
     token_path = _existing_token_path(paths)
     if token_path is None:
-        raise ClassroomAdapterError("No Classroom credential found. Run: ragra classroom-auth")
+        raise NoClassroomCredential("No Classroom credential found. Run: ragra classroom-auth")
 
     try:
         # No explicit scopes= override: trust whatever scopes are actually
@@ -217,6 +228,18 @@ def _run_interactive_consent(paths: ClassroomTokenPaths) -> Any:
     creds = flow.run_local_server(port=0, prompt="consent")
     _persist_token(creds, paths.token_file)
     return creds
+
+
+def load_classroom_credentials(paths: ClassroomTokenPaths) -> Any:
+    """The stored Classroom credential, silently refreshed if expired -
+    the raw credential object, not a client wrapped around it.
+
+    The public counterpart to `ensure_calendar_credentials` on the Calendar
+    side, so a caller that needs the credential itself (to re-store it, or
+    to wrap it exactly once) does not have to reach for a private function
+    or unwrap a client to get at it. Raises the same errors
+    `get_classroom_client(interactive=False)` does."""
+    return _load_and_refresh(paths)
 
 
 def get_classroom_client(paths: ClassroomTokenPaths, *, interactive: bool = False) -> "ClassroomGoogleClient":

@@ -30,6 +30,7 @@ from typing import Any
 from ragra import crypto
 from ragra.adapters import calendar as calendar_adapter
 from ragra.adapters import classroom as classroom_adapter
+from ragra.adapters import credential_health
 from ragra.adapters import google_credentials
 from ragra.config import Config
 from ragra.db import repo
@@ -106,27 +107,119 @@ def _stored_credentials(
     return _refresh_if_needed(conn, creds, user_id=user_id, service=service)
 
 
+def _resolve_client(
+    conn: sqlite3.Connection,
+    config: Config,
+    *,
+    user_id: int,
+    service: str,
+    scopes: tuple[str, ...],
+    legacy_paths: Any,
+    legacy_load,
+    legacy_error_type: type[Exception],
+    no_credential_error_type: type[Exception],
+    wrap_client,
+):
+    """Shared body of classroom_client_for/calendar_client_for.
+
+    Every exit path - success, a genuine failure, or "nothing stored yet"
+    - is recorded through ragra/adapters/credential_health.py before
+    returning or raising, so the account page and health alerting always
+    reflect what actually just happened, for either storage backend. This
+    is the one seam that knows both the user_id and the outcome of a real
+    Google interaction, which is why the recording lives here rather than
+    in classroom.py/calendar.py (which are user-agnostic, path-based) or
+    in cli.py (which only sees an opaque exception by the time it's
+    involved).
+
+    `legacy_load` must return the raw credential object, never a client
+    wrapped around one: this function wraps exactly once, at the end, and
+    a loader that wrapped as well would produce a client built around
+    another client rather than around a credential.
+
+    **Storage precedence, stated once so it cannot be inferred wrongly:**
+    the encrypted per-user store always wins. The on-disk legacy file is
+    consulted only when that store holds nothing for this user+service
+    *and* the user is the pre-identity owner. On a successful legacy load
+    the credential is adopted into the encrypted store immediately (when a
+    key is configured), so the two can never drift into disagreeing about
+    which one is current - after the first successful use there is exactly
+    one live copy, and the file is a spent migration source rather than a
+    second source of truth.
+    """
+    try:
+        creds = _stored_credentials(conn, user_id=user_id, service=service, scopes=scopes)
+    except UserCredentialsUnavailable as exc:
+        credential_health.record_failure(conn, user_id=user_id, service=service, exc=exc.__cause__ or exc)
+        raise
+
+    if creds is not None:
+        credential_health.record_success(conn, user_id=user_id, service=service)
+        return wrap_client(creds)
+
+    if not _is_legacy_owner(conn, user_id):
+        credential_health.record_not_connected(conn, user_id=user_id, service=service)
+        raise UserCredentialsUnavailable(f"no {service} authorization stored for this account")
+
+    try:
+        legacy_creds = legacy_load(legacy_paths)
+    except no_credential_error_type as exc:
+        # A distinct type, not just another message: no token has ever
+        # existed at this path, which is NOT_CONNECTED - expected, not a
+        # failure - never DEGRADED/REAUTH_REQUIRED.
+        credential_health.record_not_connected(conn, user_id=user_id, service=service)
+        raise UserCredentialsUnavailable(str(exc)) from exc
+    except legacy_error_type as exc:
+        credential_health.record_failure(conn, user_id=user_id, service=service, exc=exc.__cause__ or exc)
+        raise UserCredentialsUnavailable(str(exc)) from exc
+
+    _adopt_legacy_credential(conn, user_id=user_id, service=service, credentials=legacy_creds)
+    credential_health.record_success(conn, user_id=user_id, service=service)
+    return wrap_client(legacy_creds)
+
+
+def _adopt_legacy_credential(conn: sqlite3.Connection, *, user_id: int, service: str, credentials: Any) -> None:
+    """Move a working on-disk credential into the encrypted store the
+    first time it is successfully used.
+
+    This closes the drift window the file otherwise creates: without it,
+    the encrypted store and the file are two independent copies, only one
+    of which stays current as tokens rotate, and whichever is consulted
+    later silently decides whether sync works. After adoption the store is
+    authoritative (it is consulted first) and the file is a spent
+    migration source.
+
+    Best-effort by design: a deployment with no encryption key configured
+    is a supported state (see ragra/adapters/google_credentials.py), and
+    failing a working sync because the *optional* copy could not be
+    written would be a self-inflicted outage. The credential in hand is
+    already good; adoption is an optimisation of where it lives.
+    """
+    if not crypto.is_configured():
+        return
+    try:
+        google_credentials.store(conn, user_id=user_id, service=service, payload=credentials.to_json())
+    except Exception:  # noqa: BLE001 - never let bookkeeping break a working sync
+        return
+
+
 def classroom_client_for(
     conn: sqlite3.Connection, config: Config, *, user_id: int
 ) -> classroom_adapter.ClassroomGoogleClient:
     """An authenticated Classroom client for one user. Never opens a
     browser - an unattended run must never block on a consent screen."""
-    creds = _stored_credentials(
+    return _resolve_client(
         conn,
+        config,
         user_id=user_id,
         service=google_credentials.CLASSROOM,
         scopes=classroom_adapter.CLASSROOM_SCOPES,
+        legacy_paths=config.classroom_paths,
+        legacy_load=classroom_adapter.load_classroom_credentials,
+        legacy_error_type=classroom_adapter.ClassroomAdapterError,
+        no_credential_error_type=classroom_adapter.NoClassroomCredential,
+        wrap_client=classroom_adapter.ClassroomGoogleClient,
     )
-    if creds is not None:
-        return classroom_adapter.ClassroomGoogleClient(creds)
-
-    if not _is_legacy_owner(conn, user_id):
-        raise UserCredentialsUnavailable("no Classroom authorization stored for this account")
-
-    try:
-        return classroom_adapter.get_classroom_client(config.classroom_paths, interactive=False)
-    except classroom_adapter.ClassroomAdapterError as exc:
-        raise UserCredentialsUnavailable(str(exc)) from exc
 
 
 def calendar_client_for(
@@ -134,22 +227,15 @@ def calendar_client_for(
 ) -> calendar_adapter.GoogleCalendarClient:
     """An authenticated Calendar client for one user. Never opens a
     browser, for the same reason as above."""
-    creds = _stored_credentials(
+    return _resolve_client(
         conn,
+        config,
         user_id=user_id,
         service=google_credentials.CALENDAR,
         scopes=calendar_adapter.CALENDAR_SCOPES,
+        legacy_paths=config.calendar_paths,
+        legacy_load=lambda paths: calendar_adapter.ensure_calendar_credentials(paths, interactive=False),
+        legacy_error_type=calendar_adapter.CalendarAdapterError,
+        no_credential_error_type=calendar_adapter.NoCalendarCredential,
+        wrap_client=calendar_adapter.GoogleCalendarClient,
     )
-    if creds is not None:
-        return calendar_adapter.GoogleCalendarClient(creds)
-
-    if not _is_legacy_owner(conn, user_id):
-        raise UserCredentialsUnavailable("no Calendar authorization stored for this account")
-
-    try:
-        legacy = calendar_adapter.ensure_calendar_credentials(
-            config.calendar_paths, interactive=False
-        )
-    except calendar_adapter.CalendarAdapterError as exc:
-        raise UserCredentialsUnavailable(str(exc)) from exc
-    return calendar_adapter.GoogleCalendarClient(legacy)

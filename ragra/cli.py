@@ -28,6 +28,7 @@ from dotenv import load_dotenv
 
 from ragra.adapters import calendar as calendar_adapter
 from ragra.adapters import classroom as classroom_adapter
+from ragra.adapters import credential_health, google_credentials
 from ragra.adapters.notify import NotificationProvider
 from ragra.config import Config, load_config
 from ragra.db.connection import connect_closing
@@ -90,14 +91,49 @@ def cmd_classroom_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def _mirror_into_encrypted_store(conn, *, user_id: int, service: str, credentials) -> None:
+    """After a fresh interactive consent, also save the result through the
+    encrypted per-user store (P3-6) - not just the legacy file it already
+    writes to.
+
+    Before this, `ragra classroom-auth`/`calendar-auth` only ever touched
+    the on-disk token file, so a deployment that *did* have
+    RAGRA_CREDENTIAL_KEY configured would still never get an encrypted
+    copy until someone remembered to run `ragra credentials-import`
+    separately - and a stale encrypted copy left over from before a
+    reauthorization would keep being tried first (see
+    ragra/adapters/user_clients.py's storage-priority order) even though
+    it's now the file that holds the good credential. Writing to both
+    every time keeps them from ever disagreeing.
+
+    Best-effort and silent when no key is configured: the legacy file
+    path remains fully functional on its own for a deployment that
+    deliberately has no key (see google_credentials.py's docstring)."""
+    from ragra import crypto
+
+    if not crypto.is_configured():
+        return
+    google_credentials.store(
+        conn, user_id=user_id, service=service, payload=credentials.to_json()
+    )
+
+
 def cmd_classroom_auth(args: argparse.Namespace) -> int:
     config = load_config()
     print("Opening a browser for Google Classroom authorization...")
     try:
-        classroom_adapter.get_classroom_client(config.classroom_paths, interactive=True)
+        client = classroom_adapter.get_classroom_client(config.classroom_paths, interactive=True)
     except classroom_adapter.ClassroomAdapterError as exc:
         print("Authorization failed:", exc)
         return 1
+
+    with connect_closing(config.db_path) as conn:
+        user_id = acting_user_id(conn)
+        _mirror_into_encrypted_store(
+            conn, user_id=user_id, service=google_credentials.CLASSROOM, credentials=client.credentials
+        )
+        credential_health.record_success(conn, user_id=user_id, service=google_credentials.CLASSROOM)
+
     print("Classroom authorization succeeded and was saved for future silent refresh.")
     return 0
 
@@ -153,10 +189,18 @@ def cmd_calendar_auth(args: argparse.Namespace) -> int:
     config = load_config()
     print("Opening a browser for Google Calendar authorization (calendar.events scope only)...")
     try:
-        calendar_adapter.ensure_calendar_credentials(config.calendar_paths, interactive=True)
+        credentials = calendar_adapter.ensure_calendar_credentials(config.calendar_paths, interactive=True)
     except calendar_adapter.CalendarAdapterError as exc:
         print("Authorization failed:", exc)
         return 1
+
+    with connect_closing(config.db_path) as conn:
+        user_id = acting_user_id(conn)
+        _mirror_into_encrypted_store(
+            conn, user_id=user_id, service=google_credentials.CALENDAR, credentials=credentials
+        )
+        credential_health.record_success(conn, user_id=user_id, service=google_credentials.CALENDAR)
+
     print("Calendar authorization succeeded and was saved for future silent refresh.")
     return 0
 
@@ -169,16 +213,42 @@ def cmd_calendar_auth(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 
 
+def _log_credential_skip(conn, log, *, service: str, user_id: int, verb: str, auth_command: str) -> tuple[int, str | None]:
+    """Shared tail of _run_classroom_sync/_run_calendar_sync's credential
+    branch: read back the classification `classroom_client_for`/
+    `calendar_client_for` just recorded (via
+    ragra/adapters/credential_health.py) and turn it into the right exit
+    code and message.
+
+    NOT_CONNECTED is genuinely not a failure - an account that has never
+    connected this service is a normal, expected state, and counting it
+    against ragra/health.py's alert streak would eventually page someone
+    about a connection nobody intends to make. Every other state is a real
+    problem and must count as one, so the tick's own exit code (and the
+    health/self-alert mechanism it feeds) stays accurate."""
+    from ragra.db import repo
+
+    row = repo.get_credential_health(conn, user_id=user_id, service=service)
+    state = row["state"] if row else None
+    detail = row["last_error_detail"] if row else None
+
+    if state == credential_health.CredentialState.NOT_CONNECTED.value:
+        log(f"{verb} skipped - {service} is not connected for this account")
+        return 0, None
+
+    reason = detail or "authorization required"
+    log(f"{verb} skipped - {reason}. Run: {auth_command}")
+    return 1, reason
+
+
 def _run_classroom_sync(conn, config: Config, log, *, user_id: int) -> tuple[int, str | None]:
     try:
         client = classroom_client_for(conn, config, user_id=user_id)
-    except UserCredentialsUnavailable as exc:
-        # Not a failure of the run: an account that has not connected
-        # Google yet is a normal state, and counting it as a failure would
-        # feed a permanent alert streak into ragra/health.py for something
-        # nobody intends to fix.
-        log(f"Classroom sync skipped - authorization required: {exc}. Run: ragra classroom-auth")
-        return 1, str(exc)
+    except UserCredentialsUnavailable:
+        return _log_credential_skip(
+            conn, log, service=google_credentials.CLASSROOM, user_id=user_id,
+            verb="Classroom sync", auth_command="ragra classroom-auth",
+        )
     except Exception as exc:  # noqa: BLE001 - a transient/network failure must not abort the tick
         log(f"Classroom sync failed unexpectedly: {exc}")
         return 1, str(exc)
@@ -211,9 +281,11 @@ def _run_classroom_sync(conn, config: Config, log, *, user_id: int) -> tuple[int
 def _run_calendar_sync(conn, config: Config, log, *, user_id: int) -> tuple[int, str | None]:
     try:
         calendar_client = calendar_client_for(conn, config, user_id=user_id)
-    except UserCredentialsUnavailable as exc:
-        log(f"Calendar sync skipped - authorization required: {exc}. Run: ragra calendar-auth")
-        return 1, str(exc)
+    except UserCredentialsUnavailable:
+        return _log_credential_skip(
+            conn, log, service=google_credentials.CALENDAR, user_id=user_id,
+            verb="Calendar sync", auth_command="ragra calendar-auth",
+        )
     except Exception as exc:  # noqa: BLE001
         log(f"Calendar sync failed unexpectedly: {exc}")
         return 1, str(exc)
@@ -457,7 +529,8 @@ def cmd_tick(args: argparse.Namespace) -> int:
     """
     from ragra.db import repo
     from ragra.logging_setup import configure_logging
-    from ragra.web import sessions
+    from ragra.tz import utc_iso
+    from ragra.web import auth, sessions
 
     config = load_config()
     logger = configure_logging(config.ragra_home)
@@ -478,6 +551,11 @@ def cmd_tick(args: argparse.Namespace) -> int:
                 conn, older_than_iso=(now - timedelta(hours=48)).isoformat()
             )
             sessions.purge_expired_sessions(conn, now=now)
+            auth.purge_expired_states(conn, now=now)
+            # utc_iso, not .isoformat(): rows are written with utc_iso and
+            # these timestamps are compared as text, so both sides must be
+            # produced the same way rather than merely looking similar.
+            repo.purge_expired_google_reconnect_states(conn, now=utc_iso(now))
 
             users = repo.list_users(conn)
             logger.info("tick covering %d account(s)", len(users))

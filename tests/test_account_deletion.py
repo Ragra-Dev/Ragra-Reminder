@@ -96,6 +96,13 @@ def _populate(conn, user_id: int, key: bytes, *, label: str) -> dict:
 
     token = sessions.create_session(conn, user_id=user_id, now=NOW)
     gc.store(conn, user_id=user_id, service=gc.CLASSROOM, payload='{"token": "x"}', key=key)
+    repo.record_credential_attempt(
+        conn, user_id=user_id, service=gc.CLASSROOM, state="healthy", outcome=repo.WORKED,
+    )
+    repo.begin_google_reconnect(
+        conn, state_hash=f"reconnect-hash-{label}", user_id=user_id, service=gc.CLASSROOM,
+        code_verifier="verifier", now="2026-09-01T00:00:00+00:00", expires_at="2026-09-01T00:10:00+00:00",
+    )
     save_profile(
         conn, user_id=user_id, program="CS", batch_year="2025",
         enrollment_start_year=2025, enrollment_start_term="FALL",

@@ -278,11 +278,15 @@ def test_tick_records_a_structured_session_for_a_successful_stage(tmp_path, monk
     assert session["finished_at"] is not None
     assert session["duration_seconds"] >= 0
     assert session["timetable_result"] is not None and "Timetable sync:" in session["timetable_result"]
-    assert session["classroom_result"] is not None  # captured even though it failed in this sandbox
-    # classroom/calendar are expected to fail in this deliberately-unconfigured
-    # sandbox; the structured error summary should reflect that, not omit it.
-    assert session["error"] is not None
-    assert "classroom" in session["error"]
+    # Classroom/Calendar have never been connected in this sandbox, which is
+    # NOT_CONNECTED - a normal, expected state (ragra/adapters/credential_health.py),
+    # not a failure. It must still be captured in the stage result text...
+    assert session["classroom_result"] is not None
+    assert "not connected" in session["classroom_result"]
+    # ...but must NOT count as an error, or a fresh account that has simply
+    # never connected Classroom/Calendar would feed a false failure streak
+    # into ragra/health.py's alerting.
+    assert session["error"] is None
 
 
 def test_tick_records_a_structured_session_on_failure(tmp_path, monkeypatch):

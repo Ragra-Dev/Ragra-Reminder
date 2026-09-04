@@ -33,6 +33,12 @@ class CalendarAdapterError(RuntimeError):
     interactive browser step."""
 
 
+class NoCalendarCredential(CalendarAdapterError):
+    """No Calendar token has ever been stored at this path - see
+    NoClassroomCredential in ragra/adapters/classroom.py for why this is a
+    distinct subclass rather than just another message."""
+
+
 @dataclass(frozen=True)
 class CalendarTokenPaths:
     oauth_client_file: Path  # the existing, already-registered Google OAuth client
@@ -116,7 +122,7 @@ def ensure_calendar_credentials(paths: CalendarTokenPaths, *, interactive: bool 
             return creds
 
     if not interactive:
-        raise CalendarAdapterError(
+        raise NoCalendarCredential(
             "Ragra has no usable Calendar credential yet; interactive authorization is required."
         )
 
@@ -142,6 +148,7 @@ class GoogleCalendarClient:
     def __init__(self, credentials: Any):
         from googleapiclient.discovery import build
 
+        self.credentials = credentials
         self._service = build("calendar", "v3", credentials=credentials, cache_discovery=False)
 
     def create_event(self, calendar_id: str, body: dict[str, Any]) -> dict[str, Any]:

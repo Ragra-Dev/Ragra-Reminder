@@ -120,8 +120,9 @@ def test_the_page_shows_this_users_own_saved_notification_destination(client, db
 def test_the_page_reports_credential_status_without_ever_printing_a_credential(client):
     """Read-only status only - never a token, never a ciphertext."""
     body = client.get("/account").text
-    assert "not authorized" in body
+    assert "not connected" in body.lower()
     assert "ciphertext" not in body.lower()
+    assert "refresh_token" not in body.lower()
 
 
 # ---------------------------------------------------------------------------

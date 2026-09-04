@@ -58,6 +58,8 @@ USER_OWNED_TABLES = (
     "google_credentials",
     "user_profiles",
     "notification_preferences",
+    "credential_health",
+    "google_reconnect_states",
 )
 
 _TABLE_REFERENCE = re.compile(
@@ -166,6 +168,8 @@ def test_the_exemption_markers_are_used_sparingly():
             if any(marker in docstring for marker in EXEMPTION_MARKERS):
                 exempted.append(f"{path.name}:{node.name}")
     assert sorted(exempted) == [
+        "repo.py:consume_google_reconnect",
+        "repo.py:purge_expired_google_reconnect_states",
         "repo.py:purge_old_tick_sessions",
         "sessions.py:lookup_session",
         "sessions.py:purge_expired_sessions",
