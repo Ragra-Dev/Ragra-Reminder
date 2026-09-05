@@ -125,7 +125,12 @@ def test_failed_delivery_is_retried_not_lost(conn):
     summary = dispatch_due_reminders(conn, providers=[failing], now=NOW, user_id=owner_id(conn))
 
     assert summary.sent == 0
-    assert summary.retrying == 1
+    # Two reminders are due here, and both must be retried rather than
+    # dropped: the discovery ping for a task first seen with a 10-day lead,
+    # and the change alert for the deadline that then moved. (Before
+    # NEW_ASSIGNMENT was emitted for long-lead tasks this was 1.)
+    assert summary.retrying == 2
+    assert summary.permanently_failed == 0
     assert _change_reminders(conn)[0]["status"] == "PENDING"  # still eligible
 
 

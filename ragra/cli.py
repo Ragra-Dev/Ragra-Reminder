@@ -270,11 +270,23 @@ def _run_classroom_sync(conn, config: Config, log, *, user_id: int) -> tuple[int
         log(f"  ({summary.backlog_reminders_suppressed} historical backlog reminder(s) suppressed - already overdue when discovered)")
     for change in summary.deadlines_changed:
         log(f"  deadline changed: {change['title']!r} {change['old_deadline']} -> {change['new_deadline']}")
+    # Generation-side invariant. Reported before `errors` and counted as a
+    # stage failure in its own right: a notification that was never created
+    # is invisible to every downstream metric, so if this check does not
+    # make noise, nothing will.
+    for miss in summary.missing_discovery_notification:
+        log(f"  MISSING DISCOVERY NOTIFICATION: {miss}")
     for error in summary.errors:
         log(f"  sync error: {error}")
 
-    if summary.errors:
-        return 1, "; ".join(summary.errors)
+    problems = list(summary.errors)
+    if summary.missing_discovery_notification:
+        problems.append(
+            f"{len(summary.missing_discovery_notification)} new actionable task(s) "
+            "produced no discovery notification"
+        )
+    if problems:
+        return 1, "; ".join(problems)
     return 0, None
 
 

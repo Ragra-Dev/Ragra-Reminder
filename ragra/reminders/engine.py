@@ -27,14 +27,24 @@ def compute_reminder_plan(
     moment the task was discovered) shrinks, so a same-day assignment gets a
     couple of well-timed pings instead of the full multi-day cadence
     collapsed into a burst.
+
+    Every branch opens with NEW_ASSIGNMENT at the moment of discovery. That
+    ping answers "something new was posted", which is a different question
+    from "your deadline is approaching" and does not become less useful the
+    further away the deadline is - if anything the opposite, since a task
+    posted two weeks out is the one most likely to be forgotten. Only the
+    countdown compresses with lead time.
     """
 
     lead_time = actual_deadline - discovered_at
     if lead_time <= timedelta(0):
         # Already overdue when discovered; nothing meaningful to schedule.
+        # This is the one documented exemption from the "every new
+        # actionable task gets a discovery ping" invariant - the task is
+        # historical backlog, not new work, and announcing it would be noise.
         return []
 
-    plan: list[ReminderPlan] = []
+    plan: list[ReminderPlan] = [ReminderPlan("NEW_ASSIGNMENT", discovered_at)]
 
     if lead_time >= timedelta(days=3):
         for days, reminder_type in ((3, "T_MINUS_3D"), (2, "T_MINUS_2D"), (1, "T_MINUS_1D")):
@@ -46,7 +56,6 @@ def compute_reminder_plan(
 
     elif lead_time >= timedelta(days=1):
         # Posted 1-3 days out: compressed cadence, no multi-day countdown.
-        plan.append(ReminderPlan("NEW_ASSIGNMENT", discovered_at))
         one_day_before = actual_deadline - timedelta(days=1)
         if one_day_before > discovered_at:
             plan.append(ReminderPlan("T_MINUS_1D", one_day_before))
@@ -55,7 +64,6 @@ def compute_reminder_plan(
 
     else:
         # Due within a day of discovery: short, spam-free burst.
-        plan.append(ReminderPlan("NEW_ASSIGNMENT", discovered_at))
         midpoint = discovered_at + (lead_time / 2)
         if midpoint > discovered_at + timedelta(minutes=5):
             plan.append(ReminderPlan("MIDPOINT", midpoint))

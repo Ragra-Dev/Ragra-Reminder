@@ -1075,13 +1075,58 @@ def upcoming_scheduled_reminders(
 # ---------------------------------------------------------------------------
 
 
-def cancel_pending_reminders(conn: sqlite3.Connection, *, user_id: int, task_id: int) -> None:
-    conn.execute(
-        """UPDATE reminders SET status = 'CANCELLED'
-           WHERE user_id = ? AND task_id = ? AND status = 'PENDING'""",
-        (user_id, task_id),
-    )
+def cancel_pending_reminders(
+    conn: sqlite3.Connection,
+    *,
+    user_id: int,
+    task_id: int,
+    except_types: tuple[str, ...] = (),
+) -> None:
+    """Cancel this task's pending reminders.
+
+    `except_types` exists for one specific caller: a deadline change
+    invalidates the *countdown* (every T_MINUS/DUE_TODAY/FINAL_1H is
+    anchored to the old deadline) but does not invalidate the discovery
+    ping, which is about the task having appeared at all. Cancelling
+    NEW_ASSIGNMENT there and then declining to re-create it - which is
+    what task-anchored idempotency correctly does - would silently drop
+    the notification entirely. Completion and cancellation still cancel
+    everything, which is why this is opt-in rather than the default.
+    """
+    if except_types:
+        placeholders = ",".join("?" for _ in except_types)
+        conn.execute(
+            f"""UPDATE reminders SET status = 'CANCELLED'
+                WHERE user_id = ? AND task_id = ? AND status = 'PENDING'
+                  AND reminder_type NOT IN ({placeholders})""",
+            (user_id, task_id, *except_types),
+        )
+    else:
+        conn.execute(
+            """UPDATE reminders SET status = 'CANCELLED'
+               WHERE user_id = ? AND task_id = ? AND status = 'PENDING'""",
+            (user_id, task_id),
+        )
     conn.commit()
+
+
+def has_reminder_of_type(
+    conn: sqlite3.Connection, *, user_id: int, task_id: int, reminder_type: str
+) -> bool:
+    """Whether a reminder of this exact type has ever existed for this task,
+    in any status.
+
+    Deliberately status-agnostic and type-exact: the generation-side
+    invariant in ragra/sync/classroom_sync.py asks "was the discovery
+    notification ever created", which a SENT or even CANCELLED row answers
+    affirmatively, and which the presence of some *other* reminder type
+    (a T_MINUS_3D, say) must never be allowed to answer.
+    """
+    return conn.execute(
+        """SELECT 1 FROM reminders
+           WHERE user_id = ? AND task_id = ? AND reminder_type = ? LIMIT 1""",
+        (user_id, task_id, reminder_type),
+    ).fetchone() is not None
 
 
 def cancel_backlog_reminders_for_already_overdue_tasks(

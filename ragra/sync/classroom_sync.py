@@ -38,6 +38,14 @@ class SyncSummary:
     relevance_evaluated: int = 0
     relevance_other_section: int = 0
     deadlines_changed: list[dict] = field(default_factory=list)
+    # Generation-side invariant violations: a newly discovered ACTIONABLE
+    # task that should have produced a discovery notification and did not.
+    # Kept separate from `errors` because it is not a sync failure - the
+    # academic data landed correctly - but it must still be loud, since
+    # every other notification metric Ragra has sits *downstream* of
+    # generation and is therefore blind to a notification that was never
+    # created in the first place.
+    missing_discovery_notification: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     # Non-fatal problems. A relevance failure lands here rather than in
     # `errors`, because it must never mark the whole Classroom sync failed:
@@ -290,10 +298,19 @@ def _apply_upsert(
             # (compute_reminder_plan already returns [] for a non-positive
             # lead time), while a task discovered with real time left
             # before its deadline gets the normal countdown.
-            _schedule_reminders(conn, user_id=user_id, task_id=result.task_id,
-                                 title=item.get("title") or "",
-                                 course_code=course_code, actual_deadline=actual_deadline,
-                                 discovered_at=None)
+            planned = _schedule_reminders(
+                conn,
+                user_id=user_id,
+                task_id=result.task_id,
+                title=item.get("title") or "",
+                course_code=course_code,
+                actual_deadline=actual_deadline,
+                discovered_at=None,
+            )
+            _assert_discovery_notification(
+                conn, user_id=user_id, task_id=result.task_id, kind=kind,
+                planned=planned, title=item.get("title") or "", summary=summary,
+            )
         return
 
     if result.deadline_changed or result.other_fields_changed:
@@ -308,7 +325,12 @@ def _apply_upsert(
                 "new_deadline": result.new_deadline,
             }
         )
-        repo.cancel_pending_reminders(conn, user_id=user_id, task_id=result.task_id)
+        # The countdown is anchored to the old deadline and must go; the
+        # discovery ping is not, and must survive - see
+        # repo.cancel_pending_reminders' `except_types`.
+        repo.cancel_pending_reminders(
+            conn, user_id=user_id, task_id=result.task_id, except_types=("NEW_ASSIGNMENT",)
+        )
         # Queued after the cancel above, or it would be cancelled with the
         # stale countdown it is announcing. Keyed on the *new* deadline so
         # re-detecting the same change can never send twice, while a genuine
@@ -337,23 +359,90 @@ def _schedule_reminders(
     course_code: str | None,
     actual_deadline: str,
     discovered_at: str | None,
-) -> None:
+) -> list[str]:
+    """Schedule this task's reminders. Returns the reminder types planned,
+    so a caller can assert the generation-side invariant without
+    re-deriving the engine's own date arithmetic."""
     deadline_dt = datetime.fromisoformat(actual_deadline)
     discovered_dt = datetime.fromisoformat(discovered_at) if discovered_at else datetime.now(timezone.utc)
     if discovered_dt.tzinfo is None:
         discovered_dt = discovered_dt.replace(tzinfo=timezone.utc)
 
-    for plan_item in compute_reminder_plan(actual_deadline=deadline_dt, discovered_at=discovered_dt):
+    plan = compute_reminder_plan(actual_deadline=deadline_dt, discovered_at=discovered_dt)
+    for plan_item in plan:
         scheduled_iso = plan_item.scheduled_for.isoformat()
-        idempotency_key = f"{task_id}:{plan_item.reminder_type}:{actual_deadline}"
         repo.insert_reminder_if_absent(
             conn,
             user_id=user_id,
             task_id=task_id,
             reminder_type=plan_item.reminder_type,
             scheduled_for=scheduled_iso,
-            idempotency_key=idempotency_key,
+            idempotency_key=_idempotency_key(task_id, plan_item.reminder_type, actual_deadline),
         )
+    return [p.reminder_type for p in plan]
+
+
+# The discovery ping is keyed to the task alone. Every other reminder is a
+# countdown *to a specific deadline*, so its key includes that deadline -
+# when Classroom moves the deadline the old ones are cancelled and a fresh
+# set is created. NEW_ASSIGNMENT is not a countdown: it marks the one-time
+# event of the task appearing, which happens exactly once no matter how
+# many times the deadline later moves. Keying it by deadline made a
+# rescheduled task announce itself as new all over again.
+_TASK_ANCHORED_TYPES = frozenset({"NEW_ASSIGNMENT"})
+
+
+def _idempotency_key(task_id: int, reminder_type: str, actual_deadline: str) -> str:
+    if reminder_type in _TASK_ANCHORED_TYPES:
+        return f"{task_id}:{reminder_type}"
+    return f"{task_id}:{reminder_type}:{actual_deadline}"
+
+
+def _assert_discovery_notification(
+    conn: sqlite3.Connection,
+    *,
+    user_id: int,
+    task_id: int,
+    kind: str,
+    planned: list[str],
+    title: str,
+    summary: SyncSummary,
+) -> None:
+    """The invariant: every newly discovered ACTIONABLE task gets exactly
+    one NEW_ASSIGNMENT reminder.
+
+    Checked here, at the moment of generation, precisely because nothing
+    downstream can check it - the dispatch stage, notification_deliveries
+    and pipeline_health all only ever see reminders that already exist, so
+    a notification that was never created is invisible to every one of
+    them. That blind spot is what let a real long-lead assignment go
+    unannounced while the tick reported a clean run.
+
+    Two exemptions, both deliberate and both narrow:
+      - INFORMATIONAL tasks (announcements/materials) never carry a
+        deadline and are a dashboard workflow, not a notification channel.
+      - An ACTIONABLE task already past its deadline when discovered is
+        historical backlog; compute_reminder_plan returns an empty plan for
+        it by design, and announcing it would be noise.
+
+    Anything else with no discovery notification is a defect, and is
+    reported as one. The check verifies NEW_ASSIGNMENT *specifically* - the
+    presence of a countdown reminder must never be mistaken for it.
+    """
+    if kind != "ACTIONABLE":
+        return
+    if not planned:
+        # Empty plan == already overdue at discovery, the documented
+        # backlog exemption.
+        return
+    if repo.has_reminder_of_type(
+        conn, user_id=user_id, task_id=task_id, reminder_type="NEW_ASSIGNMENT"
+    ):
+        return
+    summary.missing_discovery_notification.append(
+        f"task {task_id} ({title[:40]!r}) was discovered with a live deadline "
+        f"but has no NEW_ASSIGNMENT reminder"
+    )
 
 
 def _sync_coursework(
