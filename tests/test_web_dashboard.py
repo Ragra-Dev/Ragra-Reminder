@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from ragra.db import repo
 from ragra.db.connection import connect
+from ragra.tz import local_day_bounds
 from ragra.web.app import create_app
 
 from tests.support import owner_id, sign_in
@@ -86,6 +87,14 @@ def test_setting_personal_target_removes_deadlined_task_from_that_section(client
 
 def test_due_today_and_due_soon_are_separate_sections(client):
     now = datetime.now(timezone.utc)
+    # "Due today" is the CAMPUS calendar day (ragra/tz.py), so a naive
+    # `now + 2 hours` silently becomes tomorrow whenever the suite runs
+    # within two hours of local midnight - the test would then fail for a
+    # reason that has nothing to do with the behaviour under test. Anchor to
+    # just before the local day ends instead: always today, always still in
+    # the future, at any hour.
+    _day_start, day_end = local_day_bounds(now)
+    due_today_at = day_end - timedelta(minutes=1)
     conn = connect(client.db_path)
     course_id = repo.upsert_course(
         conn, external_id="course-1", name="OOP", section="BCS-3C",
@@ -94,7 +103,7 @@ def test_due_today_and_due_soon_are_separate_sections(client):
     repo.upsert_task_from_source(
         conn, course_id=course_id, source_type="coursework", external_id="cw-today",
         title="Due Today Task", description=None, link=None, kind="ACTIONABLE",
-        actual_deadline=(now + timedelta(hours=2)).isoformat(),
+        actual_deadline=due_today_at.isoformat(),
         source_published_at=repo.now_iso(), source_updated_at=repo.now_iso(), user_id=owner_id(conn),
     )
     repo.upsert_task_from_source(
