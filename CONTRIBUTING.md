@@ -30,7 +30,7 @@
    python -m pytest
    ```
 
-All tests should pass (712 passing as of the latest main branch).
+All tests should pass (815 passing as of the latest main branch).
 
 ## Running Ragra
 

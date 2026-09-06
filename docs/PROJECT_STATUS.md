@@ -149,17 +149,18 @@ implemented and ready for a remote worker to use instead of Hermes; Web Push
 
 ## Current Verification
 
-Last verified **2026-08-29**, directly from the running system (not
-estimated); test count reverified **2026-09-01** at the close of Phase 1:
+Last verified **2026-09-06**, directly from the running system (not
+estimated):
 
-- **290/290 tests passing**
-- **8** Classroom courses synced
-- **175** persisted tasks
-- **18** Calendar events
-- **56** reminder records
-- **18** tasks currently in `MISSED` status, shown on the dashboard via a
+- **815/815 tests passing**
+- **12** Classroom courses synced
+- **247** persisted tasks
+- **39** Calendar events
+- **109** reminder records
+- **27** applied schema migrations
+- **35** tasks currently in `MISSED` status, shown on the dashboard via a
   capped preview plus a full `/missed` page
-- **13** FAST timetable events, verified idempotent across two consecutive
+- **14** FAST timetable events, verified idempotent across two consecutive
   real syncs (0 new/0 updated on the second run)
 - SQLite running in **WAL** mode (confirmed via `PRAGMA journal_mode`)
 - Real WhatsApp test notification delivered successfully (see above)
@@ -265,6 +266,14 @@ text for `ragra plan` / `ragra brief --ai` to print.
 
 Verified against the actual code, not assumed:
 
+- **FAST timetable sync is currently failing** - the upstream spreadsheet
+  now exposes two tabs matching the same weekday (a dated
+  `Saturday (Sep. 05, 2026)` alongside a plain `Saturday`), and the adapter
+  refuses to guess which is authoritative rather than silently importing the
+  wrong schedule. Existing timetable data is left untouched, so this
+  degrades rather than corrupts: the 14 stored events remain valid but stop
+  being refreshed. Classroom sync, reminders, and delivery are unaffected.
+  Deciding the disambiguation rule is outstanding work.
 - **Remote/always-on execution** - investigated and designed, not deployed
   (see "Remote Execution" above). Ragra still stops entirely when the
   laptop is off.
