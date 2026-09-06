@@ -28,6 +28,7 @@ from pathlib import Path
 import pytest
 
 from ragra import cli
+from ragra import config as config_module
 from ragra.adapters.calendar import CalendarTokenPaths
 from ragra.adapters.classroom import ClassroomTokenPaths
 from ragra.adapters.fast_timetable import SheetInfo
@@ -196,9 +197,16 @@ def test_plan_command_fails_gracefully_when_ai_package_unavailable(tmp_path, mon
 
 
 def test_plan_command_fails_gracefully_when_ai_unconfigured(tmp_path, monkeypatch):
-    # AI package present, but no HERMES_BIN configured - the other half of
+    # AI package present, but no Hermes available at all - the other half of
     # "unavailable or unconfigured" from the graceful-failure requirement.
+    #
+    # "Unconfigured" means genuinely absent, not merely an unset env var:
+    # config resolves the Hermes binary dynamically (HERMES_BIN first, then
+    # `hermes` on PATH), so a developer machine with Hermes installed would
+    # otherwise find a real one here and legitimately succeed.
     monkeypatch.setenv("RAGRA_HOME", str(tmp_path))
+    monkeypatch.delenv("HERMES_BIN", raising=False)
+    monkeypatch.setattr(config_module.shutil, "which", lambda name: None)
 
     out = io.StringIO()
     with redirect_stdout(out):

@@ -33,10 +33,37 @@ class NotifyNotConfigured(RuntimeError):
     """Raised when no delivery binary/target is configured."""
 
 
+# Transport-failure classification codes. These name the layer that
+# actually failed, which matters because a delivery failure used to reach
+# the user as an opaque string and get misread as an authentication
+# problem. A notification provider performs no Google operation of any
+# kind, so no code here may ever describe one: whatever breaks in
+# delivery, it is not OAuth, not a token, and not Google Classroom.
+NOT_CONFIGURED = "NOT_CONFIGURED"
+HERMES_TRANSPORT_ERROR = "HERMES_TRANSPORT_ERROR"      # binary missing, unlaunchable, or timed out
+HERMES_COMMAND_ERROR = "HERMES_COMMAND_ERROR"          # binary ran and rejected the command
+EMAIL_TRANSPORT_ERROR = "EMAIL_TRANSPORT_ERROR"        # SMTP refused or unreachable
+
+
+def _platform_transport_error(target: str | None) -> str:
+    """The delivery platform's own failure, named after that platform.
+
+    Hermes targets are "<platform>:<channel>", so a WhatsApp send failure
+    reports WHATSAPP_TRANSPORT_ERROR rather than a generic one - the point
+    of these codes is to say which layer broke.
+    """
+    platform = (target or "").split(":", 1)[0].strip().upper()
+    return f"{platform}_TRANSPORT_ERROR" if platform.isalnum() and platform else "PLATFORM_TRANSPORT_ERROR"
+
+
 @dataclass(frozen=True)
 class NotifyResult:
     ok: bool
     error: str | None = None
+    # Which layer failed. Callers persist `error`, which is prefixed with
+    # this code, so the classification survives into notification_deliveries
+    # without a schema change.
+    code: str | None = None
 
 
 @dataclass(frozen=True)
@@ -94,6 +121,19 @@ def send_to_all_providers(
     return delivered, errors
 
 
+def _failure(code: str, detail: str) -> NotifyResult:
+    """Build a classified failure.
+
+    The code is prefixed onto `error` because every caller persists
+    `error` and nothing persists `code` - this is what carries the
+    classification into the delivery record and the tick log without a
+    migration. Detail is kept, since the code names the layer but not
+    what went wrong inside it.
+    """
+    detail = detail.strip()
+    return NotifyResult(ok=False, error=f"{code}: {detail}" if detail else code, code=code)
+
+
 def send_notification(
     *,
     hermes_bin: Path | None,
@@ -102,7 +142,7 @@ def send_notification(
     timeout_seconds: int = 30,
 ) -> NotifyResult:
     if not hermes_bin or not target:
-        return NotifyResult(ok=False, error="notification delivery is not configured")
+        return _failure(NOT_CONFIGURED, "notification delivery is not configured")
 
     try:
         proc = subprocess.run(
@@ -115,11 +155,18 @@ def send_notification(
             check=False,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
-        return NotifyResult(ok=False, error=str(exc))
+        # Never reached the transport at all: the binary is missing, not
+        # executable, or hung. Nothing was delivered and nothing was
+        # authenticated.
+        return _failure(HERMES_TRANSPORT_ERROR, str(exc))
 
     if proc.returncode != 0:
         detail = (proc.stderr or proc.stdout or f"exit code {proc.returncode}").strip()
-        return NotifyResult(ok=False, error=detail)
+        # `hermes send` documents: 0 ok, 1 delivery/backend error, 2 usage
+        # error. Exit 2 is Ragra calling the CLI wrongly (our bug); exit 1
+        # is the messaging platform itself refusing or failing the send.
+        code = HERMES_COMMAND_ERROR if proc.returncode == 2 else _platform_transport_error(target)
+        return _failure(code, detail)
 
     return NotifyResult(ok=True)
 
@@ -192,6 +239,6 @@ class EmailProvider:
                     smtp.login(self.username, self.password)
                 smtp.send_message(message)
         except (smtplib.SMTPException, OSError) as exc:
-            return NotifyResult(ok=False, error=_redact(str(exc), self.password))
+            return _failure(EMAIL_TRANSPORT_ERROR, _redact(str(exc), self.password))
 
         return NotifyResult(ok=True)

@@ -11,6 +11,7 @@ never needs it.
 from __future__ import annotations
 
 import os
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -26,6 +27,25 @@ def _ragra_home() -> Path:
     if local_appdata:
         return Path(local_appdata) / "ragra"
     return Path.home() / ".ragra"
+
+
+def _resolve_hermes_bin() -> Path | None:
+    """Locate the optional Hermes CLI without hardcoding an install path.
+
+    HERMES_BIN wins when set; otherwise `hermes` is looked up on PATH.
+    An empty or whitespace-only HERMES_BIN is treated as unset rather
+    than as the path "", which would otherwise produce a provider that
+    fails on every send.
+
+    Returns None when Hermes is not installed - a normal, supported
+    state, not an error: Ragra core never requires a notification
+    provider.
+    """
+    override = (os.environ.get("HERMES_BIN") or "").strip()
+    if override:
+        return Path(override)
+    discovered = shutil.which("hermes")
+    return Path(discovered) if discovered else None
 
 
 def _default_google_client_dir() -> Path | None:
@@ -69,11 +89,19 @@ def load_config() -> Config:
     home = _ragra_home()
     home.mkdir(parents=True, exist_ok=True)
 
-    # Hermes is an optional personal notification provider only. HERMES_BIN
-    # must be set explicitly if you want to use it - there is no
-    # auto-discovery of a Hermes checkout, since core Ragra never needs one.
-    hermes_bin_override = os.environ.get("HERMES_BIN")
-    hermes_bin = Path(hermes_bin_override) if hermes_bin_override else None
+    # Hermes is an optional personal notification provider only, and its
+    # location is resolved dynamically - never hardcoded, because the install
+    # path differs per machine and per user.
+    #
+    # Precedence:
+    #   1. HERMES_BIN, when set - an explicit path always wins, so an unusual
+    #      install or a specific build can be pinned.
+    #   2. `hermes` on PATH - the normal case once Hermes is installed.
+    #   3. None - Hermes simply isn't configured, which is a fully supported
+    #      state: core Ragra never needs it and the provider list is empty.
+    # Discovery only ever finds a Hermes that is already on PATH, so this
+    # cannot invent a provider on a machine that has none.
+    hermes_bin = _resolve_hermes_bin()
 
     google_client_dir = _default_google_client_dir()
 
