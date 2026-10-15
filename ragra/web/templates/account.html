@@ -3,39 +3,12 @@
 <head>
 <meta charset="utf-8">
 <title>Ragra - Account</title>
-<style>
-  body { font-family: system-ui, sans-serif; max-width: 780px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
-  h1 { margin-bottom: 0.25rem; }
-  h2 { margin-top: 2rem; border-bottom: 1px solid #ddd; padding-bottom: 0.25rem; }
-  nav a { margin-right: 1rem; color: #1d4ed8; text-decoration: none; font-size: 0.9rem; }
-  section { background: #f8f9fb; border: 1px solid #e3e6ee; border-radius: 8px; padding: 1rem; margin: 1rem 0; }
-  section label { display: block; font-size: 0.8rem; color: #444; margin-top: 0.6rem; }
-  section input[type=text], section textarea { width: 100%; padding: 0.4rem; border: 1px solid #ccc; border-radius: 4px; font-family: inherit; box-sizing: border-box; }
-  section textarea { font-family: ui-monospace, monospace; font-size: 0.85rem; }
-  .checkbox-row { display: flex; align-items: center; gap: 0.4rem; margin-top: 0.6rem; }
-  .checkbox-row label { margin: 0; }
-  .hint { color: #666; font-size: 0.8rem; margin-top: 0.3rem; }
-  .status-line { padding: 0.25rem 0; font-size: 0.9rem; }
-  .status-line .label { color: #444; }
-  button { cursor: pointer; border: 1px solid #ccc; background: #fff; border-radius: 6px; padding: 0.35rem 0.8rem; font-size: 0.85rem; margin-top: 0.8rem; }
-  button:hover { background: #f0f0f0; }
-  .danger { border-color: #f3d4d4; background: #fff7f7; }
-  .danger a { color: #9c1c1c; }
-  form.inline { display: inline; }
-  .badge { display: inline-block; padding: 0.1rem 0.5rem; border-radius: 999px; font-size: 0.78rem; font-weight: 600; }
-  .badge-healthy { background: #e3f6e8; color: #146c2e; }
-  .badge-degraded { background: #fff3d6; color: #8a5a00; }
-  .badge-reauth_required { background: #fde3e3; color: #9c1c1c; }
-  .badge-not_connected { background: #eee; color: #555; }
-  .badge-config_error { background: #fde3e3; color: #9c1c1c; }
-  .service-row { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 0.4rem 0; }
-  .service-row .name { font-weight: 600; }
-</style>
+{% include "_theme.html" %}
 </head>
 <body>
+{% include "_nav.html" %}
 <h1>Account</h1>
 <p class="hint">{{ display_name or "Signed in" }}</p>
-<nav><a href="/">Today</a><a href="/tasks">Tasks</a><a href="/missed">Missed</a><a href="/deliveries">Deliveries</a></nav>
 
 <h2>Academic profile</h2>
 <section>

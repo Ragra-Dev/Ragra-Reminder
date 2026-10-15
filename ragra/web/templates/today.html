@@ -3,44 +3,11 @@
 <head>
 <meta charset="utf-8">
 <title>Ragra - Today</title>
-<style>
-  body { font-family: system-ui, sans-serif; max-width: 780px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
-  h1 { margin-bottom: 0.25rem; }
-  h2 { margin-top: 2rem; border-bottom: 1px solid #ddd; padding-bottom: 0.25rem; }
-  .task { padding: 0.6rem 0; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
-  .task .meta { color: #666; font-size: 0.85rem; }
-  .task a { color: #1a1a1a; text-decoration: none; }
-  .task a:hover { text-decoration: underline; }
-  .badge { font-size: 0.7rem; padding: 0.1rem 0.5rem; border-radius: 999px; font-weight: 600; }
-  .badge.overdue { background: #fde2e1; color: #9c1c1c; }
-  .badge.missed { background: #f3d4d4; color: #7a1f1f; }
-  .badge.due { background: #fff3cd; color: #7a5c00; }
-  .badge.actual { background: #e7f0ff; color: #1d4ed8; }
-  .badge.personal { background: #eafaf0; color: #147a3c; }
-  .badge.done { background: #e6f4ea; color: #1e7d34; }
-  .priority { background: #f5f7ff; border: 1px solid #dce3ff; border-radius: 8px; padding: 1rem; margin: 1rem 0; }
-  form.inline { display: inline; }
-  button { cursor: pointer; border: 1px solid #ccc; background: #fff; border-radius: 6px; padding: 0.25rem 0.6rem; font-size: 0.85rem; }
-  button:hover { background: #f0f0f0; }
-  .empty { color: #888; font-style: italic; }
-  nav { margin: 0.5rem 0 1rem; }
-  nav a { margin-right: 1rem; color: #1d4ed8; text-decoration: none; font-size: 0.9rem; }
-  .reminder-row { padding: 0.4rem 0; border-bottom: 1px solid #eee; font-size: 0.9rem; }
-  .reminder-row .meta { color: #666; font-size: 0.8rem; }
-</style>
+{% include "_theme.html" %}
 </head>
 <body>
+{% include "_nav.html" %}
   <h1>Today</h1>
-  <nav>
-    <a href="/">Today</a>
-    <a href="#schedule">Schedule</a>
-    <a href="#deadlines">Deadlines</a>
-    <a href="/tasks">Tasks</a>
-    <a href="/announcements">Announcements</a>
-    <a href="/missed">Missed</a>
-    <a href="/deliveries">Deliveries</a>
-    <a href="/account">Account</a>
-  </nav>
 
   {% if priority %}
   <div class="priority">

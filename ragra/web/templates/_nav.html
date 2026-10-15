@@ -1,0 +1,14 @@
+{% set _p = request.url.path %}
+<header class="appbar">
+  <div class="appbar-inner">
+    <a class="brand" href="/"><span class="logo">R</span><span>Ragra</span></a>
+    <nav class="tabs">
+      <a href="/" {% if _p == '/' %}class="on"{% endif %}>Today</a>
+      <a href="/tasks" {% if _p.startswith('/tasks') %}class="on"{% endif %}>Tasks</a>
+      <a href="/announcements" {% if _p.startswith('/announcements') %}class="on"{% endif %}>Announcements</a>
+      <a href="/missed" {% if _p.startswith('/missed') %}class="on"{% endif %}>Missed</a>
+      <a href="/deliveries" {% if _p.startswith('/deliveries') %}class="on"{% endif %}>Deliveries</a>
+      <a href="/account" {% if _p.startswith('/account') %}class="on"{% endif %}>Account</a>
+    </nav>
+  </div>
+</header>

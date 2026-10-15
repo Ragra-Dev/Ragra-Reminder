@@ -20,6 +20,8 @@ dependencies = [
     # for an encryption primitive would be fragile - a change upstream must
     # not be able to remove it.
     "cryptography>=42",
+    # Form handling in the dashboard needs this at runtime, not only in tests.
+    "python-multipart>=0.0.6",
 ]
 
 [project.optional-dependencies]
@@ -38,3 +40,6 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["ragra*"]
+
+[tool.setuptools.package-data]
+ragra = ["web/templates/*.html", "db/schema.sql", "db/migrations/*"]

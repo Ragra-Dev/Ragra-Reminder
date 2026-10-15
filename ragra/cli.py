@@ -648,6 +648,44 @@ def cmd_serve(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_serve_hosted(args: argparse.Namespace) -> int:
+    """Hosted entrypoint: the dashboard plus the reminder loop in one process.
+
+    A host like Railway runs one long-lived container and has no Windows Task
+    Scheduler, so this runs `tick` on a background thread every
+    RAGRA_TICK_INTERVAL_SECONDS (default 120, minimum 30) next to the web
+    server. It binds 0.0.0.0 and honours the platform's PORT variable. One
+    process only: the SQLite file lives on a single persistent volume.
+    """
+    import os
+    import threading
+
+    import uvicorn
+
+    config = load_config()
+    from ragra.web.app import create_app
+
+    interval = max(30, int(os.environ.get("RAGRA_TICK_INTERVAL_SECONDS") or 120))
+    stop = threading.Event()
+
+    def _loop() -> None:
+        while not stop.is_set():
+            try:
+                cmd_tick(args)
+            except Exception as exc:  # noqa: BLE001 - the loop must outlive any one tick
+                print(f"tick loop error: {exc}", file=sys.stderr)
+            stop.wait(interval)
+
+    threading.Thread(target=_loop, name="ragra-tick", daemon=True).start()
+    app = create_app(config.db_path)
+    port = int(os.environ.get("PORT") or config.web_port)
+    try:
+        uvicorn.run(app, host="0.0.0.0", port=port, proxy_headers=True, forwarded_allow_ips="*")
+    finally:
+        stop.set()
+    return 0
+
+
 # ---------------------------------------------------------------------------
 # Credential storage (P3-6)
 # ---------------------------------------------------------------------------
@@ -875,6 +913,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     reminders_parser.set_defaults(func=cmd_reminders)
     sub.add_parser("serve", help="Run the Ragra dashboard").set_defaults(func=cmd_serve)
+    sub.add_parser(
+        "serve-hosted",
+        help="Hosted mode: dashboard on $PORT plus the reminder tick loop in one process",
+    ).set_defaults(func=cmd_serve_hosted)
     sub.add_parser(
         "tick",
         help="Run sync + reminder dispatch once, logging to a file - the unattended/scheduled-task entrypoint",
