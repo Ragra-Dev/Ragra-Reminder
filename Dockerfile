@@ -4,5 +4,4 @@ WORKDIR /app
 COPY pyproject.toml README.md ./
 COPY ragra ./ragra
 RUN pip install .
-VOLUME /data
 CMD ["python", "-m", "ragra.cli", "serve-hosted"]
