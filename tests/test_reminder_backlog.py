@@ -85,7 +85,7 @@ def test_future_assignment_gets_normal_reminder_cadence(conn):
         "SELECT reminder_type, status FROM reminders WHERE task_id = ?", (task["id"],)
     ).fetchall()
     types = {r["reminder_type"] for r in reminders}
-    assert "T_MINUS_3D" in types
+    assert "T_MINUS_7D" in types
     assert "FINAL_1H" in types
     assert all(r["status"] == "PENDING" for r in reminders)
 

@@ -46,8 +46,8 @@ def compute_reminder_plan(
 
     plan: list[ReminderPlan] = [ReminderPlan("NEW_ASSIGNMENT", discovered_at)]
 
-    if lead_time >= timedelta(days=3):
-        for days, reminder_type in ((3, "T_MINUS_3D"), (2, "T_MINUS_2D"), (1, "T_MINUS_1D")):
+    if lead_time >= timedelta(days=2):
+        for days, reminder_type in ((7, "T_MINUS_7D"), (5, "T_MINUS_5D"), (2, "T_MINUS_2D")):
             candidate = actual_deadline - timedelta(days=days)
             if candidate > discovered_at:
                 plan.append(ReminderPlan(reminder_type, candidate))
@@ -55,7 +55,7 @@ def compute_reminder_plan(
         plan.append(ReminderPlan("FINAL_1H", actual_deadline - timedelta(hours=1)))
 
     elif lead_time >= timedelta(days=1):
-        # Posted 1-3 days out: compressed cadence, no multi-day countdown.
+        # Posted 1-2 days out: compressed cadence, no multi-day countdown.
         one_day_before = actual_deadline - timedelta(days=1)
         if one_day_before > discovered_at:
             plan.append(ReminderPlan("T_MINUS_1D", one_day_before))
@@ -83,6 +83,8 @@ def reminder_message(reminder_type: str, task_title: str, course_code: str | Non
     label = f"{course_code}: {task_title}" if course_code else task_title
     messages = {
         "NEW_ASSIGNMENT": f"New assignment: {label}",
+        "T_MINUS_7D": f"Due in 1 week: {label}",
+        "T_MINUS_5D": f"Due in 5 days: {label}",
         "T_MINUS_3D": f"Due in 3 days: {label}",
         "T_MINUS_2D": f"Due in 2 days: {label}",
         "T_MINUS_1D": f"Due tomorrow: {label}",

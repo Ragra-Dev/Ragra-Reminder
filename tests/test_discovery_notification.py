@@ -79,7 +79,7 @@ def test_long_lead_assignment_is_announced(conn):
 
     assert len(_announcements(conn)) == 1
     # and the countdown still exists alongside it
-    assert "T_MINUS_3D" in _types(conn)
+    assert "T_MINUS_7D" in _types(conn)
 
 
 def test_medium_lead_assignment_is_announced(conn):
@@ -249,7 +249,7 @@ def test_the_invariant_is_not_satisfied_by_some_other_reminder_type(conn):
     task_id = conn.execute("SELECT id FROM tasks WHERE external_id = 'cw-1'").fetchone()["id"]
 
     assert repo.has_reminder_of_type(
-        conn, user_id=owner_id(conn), task_id=task_id, reminder_type="T_MINUS_3D"
+        conn, user_id=owner_id(conn), task_id=task_id, reminder_type="T_MINUS_7D"
     )
     conn.execute(
         "DELETE FROM reminders WHERE task_id = ? AND reminder_type = 'NEW_ASSIGNMENT'", (task_id,)

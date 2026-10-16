@@ -13,7 +13,7 @@ def test_a_long_lead_assignment_is_announced_when_discovered():
     This is the case that failed in real use: the countdown ladder was
     scheduled correctly but the discovery ping was omitted for any lead
     time of 3 days or more, so a task posted two weeks ahead produced
-    complete silence until T_MINUS_3D - thirteen days later.
+    complete silence until T_MINUS_7D - nine days later.
     """
     discovered = _dt("2026-09-04T11:57:57+00:00")
     deadline = _dt("2026-09-20T18:59:00+00:00")
@@ -25,7 +25,7 @@ def test_a_long_lead_assignment_is_announced_when_discovered():
     announcement = next(p for p in plan if p.reminder_type == "NEW_ASSIGNMENT")
     assert announcement.scheduled_for == discovered
     # The countdown ladder is unchanged.
-    for expected in ("T_MINUS_3D", "T_MINUS_2D", "T_MINUS_1D", "DUE_TODAY", "FINAL_1H"):
+    for expected in ("T_MINUS_7D", "T_MINUS_5D", "T_MINUS_2D", "DUE_TODAY", "FINAL_1H"):
         assert expected in types
 
 
@@ -50,9 +50,9 @@ def test_normal_task_gets_full_countdown():
     plan = compute_reminder_plan(actual_deadline=deadline, discovered_at=discovered)
     types = [p.reminder_type for p in plan]
     assert "NEW_ASSIGNMENT" in types
-    assert "T_MINUS_3D" in types
+    assert "T_MINUS_7D" in types
+    assert "T_MINUS_5D" in types
     assert "T_MINUS_2D" in types
-    assert "T_MINUS_1D" in types
     assert "DUE_TODAY" in types
     assert "FINAL_1H" in types
     for p in plan:
@@ -65,7 +65,8 @@ def test_short_deadline_uses_compressed_reminders_not_full_cadence():
     plan = compute_reminder_plan(actual_deadline=deadline, discovered_at=discovered)
     types = [p.reminder_type for p in plan]
     assert "NEW_ASSIGNMENT" in types
-    assert "T_MINUS_3D" not in types
+    assert "T_MINUS_7D" not in types
+    assert "T_MINUS_5D" not in types
     assert "T_MINUS_2D" not in types
     # No more than a handful of pings for a short-fuse task.
     assert len(plan) <= 4
