@@ -335,6 +335,50 @@ def test_an_allow_listed_colleague_gets_their_own_empty_account(db_path, provide
         assert colleague["id"] != repo.unlinked_user_id(conn)
 
 
+def test_open_signup_admits_a_stranger_with_a_separate_empty_account(db_path, provider):
+    app = create_app(
+        db_path, auth_settings=_settings(open_signup=True), identity_provider=provider
+    )
+    client = TestClient(app, follow_redirects=False)
+
+    assert _complete_sign_in(client, provider, identity=STRANGER).status_code == 303
+
+    with connect_closing(db_path) as conn:
+        stranger = repo.get_user_by_google_sub(conn, google_sub=STRANGER.subject)
+        assert stranger is not None
+        # Open sign-up never hands the owner's pre-identity history to a newcomer.
+        assert stranger["id"] != repo.unlinked_user_id(conn)
+
+
+def test_open_signup_still_refuses_an_unverified_email(db_path, provider):
+    provider.identity = auth.GoogleIdentity(
+        subject="google-sub-unverified", email="x@example.com",
+        email_verified=False, display_name="Unverified",
+    )
+    app = create_app(
+        db_path, auth_settings=_settings(open_signup=True), identity_provider=provider
+    )
+    client = TestClient(app, follow_redirects=False)
+
+    assert _complete_sign_in(client, provider).status_code == 403
+
+
+def test_open_signup_stops_at_max_users_but_never_blocks_a_listed_email(db_path, provider):
+    app = create_app(
+        db_path,
+        auth_settings=_settings(
+            open_signup=True, max_users=1,
+            allowed_emails=frozenset({"colleague@example.com"}),
+        ),
+        identity_provider=provider,
+    )
+    client = TestClient(app, follow_redirects=False)
+
+    # One account already exists (the pre-identity owner row), so the cap is reached.
+    assert _complete_sign_in(client, provider, identity=STRANGER).status_code == 403
+    assert _complete_sign_in(client, provider, identity=COLLEAGUE).status_code == 303
+
+
 def test_email_matching_ignores_case_and_surrounding_space(db_path, provider):
     provider.identity = auth.GoogleIdentity(
         subject="google-sub-owner", email="  Owner@Example.COM  ",

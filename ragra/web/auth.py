@@ -90,6 +90,12 @@ class AuthSettings:
     owner_email: str | None
     allowed_emails: frozenset[str]
     secure_cookies: bool
+    # Off by default: sign-in is closed unless an email is listed. When on,
+    # any account with a verified Google email may join and gets its own
+    # empty, isolated account. max_users bounds how many accounts open
+    # sign-up may create (the owner and listed emails are never blocked).
+    open_signup: bool = False
+    max_users: int | None = None
 
     @property
     def configured(self) -> bool:
@@ -121,6 +127,11 @@ def load_auth_settings(env: dict[str, str] | None = None) -> AuthSettings:
         if email
     }
 
+    try:
+        max_users = int((source.get("RAGRA_MAX_USERS") or "").strip()) or None
+    except ValueError:
+        max_users = None
+
     return AuthSettings(
         client_id=(source.get("RAGRA_OAUTH_CLIENT_ID") or "").strip(),
         client_secret=(source.get("RAGRA_OAUTH_CLIENT_SECRET") or "").strip(),
@@ -128,6 +139,8 @@ def load_auth_settings(env: dict[str, str] | None = None) -> AuthSettings:
         owner_email=_normalise_email(source.get("RAGRA_OWNER_EMAIL")),
         allowed_emails=frozenset(allowed),
         secure_cookies=forced_secure or redirect_uri.lower().startswith("https://"),
+        open_signup=(source.get("RAGRA_OPEN_SIGNUP") or "").strip().lower() in ("1", "true", "yes"),
+        max_users=max_users,
     )
 
 
@@ -276,14 +289,16 @@ def purge_expired_states(conn: sqlite3.Connection, *, now: datetime) -> int:
 def is_allowed(identity: GoogleIdentity, settings: AuthSettings) -> bool:
     """Whether this verified identity may sign in.
 
-    Closed by default: with no owner and no allow-list configured, nobody
-    is admitted. An unverified email is never matched against either list,
+    Closed by default: with no owner, no allow-list and open sign-up off,
+    nobody is admitted. An unverified email is never matched against either list,
     because an unverified address proves nothing about who controls it.
     """
     if not identity.email_verified or not identity.email:
         return False
     email = identity.email.strip().lower()
-    return email == settings.owner_email or email in settings.allowed_emails
+    if email == settings.owner_email or email in settings.allowed_emails:
+        return True
+    return settings.open_signup
 
 
 def resolve_user(
@@ -334,6 +349,12 @@ def resolve_user(
             )
             conn.commit()
             return unlinked
+
+    listed = email == settings.owner_email or email in settings.allowed_emails
+    if not listed and settings.max_users is not None:
+        count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+        if count >= settings.max_users:
+            raise SignInRefused("this deployment is full")
 
     cur = conn.execute(
         """INSERT INTO users (google_sub, email, display_name, created_at, updated_at)

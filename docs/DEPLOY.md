@@ -25,6 +25,8 @@ instance.
 | `RAGRA_OWNER_EMAIL` | your Google email |
 | `RAGRA_ALLOWED_EMAILS` | other allowed emails, comma-separated (optional) |
 | `RAGRA_WEB_BASE_URL` | `https://<your-domain>` |
+| `RAGRA_OPEN_SIGNUP` | `1` to let anyone with a verified Google email join (off by default) |
+| `RAGRA_MAX_USERS` | optional cap on accounts open sign-up may create, e.g. `100` |
 | `RAGRA_FAST_TIMETABLE_SPREADSHEET_ID`, `RAGRA_SHEETS_API_KEY` | see `.env.example` |
 | `RAGRA_SMTP_HOST`, `RAGRA_SMTP_PORT`, `RAGRA_SMTP_USERNAME`, `RAGRA_SMTP_PASSWORD`, `RAGRA_EMAIL_FROM` | email sending (e.g. Gmail app password) |
 
