@@ -357,9 +357,11 @@ def create_app(
                 url = google_reconnect.begin_reconnect(
                     conn, _data_provider(), user_id=user_id, service=service, now=datetime.now(timezone.utc)
                 )
-            except google_reconnect.ReconnectNotConfigured:
+            except google_reconnect.ReconnectNotConfigured as exc:
+                # These messages are written without paths or secrets, so the
+                # reason is safe to show and saves a trip through the logs.
                 return PlainTextResponse(
-                    "Google reconnect is not configured on this deployment.", status_code=503
+                    f"Google reconnect is not configured on this deployment: {exc}", status_code=503
                 )
             except Exception:  # noqa: BLE001 - never surface an internal error (or a local path) to a browser
                 return PlainTextResponse(_RECONNECT_FAILED, status_code=400)
