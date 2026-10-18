@@ -387,9 +387,10 @@ def create_app(
                 credentials = _data_provider().exchange_code(
                     service=consumed.service, code=code, code_verifier=consumed.code_verifier
                 )
-            except google_reconnect.ReconnectNotConfigured:
+            except google_reconnect.ReconnectNotConfigured as exc:
                 return PlainTextResponse(
-                    "Google reconnect is not configured on this deployment.", status_code=503
+                    f"Google reconnect is not configured on this deployment (callback): {exc}",
+                    status_code=503,
                 )
             except Exception:  # noqa: BLE001 - the real provider can also raise network, JSON and
                 # filesystem errors; none of their messages (which can carry request detail or a
