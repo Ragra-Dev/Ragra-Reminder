@@ -18,6 +18,7 @@ off.
 
 from __future__ import annotations
 
+import sys
 import ipaddress
 import os
 import sqlite3
@@ -358,10 +359,10 @@ def create_app(
                     conn, _data_provider(), user_id=user_id, service=service, now=datetime.now(timezone.utc)
                 )
             except google_reconnect.ReconnectNotConfigured as exc:
-                # These messages are written without paths or secrets, so the
-                # reason is safe to show and saves a trip through the logs.
+                # The reason goes to the server log only, never to the browser.
+                print(f"google reconnect (begin) not configured: {exc}", file=sys.stderr)
                 return PlainTextResponse(
-                    f"Google reconnect is not configured on this deployment: {exc}", status_code=503
+                    "Google reconnect is not configured on this deployment (begin).", status_code=503
                 )
             except Exception:  # noqa: BLE001 - never surface an internal error (or a local path) to a browser
                 return PlainTextResponse(_RECONNECT_FAILED, status_code=400)
@@ -388,9 +389,9 @@ def create_app(
                     service=consumed.service, code=code, code_verifier=consumed.code_verifier
                 )
             except google_reconnect.ReconnectNotConfigured as exc:
+                print(f"google reconnect (callback) not configured: {exc}", file=sys.stderr)
                 return PlainTextResponse(
-                    f"Google reconnect is not configured on this deployment (callback): {exc}",
-                    status_code=503,
+                    "Google reconnect is not configured on this deployment (callback).", status_code=503
                 )
             except Exception:  # noqa: BLE001 - the real provider can also raise network, JSON and
                 # filesystem errors; none of their messages (which can carry request detail or a
