@@ -258,7 +258,15 @@ class GoogleOAuthDataProvider:
         try:
             data = json.loads(self._client_secrets_file.read_text(encoding="utf-8"))
         except FileNotFoundError as exc:
-            raise ReconnectNotConfigured("no Google OAuth client registration is configured") from exc
+            # Hosted deployments have no client-secrets file; they carry the
+            # same Web client as the sign-in variables.
+            import os
+
+            env_id = (os.environ.get("RAGRA_OAUTH_CLIENT_ID") or "").strip()
+            env_secret = (os.environ.get("RAGRA_OAUTH_CLIENT_SECRET") or "").strip()
+            if not (env_id and env_secret):
+                raise ReconnectNotConfigured("no Google OAuth client registration is configured") from exc
+            data = {"web": {"client_id": env_id, "client_secret": env_secret}}
         except (OSError, ValueError) as exc:
             raise ReconnectNotConfigured("the Google OAuth client registration could not be read") from exc
 
