@@ -416,6 +416,8 @@ def create_app(
                 service=consumed.service, granted=getattr(credentials, "scopes", None)
             )
             if absent:
+                granted_now = sorted(getattr(credentials, "scopes", None) or ())
+                print(f"google reconnect: missing {list(absent)}; google granted {granted_now}", file=sys.stderr)
                 return PlainTextResponse(
                     "Reconnect could not be completed: the approval did not include everything "
                     f"Ragra needs for {consumed.service}. Missing: {', '.join(absent)}. "
