@@ -191,6 +191,14 @@ def required_scopes(service: str) -> tuple[str, ...]:
     return {CLASSROOM: CLASSROOM_SCOPES, CALENDAR: CALENDAR_SCOPES}[service]
 
 
+# Google's token response does not reliably list this scope even when it is
+# granted (see the note in ragra/adapters/classroom.py: live API calls confirm
+# the grant). Requiring it in the echo rejects valid grants, so it is exempt
+# from the check. If it was genuinely refused, the first sync gets a 403 and
+# the credential is marked degraded, which is where that surfaces.
+_NOT_ALWAYS_ECHOED = frozenset({"https://www.googleapis.com/auth/classroom.coursework.me.readonly"})
+
+
 def missing_scopes(*, service: str, granted) -> tuple[str, ...]:
     """Which of the service's required scopes are absent from `granted`.
 
@@ -203,7 +211,11 @@ def missing_scopes(*, service: str, granted) -> tuple[str, ...]:
     rather than becoming a confusing 403 much later.
     """
     have = set(granted or ())
-    return tuple(scope for scope in required_scopes(service) if scope not in have)
+    return tuple(
+        scope
+        for scope in required_scopes(service)
+        if scope not in have and scope not in _NOT_ALWAYS_ECHOED
+    )
 
 
 @dataclass(frozen=True)

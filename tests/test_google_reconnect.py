@@ -450,3 +450,14 @@ def test_reconnecting_without_an_encryption_key_fails_loud_not_silent(db_path, p
     with connect_closing(db_path) as conn:
         alice = owner_id(conn)
         assert not google_credentials.has_credentials(conn, user_id=alice, service=google_credentials.CLASSROOM)
+
+
+def test_a_grant_not_echoing_coursework_me_readonly_is_accepted():
+    """Google's token response does not reliably list this scope even when
+    it is granted, so its absence from the echo must not reject the grant."""
+    full = google_reconnect.required_scopes("classroom")
+    echoed = tuple(s for s in full if not s.endswith("classroom.coursework.me.readonly"))
+
+    assert google_reconnect.missing_scopes(service="classroom", granted=echoed) == ()
+    # Any other missing scope is still refused.
+    assert google_reconnect.missing_scopes(service="classroom", granted=echoed[:-1]) == (echoed[-1],)
