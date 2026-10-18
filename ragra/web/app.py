@@ -382,6 +382,7 @@ def create_app(
             # The user declined at Google's consent screen, or came back
             # without a code. Their existing credential is untouched.
             if error or not code:
+                print(f"google reconnect: no code (google error={error!r})", file=sys.stderr)
                 return PlainTextResponse(_RECONNECT_FAILED, status_code=400)
 
             try:
@@ -393,9 +394,10 @@ def create_app(
                 return PlainTextResponse(
                     "Google reconnect is not configured on this deployment (callback).", status_code=503
                 )
-            except Exception:  # noqa: BLE001 - the real provider can also raise network, JSON and
+            except Exception as exc:  # noqa: BLE001 - the real provider can also raise network, JSON and
                 # filesystem errors; none of their messages (which can carry request detail or a
                 # local path) may reach a browser, and none of them justify a 500.
+                print(f"google reconnect: code exchange failed: {type(exc).__name__}: {exc}", file=sys.stderr)
                 return PlainTextResponse(_RECONNECT_FAILED, status_code=400)
 
             if not getattr(credentials, "refresh_token", None):
@@ -403,6 +405,7 @@ def create_app(
                 # credential the unattended tick can't actually use later
                 # must never be accepted as "reconnected", regardless of
                 # which provider produced it.
+                print("google reconnect: Google returned no refresh token", file=sys.stderr)
                 return PlainTextResponse(_RECONNECT_FAILED, status_code=400)
 
             # Verified before storing, not after: a grant that is missing
@@ -430,7 +433,8 @@ def create_app(
                     "RAGRA_CREDENTIAL_KEY before reconnecting can succeed.",
                     status_code=503,
                 )
-            except Exception:  # noqa: BLE001 - storage failure must not 500 or leak a path either
+            except Exception as exc:  # noqa: BLE001 - storage failure must not 500 or leak a path either
+                print(f"google reconnect: storing credential failed: {type(exc).__name__}: {exc}", file=sys.stderr)
                 return PlainTextResponse(_RECONNECT_FAILED, status_code=400)
 
             credential_health.record_success(conn, user_id=consumed.user_id, service=consumed.service)
