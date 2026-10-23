@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Ragra - Privacy policy</title>
+{% include "_theme.html" %}
+<style>body { padding-top: 32px; }</style>
+</head>
+<body>
+<h1>Privacy policy</h1>
+<p>Ragra is a deadline-reminder service for Google Classroom. It reads your classes and
+  assignments, and reminds you before they are due. This page explains what it collects,
+  why, and how to remove it. Last updated: 2026-10-24.</p>
+
+<h2>What Ragra collects</h2>
+<ul>
+  <li><strong>Your Google account identity:</strong> your name, email address and Google
+    account identifier, used to sign you in and to keep your data separate from everyone else's.</li>
+  <li><strong>Google Classroom data you authorise:</strong> the names of your classes, and the
+    titles, descriptions, due dates, announcements, class materials and your own submission
+    status. Ragra only requests read-only access.</li>
+  <li><strong>Google Calendar access you authorise:</strong> Ragra creates and updates deadline
+    events on your calendar. It does not use your other events for anything else.</li>
+  <li><strong>A sign-in cookie</strong> so the site remembers you for up to 7 days.</li>
+</ul>
+
+<h2>How it is used</h2>
+<p>Only to show your deadlines, send you reminders by email, and add deadlines to your calendar.
+  Ragra does not sell your data, does not use it for advertising, and does not share it with
+  anyone, except the hosting provider that runs the service and the email provider that sends
+  your reminders.</p>
+<p>Ragra's use of information received from Google APIs adheres to the
+  <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services
+  User Data Policy</a>, including its Limited Use requirements. Humans do not read your Google
+  data, except where you ask for support, where it is needed for security or to comply with the
+  law.</p>
+
+<h2>How it is stored</h2>
+<ul>
+  <li>Your data is kept in a database on the server that runs the service.</li>
+  <li>Your Google access tokens are stored encrypted.</li>
+  <li>Connections use HTTPS.</li>
+</ul>
+
+<h2>Your choices</h2>
+<ul>
+  <li><strong>Delete your data:</strong> sign in, open <em>Account</em> and choose
+    <em>Delete account</em>. Your data is removed immediately.</li>
+  <li><strong>Revoke access:</strong> at
+    <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>
+    you can remove Ragra's access to your Google account at any time.</li>
+</ul>
+
+<h2>Contact</h2>
+{% if contact_email %}
+<p>Questions about this policy: <a href="mailto:{{ contact_email }}">{{ contact_email }}</a>.</p>
+{% else %}
+<p>Questions about this policy: contact the person who invited you to use this service.</p>
+{% endif %}
+<p><a href="/terms">Terms of service</a></p>
+</body>
+</html>

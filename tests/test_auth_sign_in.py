@@ -735,3 +735,15 @@ def test_the_legacy_fallback_is_off_once_sign_in_is_configured(db_path):
     app = create_app(db_path, auth_settings=_settings())
     client = TestClient(app, client=("127.0.0.1", 5000), follow_redirects=False)
     assert client.get("/", headers={"accept": "text/html"}).status_code == 303
+
+
+def test_privacy_and_terms_pages_are_public(client):
+    """Google requires a reachable privacy policy, so these must not need a session."""
+    privacy = client.get("/privacy")
+    terms = client.get("/terms")
+
+    assert privacy.status_code == 200
+    assert "Privacy policy" in privacy.text
+    assert "Google API Services" in privacy.text
+    assert terms.status_code == 200
+    assert "Terms of service" in terms.text

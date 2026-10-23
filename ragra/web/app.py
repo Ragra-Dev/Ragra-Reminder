@@ -271,6 +271,20 @@ def create_app(
     # one; identity keyed on the Google subject rather than the email - so
     # these handlers stay thin enough to read in one sitting.
 
+    @app.get("/privacy")
+    def privacy(request: Request):
+        """Public: Google requires a reachable privacy policy, and a person
+        deciding whether to sign in has to be able to read it first."""
+        import os
+
+        return templates.TemplateResponse(
+            request, "privacy.html", {"contact_email": (os.environ.get("RAGRA_CONTACT_EMAIL") or "").strip()}
+        )
+
+    @app.get("/terms")
+    def terms(request: Request):
+        return templates.TemplateResponse(request, "terms.html", {})
+
     @app.get("/login")
     def login(request: Request, next: str = ""):
         """Start sign-in. Idempotent and safe to reload: each visit begins a
