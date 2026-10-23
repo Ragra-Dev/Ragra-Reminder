@@ -34,7 +34,7 @@ ASSIGNMENT_V1 = {
     "alternateLink": "https://classroom.google.com/x",
     "creationTime": "2026-08-20T00:00:00Z",
     "updateTime": "2026-08-20T00:00:00Z",
-    "dueDate": {"year": 2026, "month": 9, "day": 10},
+    "dueDate": {"year": 2099, "month": 9, "day": 10},
     "dueTime": {"hours": 23, "minutes": 59},
 }
 
@@ -78,7 +78,7 @@ def test_deadline_change_updates_task_and_recomputes_reminders(conn):
     assert reminders_before > 0
 
     assignment_v2 = dict(ASSIGNMENT_V1)
-    assignment_v2["dueDate"] = {"year": 2026, "month": 9, "day": 13}
+    assignment_v2["dueDate"] = {"year": 2099, "month": 9, "day": 13}
     assignment_v2["updateTime"] = "2026-08-25T00:00:00Z"
     client_v2 = FakeClient([COURSE], coursework={"course-1": [assignment_v2]})
 
@@ -86,7 +86,7 @@ def test_deadline_change_updates_task_and_recomputes_reminders(conn):
     assert len(summary.deadlines_changed) == 1
 
     task = conn.execute("SELECT * FROM tasks WHERE external_id = 'cw-1'").fetchone()
-    assert task["actual_deadline"].startswith("2026-09-13")
+    assert task["actual_deadline"].startswith("2099-09-13")
 
     # Old reminders cancelled, new ones pending - never both active for the
     # same deadline.
@@ -145,7 +145,7 @@ def test_non_active_or_provisioned_course_states_never_generate_reminders(conn, 
 
     assert summary.courses_seen == 0
     assert conn.execute("SELECT COUNT(*) AS c FROM tasks").fetchone()["c"] == 0
-    due = repo.due_pending_reminders(conn, now="2026-12-31T00:00:00+00:00", user_id=owner_id(conn))
+    due = repo.due_pending_reminders(conn, now="2099-12-31T00:00:00+00:00", user_id=owner_id(conn))
     assert due == []
 
 
@@ -176,7 +176,7 @@ def test_previously_active_course_going_archived_updates_stored_state(conn):
 
     from ragra.db import repo
 
-    due = repo.due_pending_reminders(conn, now="2026-12-31T00:00:00+00:00", user_id=owner_id(conn))
+    due = repo.due_pending_reminders(conn, now="2099-12-31T00:00:00+00:00", user_id=owner_id(conn))
     assert due == []  # the archived course's task must not generate a normal reminder
 
 
@@ -200,7 +200,7 @@ def test_due_pending_reminders_falls_back_to_course_name_when_no_code(conn):
     client = FakeClient([COURSE], coursework={"course-1": [ASSIGNMENT_V1]})
     sync_classroom(conn, client, user_id=owner_id(conn))
 
-    due = repo.due_pending_reminders(conn, now="2026-12-31T00:00:00+00:00", user_id=owner_id(conn))
+    due = repo.due_pending_reminders(conn, now="2099-12-31T00:00:00+00:00", user_id=owner_id(conn))
     assert due
     assert due[0]["course_code"] == "OOP"  # falls back to the real course name
 
@@ -222,13 +222,13 @@ def test_sync_never_overwrites_personal_deadline(conn):
     # Re-sync with the ACTUAL deadline changed at the source: the personal
     # target must still be untouched - they are independent properties.
     assignment_v2 = dict(ASSIGNMENT_V1)
-    assignment_v2["dueDate"] = {"year": 2026, "month": 9, "day": 13}
+    assignment_v2["dueDate"] = {"year": 2099, "month": 9, "day": 13}
     assignment_v2["updateTime"] = "2026-08-25T00:00:00Z"
     client_v2 = FakeClient([COURSE], coursework={"course-1": [assignment_v2]})
     sync_classroom(conn, client_v2, user_id=owner_id(conn))
 
     row = conn.execute("SELECT actual_deadline, personal_deadline FROM tasks WHERE id = ?", (task["id"],)).fetchone()
-    assert row["actual_deadline"].startswith("2026-09-13")
+    assert row["actual_deadline"].startswith("2099-09-13")
     assert row["personal_deadline"] == "2026-09-05"
 
 
