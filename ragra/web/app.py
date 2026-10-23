@@ -281,6 +281,17 @@ def create_app(
             request, "privacy.html", {"contact_email": (os.environ.get("RAGRA_CONTACT_EMAIL") or "").strip()}
         )
 
+    @app.get("/welcome")
+    def welcome(request: Request):
+        """Public front page. `/` itself still sends a signed-out visitor
+        straight to sign-in; this is the page that explains what Ragra is,
+        and the one to give Google as the application home page."""
+        return templates.TemplateResponse(request, "welcome.html", {})
+
+    @app.get("/help")
+    def help_page(request: Request):
+        return templates.TemplateResponse(request, "help.html", {})
+
     @app.get("/terms")
     def terms(request: Request):
         return templates.TemplateResponse(request, "terms.html", {})

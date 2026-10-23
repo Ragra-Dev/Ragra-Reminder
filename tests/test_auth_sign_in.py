@@ -741,9 +741,13 @@ def test_privacy_and_terms_pages_are_public(client):
     """Google requires a reachable privacy policy, so these must not need a session."""
     privacy = client.get("/privacy")
     terms = client.get("/terms")
+    welcome = client.get("/welcome")
+    guide = client.get("/help")
 
     assert privacy.status_code == 200
     assert "Privacy policy" in privacy.text
     assert "Google API Services" in privacy.text
     assert terms.status_code == 200
     assert "Terms of service" in terms.text
+    assert welcome.status_code == 200 and "Sign in with Google" in welcome.text
+    assert guide.status_code == 200 and "Advanced" in guide.text
