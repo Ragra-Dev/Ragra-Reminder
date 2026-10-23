@@ -204,21 +204,26 @@ def sync_classroom(
             course_name = course.get("name", "Untitled course")
             context = _RelevanceContext(course_name=course_name, profile=profile) if profile else None
 
-            seen_coursework = _sync_coursework(
-                conn, client, user_id, course_id, course["id"], summary, context
-            )
-            seen_announcements = _sync_announcements(
-                conn, client, user_id, course_id, course["id"], summary, context
-            )
-            seen_materials = _sync_materials(
-                conn, client, user_id, course_id, course["id"], summary, context
-            )
-
-            for source_type, seen_ids in (
-                ("coursework", seen_coursework),
-                ("announcement", seen_announcements),
-                ("material", seen_materials),
+            # Each source is synced on its own. One refused or failing call
+            # (e.g. a 403 on coursework because that scope was not granted)
+            # must not hide the announcements and materials that are
+            # readable. A source that failed is also left out of the
+            # "missing from the source" cancellation below: its absence from
+            # this run means "could not read", never "was deleted".
+            seen_by_source: dict[str, set[str]] = {}
+            for source_type, sync_source in (
+                ("coursework", _sync_coursework),
+                ("announcement", _sync_announcements),
+                ("material", _sync_materials),
             ):
+                try:
+                    seen_by_source[source_type] = sync_source(
+                        conn, client, user_id, course_id, course["id"], summary, context
+                    )
+                except Exception as exc:  # noqa: BLE001 - isolate one source from the others
+                    summary.errors.append(f"{source_type} sync failed for {course_name!r}: {exc}")
+
+            for source_type, seen_ids in seen_by_source.items():
                 cancelled = repo.cancel_tasks_missing_from_source(
                     conn, user_id=user_id, course_id=course_id, source_type=source_type,
                     seen_external_ids=seen_ids,
@@ -237,7 +242,12 @@ def sync_classroom(
         # itself with cancel_pending_reminders.
         repo.cancel_stray_reminders_for_terminal_tasks(conn, user_id=user_id)
 
-        repo.record_sync_success(conn, user_id=user_id, source="classroom")
+        if summary.errors:
+            repo.record_sync_error(
+                conn, user_id=user_id, source="classroom", error="; ".join(summary.errors)
+            )
+        else:
+            repo.record_sync_success(conn, user_id=user_id, source="classroom")
     except Exception as exc:  # noqa: BLE001 - sync must never crash the process
         summary.errors.append(str(exc))
         repo.record_sync_error(conn, user_id=user_id, source="classroom", error=str(exc))

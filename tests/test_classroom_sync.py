@@ -319,3 +319,32 @@ def test_announcement_without_deadline_never_gets_invented_deadline(conn):
     task = conn.execute("SELECT * FROM tasks WHERE external_id = 'ann-1'").fetchone()
     assert task["actual_deadline"] is None
     assert task["kind"] == "INFORMATIONAL"
+
+
+class _CourseworkForbidden(FakeClient):
+    def list_course_work(self, course_id):
+        raise RuntimeError("Google API request failed with HTTP 403: The caller does not have permission")
+
+
+def test_a_refused_coursework_call_does_not_hide_announcements(conn):
+    """A 403 on coursework (scope not granted) must not stop the readable
+    sources from syncing, and must still be reported as a sync error."""
+    announcement = {"id": "ann-1", "text": "Class moved to room 4", "creationTime": "2026-10-20T00:00:00Z"}
+    client = _CourseworkForbidden([COURSE], announcements={"course-1": [announcement]})
+
+    summary = sync_classroom(conn, client, user_id=owner_id(conn))
+
+    assert any("coursework sync failed" in e for e in summary.errors)
+    rows = conn.execute("SELECT source_type FROM tasks WHERE source_type = 'announcement'").fetchall()
+    assert len(rows) == 1
+
+
+def test_a_failed_source_never_cancels_tasks_it_could_not_read(conn):
+    """Not being able to read coursework is not the same as it being deleted."""
+    owner = owner_id(conn)
+    sync_classroom(conn, FakeClient([COURSE], coursework={"course-1": [ASSIGNMENT_V1]}), user_id=owner)
+
+    sync_classroom(conn, _CourseworkForbidden([COURSE]), user_id=owner)
+
+    status = conn.execute("SELECT status FROM tasks WHERE source_type = 'coursework'").fetchone()["status"]
+    assert status != "CANCELLED"
