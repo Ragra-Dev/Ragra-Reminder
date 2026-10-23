@@ -1,0 +1,33 @@
+# Self-hosted deployment (e.g. a free Google Cloud e2-micro VM). See
+# docs/DEPLOY-GCP.md. One app container plus Caddy, which obtains and renews
+# the HTTPS certificate automatically. Run exactly one instance of `app`.
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      PORT: "8080"
+      RAGRA_HOME: /data
+    volumes:
+      - ragra-data:/data
+    expose:
+      - "8080"
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      RAGRA_DOMAIN: ${RAGRA_DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+    depends_on:
+      - app
+
+volumes:
+  ragra-data:
+  caddy-data:
