@@ -1,22 +1,30 @@
 {% set _p = request.url.path %}
 {% set _u = nav_user(request) %}
+{% from "_icons.html" import icon %}
 <header class="appbar">
   <div class="appbar-inner">
     <a class="brand" href="/"><span class="logo">R</span><span>Ragra</span></a>
     <nav class="tabs">
-      <a href="/" {% if _p == '/' %}class="on"{% endif %}>Today</a>
-      <a href="/tasks" {% if _p.startswith('/tasks') %}class="on"{% endif %}>Tasks</a>
-      <a href="/announcements" {% if _p.startswith('/announcements') %}class="on"{% endif %}>Announcements</a>
-      <a href="/missed" {% if _p.startswith('/missed') %}class="on"{% endif %}>Missed</a>
-      <a href="/deliveries" {% if _p.startswith('/deliveries') %}class="on"{% endif %}>Deliveries</a>
-      <a href="/account" {% if _p.startswith('/account') %}class="on"{% endif %}>Account</a>
+      <a href="/" {% if _p == '/' %}class="on"{% endif %}>{{ icon('today') }}Today</a>
+      <a href="/tasks" {% if _p.startswith('/tasks') %}class="on"{% endif %}>{{ icon('tasks') }}Tasks</a>
+      <a href="/announcements" {% if _p.startswith('/announcements') %}class="on"{% endif %}>{{ icon('news') }}Announcements</a>
+      <a href="/missed" {% if _p.startswith('/missed') %}class="on"{% endif %}>{{ icon('missed') }}Missed</a>
+      <a href="/deliveries" {% if _p.startswith('/deliveries') %}class="on"{% endif %}>{{ icon('sent') }}Deliveries</a>
+      <a href="/account" {% if _p.startswith('/account') %}class="on"{% endif %}>{{ icon('user') }}Account</a>
     </nav>
     {% if _u %}
     <a class="nav-user" href="/account" title="{{ _u.email or _u.name }}">
-      {% if _u.picture %}<img class="avatar" src="{{ _u.picture }}" alt="" referrerpolicy="no-referrer" width="30" height="30">
+      {% if _u.picture %}<img class="avatar" src="{{ _u.picture }}" alt="" referrerpolicy="no-referrer" width="32" height="32">
       {% else %}<span class="avatar">{{ _u.initial }}</span>{% endif %}
       <span class="who"><b>{{ _u.name }}</b>{% if _u.email %}<span>{{ _u.email }}</span>{% endif %}</span>
     </a>
     {% endif %}
   </div>
 </header>
+<nav class="dock" aria-label="Main">
+  <a href="/tasks" {% if _p.startswith('/tasks') %}class="on"{% endif %}>{{ icon('tasks') }}Tasks</a>
+  <a href="/announcements" {% if _p.startswith('/announcements') %}class="on"{% endif %}>{{ icon('news') }}News</a>
+  <a href="/" class="center" aria-label="Today">{{ icon('today') }}</a>
+  <a href="/missed" {% if _p.startswith('/missed') %}class="on"{% endif %}>{{ icon('missed') }}Missed</a>
+  <a href="/account" {% if _p.startswith('/account') or _p.startswith('/deliveries') %}class="on"{% endif %}>{{ icon('user') }}Account</a>
+</nav>

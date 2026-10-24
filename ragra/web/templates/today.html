@@ -19,11 +19,12 @@
     </p>
   </div>
 
+  {% from "_icons.html" import icon %}
   <div class="stats">
-    <a class="stat {{ 'bad' if overdue else 'good' }}" href="#deadlines"><span class="n">{{ overdue|length }}</span><span class="l">Overdue</span></a>
-    <a class="stat {{ 'warn' if due_today else 'good' }}" href="#deadlines"><span class="n">{{ due_today|length }}</span><span class="l">Due today</span></a>
-    <a class="stat info" href="#deadlines"><span class="n">{{ due_soon|length }}</span><span class="l">Next 7 days</span></a>
-    <a class="stat info" href="#announcements"><span class="n">{{ announcements|length }}</span><span class="l">Announcements</span></a>
+    <a class="stat {{ 'bad' if overdue else 'good' }}" href="#deadlines"><span class="ico">{{ icon('missed') }}</span><span class="n">{{ overdue|length }}</span><span class="l">Overdue</span></a>
+    <a class="stat {{ 'warn' if due_today else 'good' }}" href="#deadlines"><span class="ico">{{ icon('clock') }}</span><span class="n">{{ due_today|length }}</span><span class="l">Due today</span></a>
+    <a class="stat info" href="#deadlines"><span class="ico">{{ icon('calendar') }}</span><span class="n">{{ due_soon|length }}</span><span class="l">Next 7 days</span></a>
+    <a class="stat info" href="#announcements"><span class="ico">{{ icon('news') }}</span><span class="n">{{ announcements|length }}</span><span class="l">Announcements</span></a>
   </div>
 
   {% if priority %}
