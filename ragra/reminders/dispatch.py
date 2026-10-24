@@ -126,7 +126,8 @@ def dispatch_due_reminders(
             continue
 
         notification = Notification(
-            text=message, reminder_id=reminder["id"], category=reminder["reminder_type"]
+            text=message, reminder_id=reminder["id"], category=reminder["reminder_type"],
+            link_path=f"/tasks/{reminder['task_id']}",
         )
         delivered, errors = send_to_all_providers(
             providers, notification, on_attempt=_delivery_recorder(conn, user_id, notification)

@@ -75,6 +75,19 @@ class Notification:
     text: str
     reminder_id: int | None = None
     category: str | None = None
+    # A path inside the Ragra web app (e.g. "/tasks/12") that this message is
+    # about. Providers that can carry a link append it to the base URL, so the
+    # reader lands on the item itself rather than the dashboard.
+    link_path: str | None = None
+
+
+def _with_link(body: str, base_url: str | None, link_path: str | None) -> str:
+    """Append the "View in Ragra" line. A link path is only used when it is a
+    plain in-app path; anything else falls back to the dashboard root."""
+    if not base_url:
+        return body
+    path = link_path if link_path and link_path.startswith("/") and "//" not in link_path else ""
+    return f"{body}\n\nView in Ragra: {base_url.rstrip('/')}{path}"
 
 
 class NotificationProvider(Protocol):
@@ -220,9 +233,7 @@ class EmailProvider:
 
     def send(self, notification: Notification) -> NotifyResult:
         subject = f"Ragra: {notification.category}" if notification.category else "Ragra notification"
-        body = notification.text
-        if self.base_url:
-            body = f"{body}\n\nView in Ragra: {self.base_url}"
+        body = _with_link(notification.text, self.base_url, notification.link_path)
 
         message = EmailMessage()
         message["Subject"] = subject
@@ -264,9 +275,7 @@ class BrevoEmailProvider:
         import requests
 
         subject = f"Ragra: {notification.category}" if notification.category else "Ragra notification"
-        body = notification.text
-        if self.base_url:
-            body = f"{body}\n\nView in Ragra: {self.base_url}"
+        body = _with_link(notification.text, self.base_url, notification.link_path)
 
         try:
             response = requests.post(

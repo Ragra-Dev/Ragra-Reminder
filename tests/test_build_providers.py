@@ -313,3 +313,15 @@ def test_brevo_provider_posts_over_https_and_redacts_its_key(monkeypatch):
     assert seen["headers"]["api-key"] == "key-123"
     assert result.ok is False
     assert "key-123" not in (result.error or "")
+
+
+def test_a_reminder_email_links_to_the_task_itself():
+    from ragra.adapters.notify import _with_link
+
+    assert _with_link("Due soon", "https://x.example/", "/tasks/12").endswith(
+        "View in Ragra: https://x.example/tasks/12"
+    )
+    # Anything that is not a plain in-app path falls back to the dashboard.
+    assert _with_link("Due soon", "https://x.example", "//evil.example").endswith("https://x.example")
+    assert _with_link("Due soon", "https://x.example", "https://evil.example").endswith("https://x.example")
+    assert _with_link("Due soon", None, "/tasks/12") == "Due soon"
