@@ -22,6 +22,8 @@ dependencies = [
     "cryptography>=42",
     # Form handling in the dashboard needs this at runtime, not only in tests.
     "python-multipart>=0.0.6",
+    # Used directly by the Google reconnect flow and the Brevo email provider.
+    "requests>=2.31",
 ]
 
 [project.optional-dependencies]
