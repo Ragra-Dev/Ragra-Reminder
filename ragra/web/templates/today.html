@@ -89,7 +89,7 @@
       {% else %}<p class="empty">Nothing else due in the next 7 days.</p>{% endfor %}
     <!--/panel--></div>
     <div class="panel" data-for="dl-missed"><!--panel:missed-->
-      {% for t in missed %}{{ card(t, _csrf, 'missed violet', 'missed', 'Was due ' ~ (t.actual_deadline|when), tone='violet') }}
+      {% for t in missed %}{{ card(t, _csrf, 'missed', 'missed', 'Was due ' ~ (t.actual_deadline|when), tone='violet') }}
       {% else %}<p class="empty">Nothing missed.</p>{% endfor %}
       {% if missed_total > missed_preview_limit %}
       <p class="meta"><a href="/missed">See all {{ missed_total }} missed tasks &rarr;</a> (showing the {{ missed_preview_limit }} most recently due)</p>

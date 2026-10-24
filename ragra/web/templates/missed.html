@@ -19,7 +19,7 @@
     {% for t in missed %}
     <div class="task tone-violet">
       <div>
-        <span class="badge missed violet">missed</span>
+        <span class="badge missed">missed</span>
         <span class="crs">{{ t.course_code or t.course_name }}</span>
         <a href="/tasks/{{ t.id }}">{{ t.title }}</a>
         <div class="meta">Deadline was {{ t.actual_deadline|when }} &middot; marked missed {{ t.missed_at|when }}</div>
