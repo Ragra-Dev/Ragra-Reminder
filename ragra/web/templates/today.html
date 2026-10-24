@@ -7,237 +7,202 @@
 </head>
 <body>
 {% include "_nav.html" %}
-  {% set _me = nav_user(request) %}
-  <div class="hero">
-    <h1>Today{% if _me %}, {{ _me.name.split(' ')[0] }}{% endif %}</h1>
-    <p>
-      {% if overdue %}{{ overdue|length }} overdue
-      {% elif due_today %}{{ due_today|length }} due today
-      {% elif due_soon %}{{ due_soon|length }} due in the next 7 days
-      {% else %}You're all caught up{% endif %}
-      {% if classes_today %}&middot; {{ classes_today|length }} class{{ 'es' if classes_today|length != 1 else '' }} scheduled{% endif %}
-    </p>
+{% from "_icons.html" import icon %}
+
+{# One deadline card. Every list on this page uses it, so a task looks the same wherever it appears. #}
+{% macro card(t, csrf, badge_cls=None, badge_txt=None, meta=None, done=False) -%}
+<div class="task">
+  <div>
+    {% if badge_cls %}<span class="badge {{ badge_cls }}">{{ badge_txt }}</span>{% endif %}
+    <span class="crs">{{ t.course_code or t.course_name }}</span>
+    <a href="/tasks/{{ t.id }}">{{ t.title }}</a>
+    {% if meta %}<div class="meta">{{ meta }}{% if t.personal_deadline and not done %} <span class="badge personal">plan</span> {{ t.personal_deadline }}{% endif %}</div>{% endif %}
   </div>
+  {% if not done %}
+  <form class="inline" method="post" action="/tasks/{{ t.id }}/complete">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <button type="submit">Done</button>
+  </form>
+  {% endif %}
+</div>
+{%- endmacro %}
 
-  {% from "_icons.html" import icon %}
-  <div class="stats">
-    <a class="stat {{ 'bad' if overdue else 'good' }}" href="#deadlines"><span class="ico">{{ icon('missed') }}</span><span class="n">{{ overdue|length }}</span><span class="l">Overdue</span></a>
-    <a class="stat {{ 'warn' if due_today else 'good' }}" href="#deadlines"><span class="ico">{{ icon('clock') }}</span><span class="n">{{ due_today|length }}</span><span class="l">Due today</span></a>
-    <a class="stat info" href="#deadlines"><span class="ico">{{ icon('calendar') }}</span><span class="n">{{ due_soon|length }}</span><span class="l">Next 7 days</span></a>
-    <a class="stat info" href="#announcements"><span class="ico">{{ icon('news') }}</span><span class="n">{{ announcements|length }}</span><span class="l">Announcements</span></a>
+{% set _csrf = csrf_token_for(request) %}
+{% set _me = nav_user(request) %}
+
+<div class="hero">
+  <h1>Today{% if _me %}, {{ _me.name.split(' ')[0] }}{% endif %}</h1>
+  <p>
+    {% if overdue %}{{ overdue|length }} overdue
+    {% elif due_today %}{{ due_today|length }} due today
+    {% elif due_soon %}{{ due_soon|length }} due in the next 7 days
+    {% else %}You're all caught up{% endif %}
+    {% if classes_today %}&middot; {{ classes_today|length }} class{{ 'es' if classes_today|length != 1 else '' }} scheduled{% endif %}
+  </p>
+</div>
+
+<div class="stats">
+  <a class="stat {{ 'bad' if overdue else 'good' }}" href="#deadlines"><span class="ico">{{ icon('missed') }}</span><span class="n">{{ overdue|length }}</span><span class="l">Overdue</span></a>
+  <a class="stat {{ 'warn' if due_today else 'good' }}" href="#deadlines"><span class="ico">{{ icon('clock') }}</span><span class="n">{{ due_today|length }}</span><span class="l">Due today</span></a>
+  <a class="stat info" href="#deadlines"><span class="ico">{{ icon('calendar') }}</span><span class="n">{{ due_soon|length }}</span><span class="l">Next 7 days</span></a>
+  <a class="stat info" href="#announcements"><span class="ico">{{ icon('news') }}</span><span class="n">{{ announcements|length }}</span><span class="l">Announcements</span></a>
+</div>
+
+{% if priority %}
+<div class="priority">
+  <strong>What's coming next:</strong> {{ priority.course_code or priority.course_name }} - {{ priority.title }}
+  <div class="meta">Due {{ priority.actual_deadline|when }}</div>
+</div>
+{% endif %}
+
+{# ---- Deadlines: one tabbed group instead of four stacked lists ---- #}
+{% set _first = 'overdue' if overdue else ('today' if due_today else ('soon' if due_soon else ('missed' if missed else 'overdue'))) %}
+<div class="sec-head" id="deadlines"><h2>Deadlines</h2></div>
+<div class="tabset">
+  <input type="radio" name="dl" id="dl-overdue" {% if _first == 'overdue' %}checked{% endif %}>
+  <input type="radio" name="dl" id="dl-today" {% if _first == 'today' %}checked{% endif %}>
+  <input type="radio" name="dl" id="dl-soon" {% if _first == 'soon' %}checked{% endif %}>
+  <input type="radio" name="dl" id="dl-missed" {% if _first == 'missed' %}checked{% endif %}>
+  <div class="seg">
+    <label for="dl-overdue">Overdue <b class="cnt">{{ overdue|length }}</b></label>
+    <label for="dl-today">Due today <b class="cnt">{{ due_today|length }}</b></label>
+    <label for="dl-soon">Next 7 days <b class="cnt">{{ due_soon|length }}</b></label>
+    <label for="dl-missed">Missed <b class="cnt">{{ missed_total or 0 }}</b></label>
   </div>
-
-  {% if priority %}
-  <div class="priority">
-    <strong>What's coming next:</strong> {{ priority.course_code or priority.course_name }} - {{ priority.title }}
-    <div class="meta">Due {{ priority.actual_deadline }}</div>
+  <div class="panels">
+    <div class="panel" data-for="dl-overdue"><!--panel:overdue-->
+      {% for t in overdue %}{{ card(t, _csrf, 'overdue', 'overdue', 'Due ' ~ (t.actual_deadline|when)) }}
+      {% else %}<p class="empty">Nothing overdue.</p>{% endfor %}
+    <!--/panel--></div>
+    <div class="panel" data-for="dl-today"><!--panel:due-today-->
+      {% for t in due_today %}{{ card(t, _csrf, 'due', 'today', 'Due ' ~ (t.actual_deadline|when)) }}
+      {% else %}<p class="empty">Nothing due today.</p>{% endfor %}
+    <!--/panel--></div>
+    <div class="panel" data-for="dl-soon"><!--panel:due-soon-->
+      {% for t in due_soon %}{{ card(t, _csrf, 'actual', 'soon', 'Due ' ~ (t.actual_deadline|when)) }}
+      {% else %}<p class="empty">Nothing else due in the next 7 days.</p>{% endfor %}
+    <!--/panel--></div>
+    <div class="panel" data-for="dl-missed"><!--panel:missed-->
+      {% for t in missed %}{{ card(t, _csrf, 'missed', 'missed', 'Was due ' ~ (t.actual_deadline|when)) }}
+      {% else %}<p class="empty">Nothing missed.</p>{% endfor %}
+      {% if missed_total > missed_preview_limit %}
+      <p class="meta"><a href="/missed">See all {{ missed_total }} missed tasks &rarr;</a> (showing the {{ missed_preview_limit }} most recently due)</p>
+      {% endif %}
+    <!--/panel--></div>
   </div>
-  {% endif %}
+</div>
 
-  <h2 id="schedule">Schedule</h2>
-  {% if classes_today %}
-    {% for c in classes_today %}
-    <div class="task">
-      <div>
-        <strong>{{ c.starts_at_local.strftime('%H:%M') }}-{{ c.ends_at_local.strftime('%H:%M') }}</strong>
-        {{ c.course_name }}
-        {% if c.is_cancelled %}<span class="badge missed">cancelled</span>{% endif %}
-        <div class="meta">
-          {% if c.room %}{{ c.room }}{% endif %}
-          {% if c.section %} · {{ c.section }}{% endif %}
-        </div>
-      </div>
-    </div>
-    {% endfor %}
-  {% else %}
-    <p class="empty">No classes scheduled today.</p>
-  {% endif %}
+{# ---- Classes today (only when there are some) ---- #}
+<span id="schedule"></span>
+{% if classes_today %}
+<div class="sec-head"><h2>Today's classes</h2></div>
+{% for c in classes_today %}
+<div class="task">
+  <div>
+    <strong>{{ c.starts_at_local.strftime('%H:%M') }}-{{ c.ends_at_local.strftime('%H:%M') }}</strong>
+    {{ c.course_name }}
+    {% if c.is_cancelled %}<span class="badge missed">cancelled</span>{% endif %}
+    <div class="meta">{% if c.room %}{{ c.room }}{% endif %}{% if c.section %} · {{ c.section }}{% endif %}</div>
+  </div>
+</div>
+{% endfor %}
+{% endif %}
 
-  <h2 id="announcements">Announcements{% if announcements %} ({{ announcements|length }}){% endif %}</h2>
-  {% if announcements %}
-    {% for a in announcements %}
-    <div class="task">
-      <div>
-        {{ a.course_code or a.course_name }} - <a href="/tasks/{{ a.id }}">{{ a.title }}</a>
-        {% if a.child_task_id %}<span class="badge done">task created</span>{% endif %}
-      </div>
+{# ---- Announcements ---- #}
+<div class="sec-head" id="announcements"><h2>Announcements</h2>
+  {% if announcements %}<a class="see-all" href="/announcements">View all {{ announcements|length }}</a>{% endif %}</div>
+{% if announcements %}
+  {% for a in announcements[:3] %}
+  <div class="task">
+    <div>
+      <span class="crs">{{ a.course_code or a.course_name }}</span>
+      <a href="/tasks/{{ a.id }}">{{ a.title }}</a>
+      {% if a.child_task_id %}<span class="badge done">task created</span>{% endif %}
     </div>
-    {% endfor %}
-    <p class="meta"><a href="/announcements">Triage announcements</a></p>
-  {% else %}
-    <p class="empty">Nothing awaiting triage.</p>
-  {% endif %}
+  </div>
+  {% endfor %}
+{% else %}
+  <p class="empty">Nothing awaiting triage.</p>
+{% endif %}
 
-  <h2 id="tasks">Your tasks{% if personal_tasks %} ({{ personal_tasks|length }}){% endif %}</h2>
-  {% if personal_tasks %}
-    {% for t in personal_tasks %}
-    <div class="task">
-      <div>
-        <a href="/tasks/{{ t.id }}">{{ t.title }}</a>
-        {% if t.actual_deadline %}<span class="badge actual">due {{ t.actual_deadline }}</span>{% endif %}
-        {% if t.personal_deadline %}<span class="badge personal">plan {{ t.personal_deadline }}</span>{% endif %}
-      </div>
-      <form class="inline" method="post" action="/tasks/{{ t.id }}/complete">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token_for(request) }}">
-        <button type="submit">Mark complete</button>
-      </form>
+{# ---- Personal tasks ---- #}
+<div class="sec-head" id="tasks"><h2>Your tasks</h2>
+  <a class="see-all" href="/tasks">{{ 'Manage' if personal_tasks else 'Add one' }}</a></div>
+{% if personal_tasks %}
+  {% for t in personal_tasks %}
+  <div class="task">
+    <div>
+      <a href="/tasks/{{ t.id }}">{{ t.title }}</a>
+      {% if t.actual_deadline %}<span class="badge actual">due {{ t.actual_deadline|when }}</span>{% endif %}
+      {% if t.personal_deadline %}<span class="badge personal">plan {{ t.personal_deadline }}</span>{% endif %}
     </div>
-    {% endfor %}
-    <p class="meta"><a href="/tasks">Manage tasks</a></p>
-  {% else %}
-    <p class="empty">No personal tasks. <a href="/tasks">Add one</a>.</p>
-  {% endif %}
+    <form class="inline" method="post" action="/tasks/{{ t.id }}/complete">
+      <input type="hidden" name="csrf_token" value="{{ _csrf }}">
+      <button type="submit">Done</button>
+    </form>
+  </div>
+  {% endfor %}
+{% else %}
+  <p class="empty">No personal tasks. <a href="/tasks">Add one</a>.</p>
+{% endif %}
 
-  <h2 id="deadlines">Overdue</h2>
-  {% if overdue %}
-    {% for t in overdue %}
-    <div class="task">
-      <div>
-        <span class="badge overdue">overdue</span>
-        {{ t.course_code or t.course_name }} - <a href="/tasks/{{ t.id }}">{{ t.title }}</a>
-        <div class="meta">Academic deadline: {{ t.actual_deadline }}</div>
-      </div>
-      <form class="inline" method="post" action="/tasks/{{ t.id }}/complete">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token_for(request) }}">
-        <button type="submit">Mark complete</button>
-      </form>
-    </div>
-    {% endfor %}
-  {% else %}
-    <p class="empty">Nothing overdue.</p>
-  {% endif %}
+{# ---- Secondary material, folded away so the page stays calm ---- #}
+<div class="sec-head"><h2>More</h2></div>
 
-  <h2>Missed{% if missed_total %} ({{ missed_total }}){% endif %}</h2>
-  {% if missed %}
-    {% for t in missed %}
-    <div class="task">
-      <div>
-        <span class="badge missed">missed</span>
-        {{ t.course_code or t.course_name }} - <a href="/tasks/{{ t.id }}">{{ t.title }}</a>
-        <div class="meta">Deadline was {{ t.actual_deadline }} - marked missed {{ t.missed_at }}</div>
-      </div>
-      <form class="inline" method="post" action="/tasks/{{ t.id }}/complete">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token_for(request) }}">
-        <button type="submit">Mark complete</button>
-      </form>
+<details class="fold">
+  <summary><span>Plan ahead</span><b class="cnt">{{ (needs_planning|length) + (needs_personal_target|length) }}</b></summary>
+  <!--panel:plan-->
+  <h3>Needs a personal completion target</h3>
+  {% for t in needs_planning %}
+  <div class="task">
+    <div>
+      <span class="crs">{{ t.course_code or t.course_name }}</span> <a href="/tasks/{{ t.id }}">{{ t.title }}</a>
+      <div class="meta">No academic deadline. When do you want this done?</div>
     </div>
-    {% endfor %}
-    {% if missed_total > missed_preview_limit %}
-    <p class="meta"><a href="/missed">See all {{ missed_total }} missed tasks &rarr;</a> (showing the {{ missed_preview_limit }} most recently due)</p>
-    {% endif %}
-  {% else %}
-    <p class="empty">Nothing missed.</p>
-  {% endif %}
+    <form class="inline" method="post" action="/tasks/{{ t.id }}/personal-deadline">
+      <input type="hidden" name="csrf_token" value="{{ _csrf }}">
+      <input type="date" name="personal_deadline" required>
+      <button type="submit">Set</button>
+    </form>
+  </div>
+  {% else %}<p class="empty">Nothing waiting on a personal target.</p>{% endfor %}
 
-  <h2>Due today</h2>
-  {% if due_today %}
-    {% for t in due_today %}
-    <div class="task">
-      <div>
-        <span class="badge due">due today</span>
-        {{ t.course_code or t.course_name }} - <a href="/tasks/{{ t.id }}">{{ t.title }}</a>
-        <div class="meta">
-          Academic deadline: {{ t.actual_deadline }}
-          {% if t.personal_deadline %}<span class="badge personal">personal</span> {{ t.personal_deadline }}{% endif %}
-        </div>
-      </div>
-      <form class="inline" method="post" action="/tasks/{{ t.id }}/complete">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token_for(request) }}">
-        <button type="submit">Mark complete</button>
-      </form>
+  <h3>Has an academic deadline - when do you plan to actually do it?</h3>
+  {% for t in needs_personal_target %}
+  <div class="task">
+    <div>
+      <span class="crs">{{ t.course_code or t.course_name }}</span> <a href="/tasks/{{ t.id }}">{{ t.title }}</a>
+      <div class="meta"><span class="badge actual">actual</span> Due {{ t.actual_deadline|when }} - no personal target set yet</div>
     </div>
-    {% endfor %}
-  {% else %}
-    <p class="empty">Nothing due today.</p>
-  {% endif %}
+    <form class="inline" method="post" action="/tasks/{{ t.id }}/personal-deadline">
+      <input type="hidden" name="csrf_token" value="{{ _csrf }}">
+      <input type="date" name="personal_deadline" required>
+      <button type="submit">Set</button>
+    </form>
+  </div>
+  {% else %}<p class="empty">Every deadlined task already has a personal target.</p>{% endfor %}
+  <!--/panel-->
+</details>
 
-  <h2>Due soon (next 7 days)</h2>
-  {% if due_soon %}
-    {% for t in due_soon %}
-    <div class="task">
-      <div>
-        <span class="badge actual">actual</span>
-        {{ t.course_code or t.course_name }} - <a href="/tasks/{{ t.id }}">{{ t.title }}</a>
-        <div class="meta">
-          Academic deadline: {{ t.actual_deadline }}
-          {% if t.personal_deadline %}<span class="badge personal">personal</span> {{ t.personal_deadline }}{% endif %}
-        </div>
-      </div>
-      <form class="inline" method="post" action="/tasks/{{ t.id }}/complete">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token_for(request) }}">
-        <button type="submit">Mark complete</button>
-      </form>
-    </div>
-    {% endfor %}
-  {% else %}
-    <p class="empty">Nothing else due in the next 7 days.</p>
-  {% endif %}
+<details class="fold">
+  <summary><span>Scheduled reminders</span><b class="cnt">{{ scheduled_reminders|length }}</b></summary>
+  <!--panel:reminders-->
+  {% for r in scheduled_reminders %}
+  <div class="reminder-row">
+    [{{ r.reminder_type }}] {{ r.course_code }} - {{ r.task_title }}
+    <div class="meta">Will fire {{ r.scheduled_for|when }}</div>
+  </div>
+  {% else %}<p class="empty">No reminders currently scheduled.</p>{% endfor %}
+  <!--/panel-->
+</details>
 
-  <h2>Needs a personal completion target</h2>
-  {% if needs_planning %}
-    {% for t in needs_planning %}
-    <div class="task">
-      <div>
-        {{ t.course_code or t.course_name }} - <a href="/tasks/{{ t.id }}">{{ t.title }}</a>
-        <div class="meta">No academic deadline. When do you want this done?</div>
-      </div>
-      <form class="inline" method="post" action="/tasks/{{ t.id }}/personal-deadline">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token_for(request) }}">
-        <input type="date" name="personal_deadline" required>
-        <button type="submit">Set</button>
-      </form>
-    </div>
-    {% endfor %}
-  {% else %}
-    <p class="empty">Nothing waiting on a personal target.</p>
-  {% endif %}
-
-  <h2>Has an academic deadline - when do you plan to actually do it?</h2>
-  {% if needs_personal_target %}
-    {% for t in needs_personal_target %}
-    <div class="task">
-      <div>
-        {{ t.course_code or t.course_name }} - <a href="/tasks/{{ t.id }}">{{ t.title }}</a>
-        <div class="meta">
-          <span class="badge actual">actual</span> Due {{ t.actual_deadline }} - no personal target set yet
-        </div>
-      </div>
-      <form class="inline" method="post" action="/tasks/{{ t.id }}/personal-deadline">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token_for(request) }}">
-        <input type="date" name="personal_deadline" required>
-        <button type="submit">Set</button>
-      </form>
-    </div>
-    {% endfor %}
-  {% else %}
-    <p class="empty">Every deadlined task already has a personal target.</p>
-  {% endif %}
-
-  <h2>Scheduled reminders</h2>
-  {% if scheduled_reminders %}
-    {% for r in scheduled_reminders %}
-    <div class="reminder-row">
-      [{{ r.reminder_type }}] {{ r.course_code }} - {{ r.task_title }}
-      <div class="meta">Will fire {{ r.scheduled_for }}</div>
-    </div>
-    {% endfor %}
-  {% else %}
-    <p class="empty">No reminders currently scheduled.</p>
-  {% endif %}
-
-  <h2>Recently completed</h2>
-  {% if recently_completed %}
-    {% for t in recently_completed %}
-    <div class="task">
-      <div>
-        <span class="badge done">done</span>
-        {{ t.course_code or t.course_name }} - <a href="/tasks/{{ t.id }}">{{ t.title }}</a>
-        <div class="meta">Completed {{ t.completed_at }}</div>
-      </div>
-    </div>
-    {% endfor %}
-  {% else %}
-    <p class="empty">Nothing completed yet.</p>
-  {% endif %}
+<details class="fold">
+  <summary><span>Recently completed</span><b class="cnt">{{ recently_completed|length }}</b></summary>
+  <!--panel:completed-->
+  {% for t in recently_completed %}
+  {{ card(t, _csrf, 'done', 'done', 'Completed ' ~ (t.completed_at|when), done=True) }}
+  {% else %}<p class="empty">Nothing completed yet.</p>{% endfor %}
+  <!--/panel-->
+</details>
 </body>
 </html>

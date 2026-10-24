@@ -109,6 +109,47 @@
   .priority { padding: 18px 22px; margin: 1.2rem auto; background: var(--card); border-left: 5px solid var(--accent); }
   .priority strong { color: var(--accent); }
 
+  /* ---- section headings with a "view all" link, like the samples ------- */
+  .sec-head { display: flex; align-items: baseline; justify-content: space-between; margin: 2rem auto .8rem; }
+  .sec-head h2 { margin: 0; }
+  .see-all { font-size: .82rem; font-weight: 650; text-decoration: none; color: var(--accent); }
+  .see-all::after { content: " \203A"; }
+  .crs { color: var(--muted); font-size: .8rem; font-weight: 650; margin-right: .35rem; }
+  h3 { font-size: .8rem; font-weight: 700; color: var(--muted); margin: 1.2rem 0 .6rem; }
+  .cnt { display: inline-grid; place-items: center; min-width: 22px; height: 22px; padding: 0 7px; margin-left: 6px; border-radius: 999px;
+    background: var(--accent-soft); color: var(--accent); font-size: .72rem; font-weight: 750; }
+
+  /* ---- segmented tabs (pure CSS) ---------------------------------------- */
+  .tabset > input { position: absolute; opacity: 0; pointer-events: none; }
+  .seg { display: flex; gap: 6px; padding: 6px; margin-bottom: 14px; border-radius: 999px; background: var(--surface);
+    box-shadow: var(--inset); overflow-x: auto; scrollbar-width: none; }
+  .seg::-webkit-scrollbar { display: none; }
+  .seg label { flex: 1; text-align: center; white-space: nowrap; padding: 9px 14px; border-radius: 999px; cursor: pointer;
+    font-size: .84rem; font-weight: 650; color: var(--muted); transition: all .18s; }
+  .seg label:hover { color: var(--text); }
+  .seg label .cnt { margin-left: 5px; background: var(--surface-2); color: var(--muted); }
+  .panel { display: none; }
+  #dl-overdue:checked ~ .seg label[for=dl-overdue], #dl-today:checked ~ .seg label[for=dl-today],
+  #dl-soon:checked ~ .seg label[for=dl-soon], #dl-missed:checked ~ .seg label[for=dl-missed] {
+    background: var(--card); color: var(--accent); box-shadow: var(--raise-sm); }
+  #dl-overdue:checked ~ .seg label[for=dl-overdue] .cnt, #dl-today:checked ~ .seg label[for=dl-today] .cnt,
+  #dl-soon:checked ~ .seg label[for=dl-soon] .cnt, #dl-missed:checked ~ .seg label[for=dl-missed] .cnt { background: var(--accent-soft); color: var(--accent); }
+  #dl-overdue:checked ~ .panels [data-for=dl-overdue], #dl-today:checked ~ .panels [data-for=dl-today],
+  #dl-soon:checked ~ .panels [data-for=dl-soon], #dl-missed:checked ~ .panels [data-for=dl-missed] { display: block; }
+  #dl-overdue:focus-visible ~ .seg label[for=dl-overdue], #dl-today:focus-visible ~ .seg label[for=dl-today],
+  #dl-soon:focus-visible ~ .seg label[for=dl-soon], #dl-missed:focus-visible ~ .seg label[for=dl-missed] { outline: 2px solid var(--accent); }
+
+  /* ---- collapsible cards ------------------------------------------------ */
+  .fold { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--raise-sm);
+    margin-bottom: 14px; padding: 0 18px; }
+  .fold > summary { list-style: none; cursor: pointer; display: flex; align-items: center; justify-content: space-between;
+    padding: 16px 0; font-weight: 700; }
+  .fold > summary::-webkit-details-marker { display: none; }
+  .fold > summary::after { content: "\203A"; font-size: 1.4rem; color: var(--muted); transition: transform .2s; margin-left: 10px; }
+  .fold[open] > summary::after { transform: rotate(90deg); }
+  .fold > summary span { flex: 1; }
+  .fold[open] { padding-bottom: 14px; }
+
   /* ---- hero (the one deep-navy panel) and stat tiles ------------------ */
   .hero { padding: 28px 26px; margin: .4rem auto 1.4rem; border-radius: 32px; color: #fff; position: relative; overflow: hidden;
     background: var(--navy); box-shadow: 0 22px 44px -20px rgba(29,35,82,.75); }
@@ -169,8 +210,9 @@
   button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   input[type=checkbox] { accent-color: var(--accent); width: 17px; height: 17px; }
   section { padding: 22px; margin: 14px auto; }
-  section label { display: block; font-size: .8rem; font-weight: 650; color: var(--muted); margin-top: .9rem; }
-  section input[type=text], section textarea, section select { width: 100%; margin-top: 6px; }
+  section label, .fold label { display: block; font-size: .8rem; font-weight: 650; color: var(--muted); margin-top: .9rem; }
+  section input[type=text], section textarea, section select,
+  .fold form input[type=text], .fold form textarea, .fold form select { width: 100%; margin-top: 6px; }
   textarea { font-family: ui-monospace, "SF Mono", Consolas, monospace; font-size: .85rem; }
   .checkbox-row { display: flex; align-items: center; gap: .55rem; margin-top: .8rem; }
   .checkbox-row label { margin: 0; color: var(--text); }
@@ -180,6 +222,7 @@
   .status-line { padding: .25rem 0; }
   form.inline { display: inline; }
   form.inline input[type=date] { padding: 6px 10px; }
+  .danger-fold { background: var(--red-soft); border-color: transparent; }
   .danger { background: var(--red-soft); border-color: transparent; box-shadow: none; }
   .danger a { color: var(--red); }
   .danger button, button.btn-danger { background: var(--red); border-color: var(--red); color: #fff; box-shadow: none; }

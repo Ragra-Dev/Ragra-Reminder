@@ -37,6 +37,12 @@ def client(tmp_path: Path):
         yield c
 
 
+def _between(html: str, name: str) -> str:
+    """The text of one dashboard section, found by its stable marker rather
+    than by heading wording, so restyling the page never breaks the tests."""
+    return html.split(f"<!--panel:{name}-->")[1].split("<!--/panel-->")[0]
+
+
 def test_dashboard_loads_and_shows_overdue_task(client):
     resp = client.get("/")
     assert resp.status_code == 200
@@ -50,11 +56,11 @@ def test_complete_task_removes_it_from_overdue(client):
 
     resp = client.get("/")
     # No longer flagged as overdue work needing action...
-    overdue_section = resp.text.split("Due today</h2>")[0]
+    overdue_section = _between(resp.text, "overdue")
     assert "Assignment 2" not in overdue_section
     # ...but it should now surface in "Recently completed" (Phase 4:
     # the dashboard must be able to answer "what have I completed?").
-    completed_section = resp.text.split("<h2>Recently completed</h2>")[1]
+    completed_section = _between(resp.text, "completed")
     assert "Assignment 2" in completed_section
 
     conn = connect(client.db_path)
@@ -115,8 +121,8 @@ def test_due_today_and_due_soon_are_separate_sections(client):
     conn.close()
 
     resp = client.get("/")
-    today_section = resp.text.split("<h2>Due today</h2>")[1].split("<h2>Due soon")[0]
-    soon_section = resp.text.split("<h2>Due soon")[1].split("<h2>Needs a personal")[0]
+    today_section = _between(resp.text, "due-today")
+    soon_section = _between(resp.text, "due-soon")
 
     assert "Due Today Task" in today_section
     assert "Due In Three Days Task" not in today_section
@@ -173,15 +179,15 @@ def test_missed_task_appears_in_missed_section(client):
     conn.close()
 
     resp = client.get("/")
-    missed_section = resp.text.split("<h2>Missed")[1].split("Due today</h2>")[0]
+    missed_section = _between(resp.text, "missed")
     assert "Assignment 2" in missed_section
     assert "missed" in missed_section.lower()
 
 
 def test_overdue_task_stays_in_overdue_section_and_not_in_missed(client):
     resp = client.get("/")
-    overdue_section = resp.text.split("Overdue</h2>")[1].split("<h2>Missed")[0]
-    missed_section = resp.text.split("<h2>Missed")[1].split("Due today</h2>")[0]
+    overdue_section = _between(resp.text, "overdue")
+    missed_section = _between(resp.text, "missed")
     assert "Assignment 2" in overdue_section
     assert "Assignment 2" not in missed_section
 
@@ -195,8 +201,8 @@ def test_completed_task_does_not_appear_in_overdue_or_missed(client):
     conn.close()
 
     resp = client.get("/")
-    overdue_section = resp.text.split("Overdue</h2>")[1].split("<h2>Missed")[0]
-    missed_section = resp.text.split("<h2>Missed")[1].split("Due today</h2>")[0]
+    overdue_section = _between(resp.text, "overdue")
+    missed_section = _between(resp.text, "missed")
     assert "Completed Long Ago" not in overdue_section
     assert "Completed Long Ago" not in missed_section
 
@@ -210,8 +216,8 @@ def test_cancelled_task_does_not_appear_in_overdue_or_missed(client):
     conn.close()
 
     resp = client.get("/")
-    overdue_section = resp.text.split("Overdue</h2>")[1].split("<h2>Missed")[0]
-    missed_section = resp.text.split("<h2>Missed")[1].split("Due today</h2>")[0]
+    overdue_section = _between(resp.text, "overdue")
+    missed_section = _between(resp.text, "missed")
     assert "Cancelled Assignment" not in overdue_section
     assert "Cancelled Assignment" not in missed_section
 

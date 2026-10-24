@@ -111,7 +111,7 @@ def test_dashboard_has_all_five_restructured_sections(client):
 
     for anchor in ('id="schedule"', 'id="announcements"', 'id="tasks"', 'id="deadlines"'):
         assert anchor in body
-    assert "<h2>Missed" in body
+    assert "<!--panel:missed-->" in body  # Missed is a tab of the Deadlines group
 
 
 def test_dashboard_navigation_links_every_section(client):

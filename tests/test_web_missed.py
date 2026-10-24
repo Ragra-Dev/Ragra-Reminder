@@ -47,7 +47,7 @@ def client(tmp_path: Path):
 
 def test_main_dashboard_shows_only_the_preview_limit_of_missed_tasks(client):
     resp = client.get("/")
-    missed_section = resp.text.split("<h2>Missed")[1].split("<h2>Due today</h2>")[0]
+    missed_section = resp.text.split("<!--panel:missed-->")[1].split("<!--/panel-->")[0]
 
     # Most-recently-due ones (1, 5, 10, 30, 60 days ago) should be shown...
     assert "Task due 1d ago" in missed_section

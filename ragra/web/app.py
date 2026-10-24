@@ -207,6 +207,23 @@ def create_app(
 
     templates.env.globals["nav_user"] = _nav_user
 
+    def _friendly_when(value) -> str:
+        """An ISO instant as a short campus-time label ("Fri 23 Oct, 9:25 pm").
+        Display only: anything that does not parse is shown unchanged rather
+        than hidden, so a bad value is visible instead of silently blank."""
+        if not value:
+            return ""
+        try:
+            from ragra.tz import parse_instant, to_local
+
+            local = to_local(parse_instant(str(value)))
+        except Exception:  # noqa: BLE001 - never break a page over a label
+            return str(value)
+        hour = local.strftime("%I").lstrip("0") or "12"
+        return f"{local.strftime('%a')} {local.day} {local.strftime('%b')}, {hour}:{local.strftime('%M %p').lower()}"
+
+    templates.env.filters["when"] = _friendly_when
+
     @app.middleware("http")
     async def _enforce_csrf(request: Request, call_next):
         """Applied to every unsafe request rather than route by route.

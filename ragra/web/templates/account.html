@@ -8,10 +8,9 @@
 <body>
 {% include "_nav.html" %}
 <h1>Account</h1>
-<p class="hint">{{ display_name or "Signed in" }}</p>
 
 <div class="profile-card">
-  {% if account_picture %}<img class="avatar lg" src="{{ account_picture }}" alt="" referrerpolicy="no-referrer" width="76" height="76">
+  {% if account_picture %}<img class="avatar lg" src="{{ account_picture }}" alt="" referrerpolicy="no-referrer" width="84" height="84">
   {% else %}<span class="avatar lg">{{ (display_name or account_email or "?")[:1]|upper }}</span>{% endif %}
   <div class="info">
     <div class="name">{{ display_name or "Your account" }}</div>
@@ -19,57 +18,8 @@
     <span class="chip">Signed in with Google</span>
   </div>
 </div>
-<p class="meta"><a href="/deliveries">Delivery history &rarr;</a></p>
 
-<h2>Academic profile</h2>
-<section>
-  <form method="post" action="/account/profile">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token_for(request) }}">
-    <label>Program <input type="text" name="program" value="{{ profile.program }}" required></label>
-    <label>Batch year <input type="text" name="batch_year" value="{{ profile.batch_year or '' }}"></label>
-    <label>Enrollment start year
-      <input type="text" name="enrollment_start_year" value="{{ profile.enrollment_start_year }}">
-    </label>
-    <p class="hint">Used only to compute the descriptive "expected semester" shown elsewhere - it never
-      filters which courses are relevant.</p>
-    <label>Enrollment start term
-      <select name="enrollment_start_term">
-        <option value="FALL" {% if profile.enrollment_start_term == "FALL" %}selected{% endif %}>FALL</option>
-        <option value="SPRING" {% if profile.enrollment_start_term == "SPRING" %}selected{% endif %}>SPRING</option>
-      </select>
-    </label>
-    <label>Enrolled courses, one per line
-      <textarea name="enrollment" rows="6" placeholder="Digital Logic Design | CS-G | REGULAR | 2025 | DLD,Digital Logic">{{ enrollment_text }}</textarea>
-    </label>
-    <p class="hint">Format: <code>Course Name | Section | REGULAR or REPEAT | batch year (optional) | aliases, comma, separated (optional)</code>.
-      This is what used to be the hand-edited MY_ENROLLMENT table - it's now yours alone, and nobody else's
-      account is affected by it.</p>
-    <button type="submit">Save profile</button>
-  </form>
-</section>
-
-<h2>Notifications</h2>
-<section>
-  <form method="post" action="/account/notifications">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token_for(request) }}">
-    <div class="checkbox-row">
-      <input type="checkbox" id="email_enabled" name="email_enabled" value="1" {% if preferences.email_enabled %}checked{% endif %}>
-      <label for="email_enabled">Email reminders</label>
-    </div>
-    <label>Email address <input type="text" name="email_to" value="{{ preferences.email_to or '' }}" placeholder="you@example.com"></label>
-    <div class="checkbox-row">
-      <input type="checkbox" id="hermes_enabled" name="hermes_enabled" value="1" {% if preferences.hermes_enabled %}checked{% endif %}>
-      <label for="hermes_enabled">Hermes delivery (e.g. WhatsApp)</label>
-    </div>
-    <label>Hermes target <input type="text" name="hermes_target" value="{{ preferences.hermes_target or '' }}" placeholder="whatsapp:+92..."></label>
-    <p class="hint">A channel only delivers when it's both checked here AND the deployment has the
-      matching infrastructure configured (an SMTP relay, or HERMES_BIN). Leaving an address here while
-      unchecked keeps it saved without sending anything.</p>
-    <button type="submit">Save notification settings</button>
-  </form>
-</section>
-
-<h2>Connected Google services</h2>
+<div class="sec-head"><h2>Connected services</h2><a class="see-all" href="/deliveries">Delivery history</a></div>
 <section>
   {% for service, status in google_status.items() %}
   <div class="service-row">
@@ -87,17 +37,60 @@
     </form>
   </div>
   {% endfor %}
-  <p class="hint">Reconnecting opens Google's real consent screen in this browser tab - the same one
-    <code>ragra classroom-auth</code>/<code>calendar-auth</code> open at a terminal, which remain
-    available too. Nothing is granted without your approval on that screen.</p>
+  <p class="hint">Opens Google's own permission screen. Tick every box there, and nothing is granted without your approval.</p>
 </section>
 
-<h2 class="danger-heading">Danger zone</h2>
-<section class="danger">
-  <p>Permanently delete this account and everything it owns - tasks, reminders, calendar links,
-    stored Google authorization, notification settings, sign-in sessions.</p>
-  <a href="/account/delete"><button type="button">Delete my account&hellip;</button></a>
+<div class="sec-head"><h2>Notifications</h2></div>
+<section>
+  <form method="post" action="/account/notifications">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token_for(request) }}">
+    <div class="checkbox-row">
+      <input type="checkbox" id="email_enabled" name="email_enabled" value="1" {% if preferences.email_enabled %}checked{% endif %}>
+      <label for="email_enabled">Email reminders</label>
+    </div>
+    <label>Email address <input type="text" name="email_to" value="{{ preferences.email_to or '' }}" placeholder="you@example.com"></label>
+    <div class="checkbox-row">
+      <input type="checkbox" id="hermes_enabled" name="hermes_enabled" value="1" {% if preferences.hermes_enabled %}checked{% endif %}>
+      <label for="hermes_enabled">Hermes delivery (e.g. WhatsApp)</label>
+    </div>
+    <label>Hermes target <input type="text" name="hermes_target" value="{{ preferences.hermes_target or '' }}" placeholder="whatsapp:+92..."></label>
+    <p class="hint">A channel only sends when it is ticked here and the server has it set up.</p>
+    <button type="submit">Save notification settings</button>
+  </form>
 </section>
+
+<div class="sec-head"><h2>More</h2></div>
+
+<details class="fold">
+  <summary><span>Academic profile</span></summary>
+  <form method="post" action="/account/profile">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token_for(request) }}">
+    <label>Program <input type="text" name="program" value="{{ profile.program }}" required></label>
+    <label>Batch year <input type="text" name="batch_year" value="{{ profile.batch_year or '' }}"></label>
+    <label>Enrollment start year
+      <input type="text" name="enrollment_start_year" value="{{ profile.enrollment_start_year }}">
+    </label>
+    <label>Enrollment start term
+      <select name="enrollment_start_term">
+        <option value="FALL" {% if profile.enrollment_start_term == "FALL" %}selected{% endif %}>FALL</option>
+        <option value="SPRING" {% if profile.enrollment_start_term == "SPRING" %}selected{% endif %}>SPRING</option>
+      </select>
+    </label>
+    <label>Enrolled courses, one per line
+      <textarea name="enrollment" rows="6" placeholder="Digital Logic Design | CS-G | REGULAR | 2025 | DLD,Digital Logic">{{ enrollment_text }}</textarea>
+    </label>
+    <p class="hint">Format: <code>Course Name | Section | REGULAR or REPEAT | batch year (optional) | aliases (optional)</code>.
+      Used only for section matching and the descriptive "expected semester". It never hides a course.</p>
+    <button class="btn-primary" type="submit">Save profile</button>
+  </form>
+</details>
+
+<details class="fold danger-fold">
+  <summary><span class="danger-heading">Delete account</span></summary>
+  <p>Permanently delete this account and everything it owns: tasks, reminders, calendar links,
+    stored Google authorization, notification settings and sign-in sessions.</p>
+  <p><a href="/account/delete"><button type="button" class="btn-danger">Delete my account&hellip;</button></a></p>
+</details>
 
 </body>
 </html>
