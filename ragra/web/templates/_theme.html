@@ -20,6 +20,16 @@
     --grad: linear-gradient(135deg, #3560E8 0%, #10B981 140%);
     --primary-clay: linear-gradient(145deg, #6C8CFF 0%, #3560E8 55%, #2447C4 100%);
     --secondary-clay: linear-gradient(145deg, #34D399 0%, #10B981 50%, #047857 100%);
+    --sun: #F5B301; --sun-soft: #FFD95A; --sun-light: #FFF3C4; --sun-deep: #8A5A00;
+    --violet: #7C5CFF; --violet-light: #ECE8FF; --violet-deep: #5B3FD6;
+    /* tinted clay: one family per kind of content, so a box says what it is before it is read */
+    --clay-blue: linear-gradient(145deg, #ffffff 0%, #e2ebff 100%);
+    --clay-yellow: linear-gradient(145deg, #fffdf1 0%, #ffefb0 100%);
+    --clay-green: linear-gradient(145deg, #fafffd 0%, #d3f4e5 100%);
+    --clay-rose: linear-gradient(145deg, #fffafa 0%, #ffdadd 100%);
+    --clay-amber: linear-gradient(145deg, #fffcf6 0%, #ffe1bd 100%);
+    --clay-violet: linear-gradient(145deg, #fdfcff 0%, #e4deff 100%);
+    --clay-sky: linear-gradient(145deg, #fbfeff 0%, #d4eefa 100%);
     --accent: var(--primary-deep); --accent-soft: var(--primary-light); --accent-ink: #fff;
     --red: #D62F3A; --red-soft: #FFE4E6; --amber: #9A5B00; --amber-soft: #FFF1CF;
     --green: var(--secondary-deep); --green-soft: var(--secondary-light); --blue: var(--primary-deep); --blue-soft: var(--primary-light);
@@ -44,7 +54,8 @@
     --ambient:
       radial-gradient(640px 420px at 8% -6%, rgba(59,100,240,.18), transparent 70%),
       radial-gradient(720px 480px at 100% 4%, rgba(16,185,129,.14), transparent 70%),
-      radial-gradient(520px 420px at 50% 108%, rgba(108,140,255,.14), transparent 70%);
+      radial-gradient(520px 420px at 50% 108%, rgba(108,140,255,.14), transparent 70%),
+      radial-gradient(460px 320px at 100% 100%, rgba(245,179,1,.12), transparent 70%);
   }
   @media (prefers-color-scheme: dark) {
     :root {
@@ -56,6 +67,14 @@
       /* text-weight blues and greens need to be light on a dark surface */
       --primary-deep: #9db6ff; --primary-light: rgba(108,140,255,.20);
       --secondary-deep: #6ee7b7; --secondary-light: rgba(16,185,129,.20);
+      --sun-deep: #ffd95a; --sun-light: rgba(245,179,1,.20); --violet-deep: #b9a8ff; --violet-light: rgba(124,92,255,.22);
+      --clay-blue: linear-gradient(145deg, #1a2a58 0%, #131f45 100%);
+      --clay-yellow: linear-gradient(145deg, #352c14 0%, #2a2210 100%);
+      --clay-green: linear-gradient(145deg, #12342b 0%, #0e2a22 100%);
+      --clay-rose: linear-gradient(145deg, #3a1d28 0%, #2d1620 100%);
+      --clay-amber: linear-gradient(145deg, #382613 0%, #2d1e10 100%);
+      --clay-violet: linear-gradient(145deg, #261f52 0%, #1c1740 100%);
+      --clay-sky: linear-gradient(145deg, #12303e 0%, #0e2530 100%);
       --accent: var(--primary-soft); --accent-soft: rgba(108,140,255,.18);
       --red: #ff9aa2; --red-soft: rgba(255,90,105,.18); --amber: #f4c36a; --amber-soft: rgba(244,195,106,.16);
       --green: var(--secondary-soft); --green-soft: rgba(16,185,129,.18); --blue: #9db6ff; --blue-soft: rgba(108,140,255,.18);
@@ -249,6 +268,8 @@
   pre { white-space: pre-wrap; font: .85rem ui-monospace, "SF Mono", Consolas, monospace; background: var(--surface-2); box-shadow: var(--clay-press); border-radius: var(--r-sm); padding: var(--s4); }
   a.back { display: flex; align-items: center; gap: 6px; width: fit-content; margin-left: max(0px, calc((100% - 840px) / 2)); color: var(--muted); font-size: .86rem; font-weight: 700; text-decoration: none; margin-bottom: var(--s2); }
   a.back:hover { color: var(--primary-deep); }
+  /* beats the centring rule for direct children of body, so the link sits at the left of the column */
+  body > a.back[href] { margin-left: max(0px, calc((100% - 840px) / 2)); margin-right: auto; }
 
   /* ---- tables as clay -------------------------------------------------------- */
   table { width: 100%; border-collapse: separate; border-spacing: 0; background: var(--clay); border-radius: var(--r-md); overflow: hidden; font-size: .88rem; box-shadow: var(--clay-shadow-sm); }
@@ -327,6 +348,63 @@
   .doc h2 { margin: var(--s6) 0 var(--s2); color: var(--primary-deep); }
   .foot { text-align: center; color: var(--muted); font-size: .84rem; margin-top: var(--s5); }
   .foot a { color: var(--muted); }
+
+
+  /* ---- tones: each kind of content gets its own colour ------------------------ */
+  .tone-blue { --bar: #3560E8; --tint: var(--clay-blue); }
+  .tone-yellow { --bar: #F5B301; --tint: var(--clay-yellow); }
+  .tone-green { --bar: #10B981; --tint: var(--clay-green); }
+  .tone-rose { --bar: #E5484D; --tint: var(--clay-rose); }
+  .tone-amber { --bar: #F08A24; --tint: var(--clay-amber); }
+  .tone-violet { --bar: #7C5CFF; --tint: var(--clay-violet); }
+  .tone-sky { --bar: #1BA5D8; --tint: var(--clay-sky); }
+  .task[class*="tone-"], .item[class*="tone-"], .field[class*="tone-"], .fold[class*="tone-"], .stat[class*="tone-"],
+  .feature[class*="tone-"], .profile-card[class*="tone-"], section[class*="tone-"], .reminder-row[class*="tone-"] { background: var(--tint); }
+  .task[class*="tone-"], .item[class*="tone-"], .field[class*="tone-"] { position: relative; overflow: hidden; }
+  .task[class*="tone-"]::before, .item[class*="tone-"]::before, .field[class*="tone-"]::before {
+    content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 6px; background: var(--bar); }
+  .task[class*="tone-"] > :first-child, .item[class*="tone-"] > :first-child { margin-left: var(--s2); }
+  .sec-head[class*="tone-"] h2::before { content: ""; display: inline-block; width: 11px; height: 11px; margin-right: 9px; border-radius: 50%;
+    background: var(--bar); box-shadow: inset 1px 2px 3px rgba(255,255,255,.55), 0 3px 6px -2px var(--bar); vertical-align: 1px; }
+  .stat[class*="tone-"] .ico { color: var(--bar); }
+  .stat[class*="tone-"] .n { color: var(--text); }
+  .btn-sun { background: linear-gradient(145deg, #FFE27A, #F5B301 55%, #D99A00); color: #3d2a00; text-shadow: 0 1px 1px rgba(255,255,255,.4);
+    box-shadow: 0 14px 24px -10px rgba(217,154,0,.7), inset 3px 4px 8px rgba(255,255,255,.55), inset -4px -6px 10px rgba(150,95,0,.3); margin-top: 0; }
+  .btn-sun:hover { filter: brightness(1.04); box-shadow: 0 14px 24px -10px rgba(217,154,0,.7), inset 3px 4px 8px rgba(255,255,255,.55), inset -4px -6px 10px rgba(150,95,0,.3); }
+  .badge.yellow { background: var(--sun-light); color: var(--sun-deep); }
+  .badge.violet { background: var(--violet-light); color: var(--violet-deep); }
+  .fold[class*="tone-"] > summary { color: var(--text); }
+
+  /* tab colours match the colour of what they list */
+  #dl-today:checked ~ .seg label[for=dl-today] { background: linear-gradient(145deg, #FFB866, #F08A24 55%, #D9730F); box-shadow: 0 14px 24px -10px rgba(217,115,15,.65), inset 3px 4px 8px rgba(255,255,255,.45), inset -4px -6px 10px rgba(120,60,0,.3); }
+  #dl-overdue:checked ~ .seg label[for=dl-overdue] { background: linear-gradient(145deg, #FF7B80, #E5484D 55%, #C6333A); box-shadow: 0 14px 24px -10px rgba(198,51,58,.65), inset 3px 4px 8px rgba(255,255,255,.45), inset -4px -6px 10px rgba(120,15,25,.32); }
+  #dl-missed:checked ~ .seg label[for=dl-missed] { background: linear-gradient(145deg, #A18CFF, #7C5CFF 55%, #5B3FD6); box-shadow: 0 14px 24px -10px rgba(91,63,214,.65), inset 3px 4px 8px rgba(255,255,255,.45), inset -4px -6px 10px rgba(40,20,120,.32); }
+
+  /* ---- page backgrounds: each page has its own tint ---------------------------- */
+  body.pg-announcements { --bg: #FFFCEF; --bg-2: #FFF3CC;
+    --ambient: radial-gradient(640px 420px at 6% -6%, rgba(245,179,1,.26), transparent 70%), radial-gradient(720px 480px at 100% 4%, rgba(240,138,36,.14), transparent 70%), radial-gradient(520px 420px at 50% 108%, rgba(245,179,1,.12), transparent 70%); }
+  body.pg-tasks { --bg: #F1FCF6; --bg-2: #DDF5E9;
+    --ambient: radial-gradient(640px 420px at 6% -6%, rgba(16,185,129,.22), transparent 70%), radial-gradient(720px 480px at 100% 4%, rgba(27,165,216,.14), transparent 70%), radial-gradient(520px 420px at 50% 108%, rgba(52,211,153,.14), transparent 70%); }
+  body.pg-missed { --bg: #F7F4FF; --bg-2: #E8E2FF;
+    --ambient: radial-gradient(640px 420px at 6% -6%, rgba(124,92,255,.22), transparent 70%), radial-gradient(720px 480px at 100% 4%, rgba(229,72,77,.10), transparent 70%), radial-gradient(520px 420px at 50% 108%, rgba(161,140,255,.16), transparent 70%); }
+  body.pg-deliveries { --bg: #EFF8FD; --bg-2: #D8EEF9;
+    --ambient: radial-gradient(640px 420px at 6% -6%, rgba(27,165,216,.24), transparent 70%), radial-gradient(720px 480px at 100% 4%, rgba(53,96,232,.14), transparent 70%), radial-gradient(520px 420px at 50% 108%, rgba(94,200,240,.16), transparent 70%); }
+  body.pg-account { --bg: #F3F6FF; --bg-2: #E4EAFB; }
+  body.pg-welcome { --bg: #F7F9FF; --bg-2: #ECF1FF;
+    --ambient: radial-gradient(640px 420px at 6% -6%, rgba(245,179,1,.22), transparent 70%), radial-gradient(720px 480px at 100% 4%, rgba(53,96,232,.20), transparent 70%), radial-gradient(520px 420px at 50% 108%, rgba(16,185,129,.16), transparent 70%); }
+  @media (prefers-color-scheme: dark) {
+    body.pg-announcements { --bg: #15120a; --bg-2: #211a09;
+      --ambient: radial-gradient(640px 420px at 6% -6%, rgba(245,179,1,.22), transparent 70%), radial-gradient(720px 480px at 100% 4%, rgba(240,138,36,.12), transparent 70%); }
+    body.pg-tasks { --bg: #08150f; --bg-2: #0c2017;
+      --ambient: radial-gradient(640px 420px at 6% -6%, rgba(16,185,129,.22), transparent 70%), radial-gradient(720px 480px at 100% 4%, rgba(27,165,216,.12), transparent 70%); }
+    body.pg-missed { --bg: #120f24; --bg-2: #1a1535;
+      --ambient: radial-gradient(640px 420px at 6% -6%, rgba(124,92,255,.28), transparent 70%), radial-gradient(720px 480px at 100% 4%, rgba(229,72,77,.10), transparent 70%); }
+    body.pg-deliveries { --bg: #08141c; --bg-2: #0d2230;
+      --ambient: radial-gradient(640px 420px at 6% -6%, rgba(27,165,216,.24), transparent 70%), radial-gradient(720px 480px at 100% 4%, rgba(53,96,232,.16), transparent 70%); }
+    body.pg-account { --bg: #0a1024; --bg-2: #0e1733; }
+    body.pg-welcome { --bg: #0a1024; --bg-2: #0e1733;
+      --ambient: radial-gradient(640px 420px at 6% -6%, rgba(245,179,1,.18), transparent 70%), radial-gradient(720px 480px at 100% 4%, rgba(53,96,232,.28), transparent 70%), radial-gradient(520px 420px at 50% 108%, rgba(16,185,129,.16), transparent 70%); }
+  }
 
   /* ---- fallbacks and motion ------------------------------------------------- */
   @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {

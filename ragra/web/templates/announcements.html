@@ -5,7 +5,7 @@
 <title>Ragra - Announcements</title>
 {% include "_theme.html" %}
 </head>
-<body>
+<body class="pg-announcements">
 {% include "_nav.html" %}
 
 <div class="page-head">
@@ -15,7 +15,7 @@
 
 {% if announcements %}
   {% for item in announcements %}
-    <article class="item">
+    <article class="item tone-yellow">
       <div>
         <span class="crs">{{ item.course_code or item.course_name }}</span>
         <strong>{{ item.title }}</strong>
@@ -44,7 +44,7 @@
           <input type="hidden" name="csrf_token" value="{{ csrf_token_for(request) }}">
           <input type="text" name="title" placeholder="{{ item.title }}">
           <input type="text" name="actual_deadline" placeholder="due (optional)">
-          <button class="btn-secondary" type="submit">Create task</button>
+          <button class="btn-sun" type="submit">Create task</button>
         </form>
       </details>
       {% endif %}

@@ -6,7 +6,7 @@
 {% include "_theme.html" %}
 <style>.task.stack { flex-direction: column; align-items: stretch; gap: var(--s2); }</style>
 </head>
-<body>
+<body class="pg-tasks">
 {% include "_nav.html" %}
 
 <div class="page-head">
@@ -14,7 +14,7 @@
   <span class="cnt">{{ tasks|length }}</span>
 </div>
 
-<details class="fold new-task" open>
+<details class="fold new-task tone-green" open>
   <summary><span>New personal task</span></summary>
   <form method="post" action="/tasks/new">
     <input type="hidden" name="csrf_token" value="{{ csrf_token_for(request) }}">
@@ -31,7 +31,7 @@
 <div class="sec-head"><h2>Your tasks ({{ tasks|length }})</h2></div>
 {% if tasks %}
   {% for task in tasks %}
-    <article class="task stack">
+    <article class="task stack tone-green">
       <div>
         <a href="/tasks/{{ task.id }}"><strong>{{ task.title }}</strong></a>
         <span class="badge status-{{ task.status }}">{{ task.status }}</span>

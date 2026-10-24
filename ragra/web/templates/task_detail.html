@@ -16,31 +16,31 @@
 
   <div class="sec-head"><h2>Details</h2></div>
   <div class="grid-2">
-    <div class="field">
+    <div class="field tone-amber">
       <div class="label">Academic (actual) deadline</div>
       {% if task.actual_deadline %}<span title="{{ task.actual_deadline }}">{{ task.actual_deadline|when }}</span><div class="meta">{{ task.actual_deadline }}</div>{% else %}No academic deadline set{% endif %}
     </div>
-    <div class="field">
+    <div class="field tone-green">
       <div class="label">Personal completion target</div>
       {{ task.personal_deadline or "Not set" }}
     </div>
 
     {% if task.description %}
-    <div class="field wide">
+    <div class="field wide tone-blue">
       <div class="label">Description / material</div>
       <div class="description">{{ task.description }}</div>
     </div>
     {% endif %}
 
     {% if task.link %}
-    <div class="field wide">
+    <div class="field wide tone-sky">
       <div class="label">Classroom source</div>
       <a class="btn btn-secondary" href="{{ task.link }}" target="_blank" rel="noopener">Open in Classroom</a>
       <div class="meta" style="margin-top:8px; overflow-wrap:anywhere">{{ task.link }}</div>
     </div>
     {% endif %}
 
-    <div class="field wide">
+    <div class="field wide tone-violet">
       <div class="label">Source</div>
       {{ task.source_type }} (course id {{ task.course_id }}, external id {{ task.external_id or "manual" }})
     </div>
@@ -51,7 +51,7 @@
   </div>
 
   <div class="sec-head"><h2>Activity</h2></div>
-  <details class="fold" open>
+  <details class="fold tone-violet" open>
     <summary><span>Reminder state</span><b class="cnt">{{ reminders|length }}</b></summary>
     {% if reminders %}
       {% for r in reminders %}
@@ -70,7 +70,7 @@
     {% endif %}
   </details>
 
-  <details class="fold">
+  <details class="fold tone-sky">
     <summary><span>History</span><b class="cnt">{{ history|length }}</b></summary>
     {% if history %}
       {% for h in history %}

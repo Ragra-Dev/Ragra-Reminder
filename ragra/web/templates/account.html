@@ -5,11 +5,11 @@
 <title>Ragra - Account</title>
 {% include "_theme.html" %}
 </head>
-<body>
+<body class="pg-account">
 {% include "_nav.html" %}
 <h1>Account</h1>
 
-<div class="profile-card">
+<div class="profile-card tone-blue">
   {% if account_picture %}<img class="avatar lg" src="{{ account_picture }}" alt="" referrerpolicy="no-referrer" width="84" height="84">
   {% else %}<span class="avatar lg">{{ (display_name or account_email or "?")[:1]|upper }}</span>{% endif %}
   <div class="info">
@@ -19,8 +19,8 @@
   </div>
 </div>
 
-<div class="sec-head"><h2>Connected services</h2><a class="see-all" href="/deliveries">Delivery history</a></div>
-<section>
+<div class="sec-head tone-sky"><h2>Connected services</h2><a class="see-all" href="/deliveries">Delivery history</a></div>
+<section class="tone-sky">
   {% for service, status in google_status.items() %}
   <div class="service-row">
     <div>
@@ -40,8 +40,8 @@
   <p class="hint">Opens Google's own permission screen. Tick every box there, and nothing is granted without your approval.</p>
 </section>
 
-<div class="sec-head"><h2>Notifications</h2></div>
-<section>
+<div class="sec-head tone-yellow"><h2>Notifications</h2></div>
+<section class="tone-yellow">
   <form method="post" action="/account/notifications">
     <input type="hidden" name="csrf_token" value="{{ csrf_token_for(request) }}">
     <div class="checkbox-row">
@@ -61,7 +61,7 @@
 
 <div class="sec-head"><h2>More</h2></div>
 
-<details class="fold">
+<details class="fold tone-violet">
   <summary><span>Academic profile</span></summary>
   <form method="post" action="/account/profile">
     <input type="hidden" name="csrf_token" value="{{ csrf_token_for(request) }}">

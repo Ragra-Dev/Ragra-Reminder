@@ -10,8 +10,8 @@
 {% from "_icons.html" import icon %}
 
 {# One deadline card. Every list on this page uses it, so a task looks the same wherever it appears. #}
-{% macro card(t, csrf, badge_cls=None, badge_txt=None, meta=None, done=False) -%}
-<div class="task">
+{% macro card(t, csrf, badge_cls=None, badge_txt=None, meta=None, done=False, tone=None) -%}
+<div class="task{% if tone %} tone-{{ tone }}{% endif %}">
   <div>
     {% if badge_cls %}<span class="badge {{ badge_cls }}">{{ badge_txt }}</span>{% endif %}
     <span class="crs">{{ t.course_code or t.course_name }}</span>
@@ -54,16 +54,16 @@
 </div>
 
 <div class="stats">
-  <a class="stat {{ 'bad' if overdue else 'good' }}" href="#deadlines"><span class="ico">{{ icon('missed') }}</span><span class="n">{{ overdue|length }}</span><span class="l">Overdue</span></a>
-  <a class="stat {{ 'warn' if due_today else 'good' }}" href="#deadlines"><span class="ico">{{ icon('clock') }}</span><span class="n">{{ due_today|length }}</span><span class="l">Due today</span></a>
-  <a class="stat info" href="#deadlines"><span class="ico">{{ icon('calendar') }}</span><span class="n">{{ due_soon|length }}</span><span class="l">Next 7 days</span></a>
-  <a class="stat info" href="#announcements"><span class="ico">{{ icon('news') }}</span><span class="n">{{ announcements|length }}</span><span class="l">Announcements</span></a>
+  <a class="stat tone-rose {{ 'bad' if overdue else 'good' }}" href="#deadlines"><span class="ico">{{ icon('missed') }}</span><span class="n">{{ overdue|length }}</span><span class="l">Overdue</span></a>
+  <a class="stat tone-amber {{ 'warn' if due_today else 'good' }}" href="#deadlines"><span class="ico">{{ icon('clock') }}</span><span class="n">{{ due_today|length }}</span><span class="l">Due today</span></a>
+  <a class="stat tone-blue info" href="#deadlines"><span class="ico">{{ icon('calendar') }}</span><span class="n">{{ due_soon|length }}</span><span class="l">Next 7 days</span></a>
+  <a class="stat tone-yellow info" href="#announcements"><span class="ico">{{ icon('news') }}</span><span class="n">{{ announcements|length }}</span><span class="l">Announcements</span></a>
 </div>
 
 
 {# ---- Deadlines: one tabbed group instead of four stacked lists ---- #}
 {% set _first = 'overdue' if overdue else ('today' if due_today else ('soon' if due_soon else ('missed' if missed else 'overdue'))) %}
-<div class="sec-head" id="deadlines"><h2>Deadlines</h2></div>
+<div class="sec-head tone-rose" id="deadlines"><h2>Deadlines</h2></div>
 <div class="tabset">
   <input type="radio" name="dl" id="dl-overdue" {% if _first == 'overdue' %}checked{% endif %}>
   <input type="radio" name="dl" id="dl-today" {% if _first == 'today' %}checked{% endif %}>
@@ -77,19 +77,19 @@
   </div>
   <div class="panels">
     <div class="panel" data-for="dl-overdue"><!--panel:overdue-->
-      {% for t in overdue %}{{ card(t, _csrf, 'overdue', 'overdue', 'Due ' ~ (t.actual_deadline|when)) }}
+      {% for t in overdue %}{{ card(t, _csrf, 'overdue', 'overdue', 'Due ' ~ (t.actual_deadline|when), tone='rose') }}
       {% else %}<p class="empty">Nothing overdue.</p>{% endfor %}
     <!--/panel--></div>
     <div class="panel" data-for="dl-today"><!--panel:due-today-->
-      {% for t in due_today %}{{ card(t, _csrf, 'due', 'today', 'Due ' ~ (t.actual_deadline|when)) }}
+      {% for t in due_today %}{{ card(t, _csrf, 'due', 'today', 'Due ' ~ (t.actual_deadline|when), tone='amber') }}
       {% else %}<p class="empty">Nothing due today.</p>{% endfor %}
     <!--/panel--></div>
     <div class="panel" data-for="dl-soon"><!--panel:due-soon-->
-      {% for t in due_soon %}{{ card(t, _csrf, 'actual', 'soon', 'Due ' ~ (t.actual_deadline|when)) }}
+      {% for t in due_soon %}{{ card(t, _csrf, 'actual', 'soon', 'Due ' ~ (t.actual_deadline|when), tone='blue') }}
       {% else %}<p class="empty">Nothing else due in the next 7 days.</p>{% endfor %}
     <!--/panel--></div>
     <div class="panel" data-for="dl-missed"><!--panel:missed-->
-      {% for t in missed %}{{ card(t, _csrf, 'missed', 'missed', 'Was due ' ~ (t.actual_deadline|when)) }}
+      {% for t in missed %}{{ card(t, _csrf, 'missed violet', 'missed', 'Was due ' ~ (t.actual_deadline|when), tone='violet') }}
       {% else %}<p class="empty">Nothing missed.</p>{% endfor %}
       {% if missed_total > missed_preview_limit %}
       <p class="meta"><a href="/missed">See all {{ missed_total }} missed tasks &rarr;</a> (showing the {{ missed_preview_limit }} most recently due)</p>
@@ -101,9 +101,9 @@
 {# ---- Classes today (only when there are some) ---- #}
 <span id="schedule"></span>
 {% if classes_today %}
-<div class="sec-head"><h2>Today's classes</h2></div>
+<div class="sec-head tone-blue"><h2>Today's classes</h2></div>
 {% for c in classes_today %}
-<div class="task">
+<div class="task tone-blue">
   <div>
     <strong>{{ c.starts_at_local.strftime('%H:%M') }}-{{ c.ends_at_local.strftime('%H:%M') }}</strong>
     {{ c.course_name }}
@@ -115,11 +115,11 @@
 {% endif %}
 
 {# ---- Announcements ---- #}
-<div class="sec-head" id="announcements"><h2>Announcements</h2>
+<div class="sec-head tone-yellow" id="announcements"><h2>Announcements</h2>
   {% if announcements %}<a class="see-all" href="/announcements">View all {{ announcements|length }}</a>{% endif %}</div>
 {% if announcements %}
   {% for a in announcements[:3] %}
-  <div class="task">
+  <div class="task tone-yellow">
     <div>
       <span class="crs">{{ a.course_code or a.course_name }}</span>
       <a href="/tasks/{{ a.id }}">{{ a.title }}</a>
@@ -132,11 +132,11 @@
 {% endif %}
 
 {# ---- Personal tasks ---- #}
-<div class="sec-head" id="tasks"><h2>Your tasks</h2>
+<div class="sec-head tone-green" id="tasks"><h2>Your tasks</h2>
   <a class="see-all" href="/tasks">{{ 'Manage' if personal_tasks else 'Add one' }}</a></div>
 {% if personal_tasks %}
   {% for t in personal_tasks %}
-  <div class="task">
+  <div class="task tone-green">
     <div>
       <a href="/tasks/{{ t.id }}">{{ t.title }}</a>
       {% if t.actual_deadline %}<span class="badge actual">due {{ t.actual_deadline|when }}</span>{% endif %}
@@ -155,7 +155,7 @@
 {# ---- Secondary material, folded away so the page stays calm ---- #}
 <div class="sec-head"><h2>More</h2></div>
 
-<details class="fold">
+<details class="fold tone-blue">
   <summary><span>Plan ahead</span><b class="cnt">{{ (needs_planning|length) + (needs_personal_target|length) }}</b></summary>
   <!--panel:plan-->
   <h3>Needs a personal completion target</h3>
@@ -190,7 +190,7 @@
   <!--/panel-->
 </details>
 
-<details class="fold">
+<details class="fold tone-violet">
   <summary><span>Scheduled reminders</span><b class="cnt">{{ scheduled_reminders|length }}</b></summary>
   <!--panel:reminders-->
   {% for r in scheduled_reminders %}
@@ -202,11 +202,11 @@
   <!--/panel-->
 </details>
 
-<details class="fold">
+<details class="fold tone-green">
   <summary><span>Recently completed</span><b class="cnt">{{ recently_completed|length }}</b></summary>
   <!--panel:completed-->
   {% for t in recently_completed %}
-  {{ card(t, _csrf, 'done', 'done', 'Completed ' ~ (t.completed_at|when), done=True) }}
+  {{ card(t, _csrf, 'done', 'done', 'Completed ' ~ (t.completed_at|when), done=True, tone='green') }}
   {% else %}<p class="empty">Nothing completed yet.</p>{% endfor %}
   <!--/panel-->
 </details>
