@@ -751,3 +751,29 @@ def test_privacy_and_terms_pages_are_public(client):
     assert "Terms of service" in terms.text
     assert welcome.status_code == 200 and "Sign in with Google" in welcome.text
     assert guide.status_code == 200 and "Advanced" in guide.text
+
+
+def test_the_google_picture_and_email_are_shown_on_the_account_page_and_nav(client, provider):
+    provider.identity = auth.GoogleIdentity(
+        subject="google-sub-owner", email="owner@example.com", email_verified=True,
+        display_name="The Owner", picture_url="https://lh3.googleusercontent.com/a/pic=s96",
+    )
+    _complete_sign_in(client, provider)
+
+    page = client.get("/account", headers={"accept": "text/html"})
+    home = client.get("/", headers={"accept": "text/html"})
+
+    assert page.status_code == 200
+    assert "https://lh3.googleusercontent.com/a/pic=s96" in page.text
+    assert "owner@example.com" in page.text
+    assert "The Owner" in page.text
+    # The navigation bar carries the same account on every page.
+    assert 'class="nav-user"' in home.text
+
+
+def test_a_non_https_picture_address_is_never_stored():
+    assert auth._safe_picture_url("javascript:alert(1)") is None
+    assert auth._safe_picture_url("data:image/png;base64,AAAA") is None
+    assert auth._safe_picture_url("http://example.com/a.png") is None
+    assert auth._safe_picture_url("https://lh3.googleusercontent.com/a.png") == "https://lh3.googleusercontent.com/a.png"
+    assert auth._safe_picture_url(None) is None

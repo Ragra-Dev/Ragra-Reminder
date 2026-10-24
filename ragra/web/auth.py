@@ -73,6 +73,13 @@ class GoogleIdentity:
     email: str | None       # informational, plus the one-time owner claim
     email_verified: bool
     display_name: str | None
+    picture_url: str | None = None  # informational: shown on the Account page and nav bar
+
+
+def _safe_picture_url(value: object) -> str | None:
+    """Only an https address is ever kept: the value is rendered into an
+    <img src>, so a scheme like javascript: or data: must not get through."""
+    return value if isinstance(value, str) and value.startswith("https://") and len(value) <= 512 else None
 
 
 @dataclass(frozen=True)
@@ -343,9 +350,12 @@ def resolve_user(
 
             adopt_legacy_profile(conn, user_id=unlinked)
             conn.execute(
-                """UPDATE users SET google_sub = ?, email = ?, display_name = ?, updated_at = ?
+                """UPDATE users SET google_sub = ?, email = ?, display_name = ?, picture_url = ?, updated_at = ?
                    WHERE id = ? AND google_sub IS NULL""",
-                (identity.subject, identity.email, identity.display_name, utc_iso(now), unlinked),
+                (
+                    identity.subject, identity.email, identity.display_name,
+                    identity.picture_url, utc_iso(now), unlinked,
+                ),
             )
             conn.commit()
             return unlinked
@@ -357,9 +367,12 @@ def resolve_user(
             raise SignInRefused("this deployment is full")
 
     cur = conn.execute(
-        """INSERT INTO users (google_sub, email, display_name, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?)""",
-        (identity.subject, identity.email, identity.display_name, utc_iso(now), utc_iso(now)),
+        """INSERT INTO users (google_sub, email, display_name, picture_url, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (
+            identity.subject, identity.email, identity.display_name,
+            identity.picture_url, utc_iso(now), utc_iso(now),
+        ),
     )
     conn.commit()
     return cur.lastrowid
@@ -372,8 +385,8 @@ def _refresh_profile(
     never rewritten here - it is the identity key, and a path that could
     change it would be a path that could move data between accounts."""
     conn.execute(
-        "UPDATE users SET email = ?, display_name = ?, updated_at = ? WHERE id = ?",
-        (identity.email, identity.display_name, utc_iso(now), user_id),
+        "UPDATE users SET email = ?, display_name = ?, picture_url = ?, updated_at = ? WHERE id = ?",
+        (identity.email, identity.display_name, identity.picture_url, utc_iso(now), user_id),
     )
     conn.commit()
 
@@ -460,4 +473,5 @@ class GoogleIdentityProvider:
             email=claims.get("email"),
             email_verified=bool(claims.get("email_verified")),
             display_name=claims.get("name"),
+            picture_url=_safe_picture_url(claims.get("picture")),
         )

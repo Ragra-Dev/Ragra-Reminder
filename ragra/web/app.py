@@ -186,6 +186,27 @@ def create_app(
         csrf.session_token_from(request)
     )
 
+    def _nav_user(request: Request) -> dict | None:
+        """Who to show in the navigation bar. Best effort and display-only:
+        it never gates anything (every route resolves its own acting user),
+        so any failure here simply means the bar shows no account chip."""
+        try:
+            with connect_closing(db_path) as conn:
+                row = repo.get_user(conn, user_id=current_user_id(conn, request, settings=settings))
+        except Exception:  # noqa: BLE001 - cosmetic; the page must render regardless
+            return None
+        if row is None:
+            return None
+        name = (row["display_name"] or row["email"] or "Account").strip()
+        return {
+            "name": name,
+            "email": row["email"],
+            "picture": row["picture_url"],
+            "initial": name[:1].upper() or "?",
+        }
+
+    templates.env.globals["nav_user"] = _nav_user
+
     @app.middleware("http")
     async def _enforce_csrf(request: Request, call_next):
         """Applied to every unsafe request rather than route by route.
@@ -773,6 +794,8 @@ def create_app(
             "account.html",
             {
                 "display_name": user_row["display_name"] if user_row else None,
+                "account_email": user_row["email"] if user_row else None,
+                "account_picture": user_row["picture_url"] if user_row else None,
                 "profile": profile,
                 "enrollment_text": _enrollment_to_text(profile.enrollment),
                 "preferences": preferences,

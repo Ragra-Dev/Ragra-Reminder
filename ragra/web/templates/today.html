@@ -7,7 +7,24 @@
 </head>
 <body>
 {% include "_nav.html" %}
-  <h1>Today</h1>
+  {% set _me = nav_user(request) %}
+  <div class="hero">
+    <h1>Today{% if _me %}, {{ _me.name.split(' ')[0] }}{% endif %}</h1>
+    <p>
+      {% if overdue %}{{ overdue|length }} overdue
+      {% elif due_today %}{{ due_today|length }} due today
+      {% elif due_soon %}{{ due_soon|length }} due in the next 7 days
+      {% else %}You're all caught up{% endif %}
+      {% if classes_today %}&middot; {{ classes_today|length }} class{{ 'es' if classes_today|length != 1 else '' }} scheduled{% endif %}
+    </p>
+  </div>
+
+  <div class="stats">
+    <a class="stat {{ 'bad' if overdue else 'good' }}" href="#deadlines"><span class="n">{{ overdue|length }}</span><span class="l">Overdue</span></a>
+    <a class="stat {{ 'warn' if due_today else 'good' }}" href="#deadlines"><span class="n">{{ due_today|length }}</span><span class="l">Due today</span></a>
+    <a class="stat info" href="#deadlines"><span class="n">{{ due_soon|length }}</span><span class="l">Next 7 days</span></a>
+    <a class="stat info" href="#announcements"><span class="n">{{ announcements|length }}</span><span class="l">Announcements</span></a>
+  </div>
 
   {% if priority %}
   <div class="priority">

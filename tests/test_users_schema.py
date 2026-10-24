@@ -18,7 +18,9 @@ from ragra.db.connection import connect
 def test_users_table_exists_with_expected_columns(conn):
     columns = {row["name"]: row for row in conn.execute("PRAGMA table_info(users)")}
 
-    assert set(columns) == {"id", "google_sub", "email", "display_name", "created_at", "updated_at"}
+    assert set(columns) == {
+        "id", "google_sub", "email", "display_name", "created_at", "updated_at", "picture_url",
+    }
     assert columns["created_at"]["notnull"] == 1
     assert columns["updated_at"]["notnull"] == 1
     # google_sub must stay nullable: the seeded pre-identity owner has no

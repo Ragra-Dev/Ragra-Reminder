@@ -10,6 +10,16 @@
 <h1>Account</h1>
 <p class="hint">{{ display_name or "Signed in" }}</p>
 
+<div class="profile-card">
+  {% if account_picture %}<img class="avatar lg" src="{{ account_picture }}" alt="" referrerpolicy="no-referrer" width="76" height="76">
+  {% else %}<span class="avatar lg">{{ (display_name or account_email or "?")[:1]|upper }}</span>{% endif %}
+  <div class="info">
+    <div class="name">{{ display_name or "Your account" }}</div>
+    {% if account_email %}<div class="email">{{ account_email }}</div>{% endif %}
+    <span class="chip">Signed in with Google</span>
+  </div>
+</div>
+
 <h2>Academic profile</h2>
 <section>
   <form method="post" action="/account/profile">

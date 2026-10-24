@@ -1,4 +1,5 @@
 {% set _p = request.url.path %}
+{% set _u = nav_user(request) %}
 <header class="appbar">
   <div class="appbar-inner">
     <a class="brand" href="/"><span class="logo">R</span><span>Ragra</span></a>
@@ -10,5 +11,12 @@
       <a href="/deliveries" {% if _p.startswith('/deliveries') %}class="on"{% endif %}>Deliveries</a>
       <a href="/account" {% if _p.startswith('/account') %}class="on"{% endif %}>Account</a>
     </nav>
+    {% if _u %}
+    <a class="nav-user" href="/account" title="{{ _u.email or _u.name }}">
+      {% if _u.picture %}<img class="avatar" src="{{ _u.picture }}" alt="" referrerpolicy="no-referrer" width="30" height="30">
+      {% else %}<span class="avatar">{{ _u.initial }}</span>{% endif %}
+      <span class="who"><b>{{ _u.name }}</b>{% if _u.email %}<span>{{ _u.email }}</span>{% endif %}</span>
+    </a>
+    {% endif %}
   </div>
 </header>
