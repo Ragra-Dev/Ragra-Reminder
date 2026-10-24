@@ -8,80 +8,80 @@
 <body>
 {% include "_nav.html" %}
   <a class="back" href="/">&larr; Back to Today</a>
-  <h1>{{ task.title }}</h1>
-  <div class="course">{{ task.course_code or task.course_name }}{% if task.course_code %} - {{ task.course_name }}{% endif %}</div>
-
-  <div class="field">
-    <div class="label">Status</div>
+  <div class="status-hero">
     <span class="badge status-{{ task.status }}">{{ task.status }}</span>
+    <span class="course" style="margin:0">{{ task.course_code or task.course_name }}{% if task.course_code %} - {{ task.course_name }}{% endif %}</span>
+  </div>
+  <h1>{{ task.title }}</h1>
+
+  <div class="sec-head"><h2>Details</h2></div>
+  <div class="grid-2">
+    <div class="field">
+      <div class="label">Academic (actual) deadline</div>
+      {% if task.actual_deadline %}<span title="{{ task.actual_deadline }}">{{ task.actual_deadline|when }}</span><div class="meta">{{ task.actual_deadline }}</div>{% else %}No academic deadline set{% endif %}
+    </div>
+    <div class="field">
+      <div class="label">Personal completion target</div>
+      {{ task.personal_deadline or "Not set" }}
+    </div>
+
+    {% if task.description %}
+    <div class="field wide">
+      <div class="label">Description / material</div>
+      <div class="description">{{ task.description }}</div>
+    </div>
+    {% endif %}
+
+    {% if task.link %}
+    <div class="field wide">
+      <div class="label">Classroom source</div>
+      <a class="btn btn-teal" href="{{ task.link }}" target="_blank" rel="noopener">Open in Classroom</a>
+      <div class="meta" style="margin-top:8px; overflow-wrap:anywhere">{{ task.link }}</div>
+    </div>
+    {% endif %}
+
+    <div class="field wide">
+      <div class="label">Source</div>
+      {{ task.source_type }} (course id {{ task.course_id }}, external id {{ task.external_id or "manual" }})
+    </div>
+
+    {% if task.completed_at %}<div class="field"><div class="label">Completed</div>{{ task.completed_at }}</div>{% endif %}
+    {% if task.missed_at %}<div class="field"><div class="label">Missed</div>{{ task.missed_at }}</div>{% endif %}
+    {% if task.cancelled_at %}<div class="field"><div class="label">Cancelled</div>{{ task.cancelled_at }}</div>{% endif %}
   </div>
 
-  <div class="field">
-    <div class="label">Academic (actual) deadline</div>
-    {{ task.actual_deadline or "No academic deadline set" }}
-  </div>
-
-  <div class="field">
-    <div class="label">Personal completion target</div>
-    {{ task.personal_deadline or "Not set" }}
-  </div>
-
-  {% if task.description %}
-  <div class="field">
-    <div class="label">Description / material</div>
-    <div class="description">{{ task.description }}</div>
-  </div>
-  {% endif %}
-
-  {% if task.link %}
-  <div class="field">
-    <div class="label">Classroom source</div>
-    <a href="{{ task.link }}" target="_blank" rel="noopener">{{ task.link }}</a>
-  </div>
-  {% endif %}
-
-  <div class="field">
-    <div class="label">Source</div>
-    {{ task.source_type }} (course id {{ task.course_id }}, external id {{ task.external_id or "manual" }})
-  </div>
-
-  {% if task.completed_at %}
-  <div class="field"><div class="label">Completed</div>{{ task.completed_at }}</div>
-  {% endif %}
-  {% if task.missed_at %}
-  <div class="field"><div class="label">Missed</div>{{ task.missed_at }}</div>
-  {% endif %}
-  {% if task.cancelled_at %}
-  <div class="field"><div class="label">Cancelled</div>{{ task.cancelled_at }}</div>
-  {% endif %}
-
-  <h2>Reminder state</h2>
-  {% if reminders %}
-    {% for r in reminders %}
-    <div class="reminder-row">
-      [{{ r.reminder_type }}] {{ r.status }} - scheduled for {{ r.scheduled_for }}
-      <div class="meta">
-        attempts: {{ r.attempt_count }}
-        {% if r.sent_at %} - sent {{ r.sent_at }}{% endif %}
-        {% if r.next_retry_at %} - next retry {{ r.next_retry_at }}{% endif %}
-        {% if r.last_error %} - last error: {{ r.last_error }}{% endif %}
+  <div class="sec-head"><h2>Activity</h2></div>
+  <details class="fold" open>
+    <summary><span>Reminder state</span><b class="cnt">{{ reminders|length }}</b></summary>
+    {% if reminders %}
+      {% for r in reminders %}
+      <div class="reminder-row">
+        [{{ r.reminder_type }}] {{ r.status }} - scheduled for {{ r.scheduled_for }}
+        <div class="meta">
+          attempts: {{ r.attempt_count }}
+          {% if r.sent_at %} - sent {{ r.sent_at }}{% endif %}
+          {% if r.next_retry_at %} - next retry {{ r.next_retry_at }}{% endif %}
+          {% if r.last_error %} - last error: {{ r.last_error }}{% endif %}
+        </div>
       </div>
-    </div>
-    {% endfor %}
-  {% else %}
-    <p class="empty">No reminders recorded for this task.</p>
-  {% endif %}
+      {% endfor %}
+    {% else %}
+      <p class="empty">No reminders recorded for this task.</p>
+    {% endif %}
+  </details>
 
-  <h2>History</h2>
-  {% if history %}
-    {% for h in history %}
-    <div class="history-row">
-      {{ h.field }}: {{ h.old_value or "(none)" }} &rarr; {{ h.new_value or "(none)" }}
-      <div class="meta">{{ h.changed_at }}</div>
-    </div>
-    {% endfor %}
-  {% else %}
-    <p class="empty">No history recorded.</p>
-  {% endif %}
+  <details class="fold">
+    <summary><span>History</span><b class="cnt">{{ history|length }}</b></summary>
+    {% if history %}
+      {% for h in history %}
+      <div class="history-row">
+        {{ h.field }}: {{ h.old_value or "(none)" }} &rarr; {{ h.new_value or "(none)" }}
+        <div class="meta">{{ h.changed_at }}</div>
+      </div>
+      {% endfor %}
+    {% else %}
+      <p class="empty">No history recorded.</p>
+    {% endif %}
+  </details>
 </body>
 </html>

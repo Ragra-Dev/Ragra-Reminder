@@ -213,6 +213,8 @@ def create_app(
         than hidden, so a bad value is visible instead of silently blank."""
         if not value:
             return ""
+        if "T" not in str(value):
+            return str(value)  # a plain date has no time to convert
         try:
             from ragra.tz import parse_instant, to_local
 

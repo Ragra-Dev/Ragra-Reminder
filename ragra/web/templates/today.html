@@ -31,14 +31,26 @@
 {% set _me = nav_user(request) %}
 
 <div class="hero">
-  <h1>Today{% if _me %}, {{ _me.name.split(' ')[0] }}{% endif %}</h1>
-  <p>
-    {% if overdue %}{{ overdue|length }} overdue
-    {% elif due_today %}{{ due_today|length }} due today
-    {% elif due_soon %}{{ due_soon|length }} due in the next 7 days
-    {% else %}You're all caught up{% endif %}
-    {% if classes_today %}&middot; {{ classes_today|length }} class{{ 'es' if classes_today|length != 1 else '' }} scheduled{% endif %}
-  </p>
+  <span class="orb o1"></span><span class="orb o2"></span><span class="orb o3"></span>
+  <div class="hero-grid">
+    <div>
+      <h1>Today{% if _me %}, {{ _me.name.split(' ')[0] }}{% endif %}</h1>
+      <p>
+        {% if overdue %}{{ overdue|length }} overdue
+        {% elif due_today %}{{ due_today|length }} due today
+        {% elif due_soon %}{{ due_soon|length }} due in the next 7 days
+        {% else %}You're all caught up{% endif %}
+        {% if classes_today %}&middot; {{ classes_today|length }} class{{ 'es' if classes_today|length != 1 else '' }} scheduled{% endif %}
+      </p>
+    </div>
+    {% if priority %}
+    <div class="glass">
+      <b>What's coming next</b>
+      {{ priority.course_code or priority.course_name }} - {{ priority.title }}
+      <div class="meta">Due {{ priority.actual_deadline|when }}</div>
+    </div>
+    {% endif %}
+  </div>
 </div>
 
 <div class="stats">
@@ -48,12 +60,6 @@
   <a class="stat info" href="#announcements"><span class="ico">{{ icon('news') }}</span><span class="n">{{ announcements|length }}</span><span class="l">Announcements</span></a>
 </div>
 
-{% if priority %}
-<div class="priority">
-  <strong>What's coming next:</strong> {{ priority.course_code or priority.course_name }} - {{ priority.title }}
-  <div class="meta">Due {{ priority.actual_deadline|when }}</div>
-</div>
-{% endif %}
 
 {# ---- Deadlines: one tabbed group instead of four stacked lists ---- #}
 {% set _first = 'overdue' if overdue else ('today' if due_today else ('soon' if due_soon else ('missed' if missed else 'overdue'))) %}

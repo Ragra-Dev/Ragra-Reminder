@@ -7,32 +7,48 @@
 </head>
 <body>
 {% include "_nav.html" %}
-<h1>Announcements</h1>
+
+<div class="page-head">
+  <div><h1>Announcements</h1><p class="sub">Messages from your classes, waiting to be triaged.</p></div>
+  {% if announcements %}<span class="cnt">{{ announcements|length }}</span>{% endif %}
+</div>
 
 {% if announcements %}
   {% for item in announcements %}
-    <div class="item">
+    <article class="item">
       <div>
+        <span class="crs">{{ item.course_code or item.course_name }}</span>
         <strong>{{ item.title }}</strong>
         {% if item.child_task_id %}<span class="badge handled">task created</span>{% endif %}
       </div>
-      <div class="meta">{{ item.course_code or item.course_name }} · {{ item.source_published_at or item.created_at }}</div>
-      {% if item.description %}<div class="body">{{ item.description }}</div>{% endif %}
-      {% if item.link %}<div class="meta"><a href="{{ item.link }}">Open in Classroom</a></div>{% endif %}
+      <div class="meta">{{ (item.source_published_at or item.created_at)|when }}</div>
+      {% if item.description %}
+      <details class="mini" open>
+        <summary>Message</summary>
+        <div class="body">{{ item.description }}</div>
+      </details>
+      {% endif %}
+
+      <div class="actions">
+        {% if item.link %}<a class="btn btn-teal" href="{{ item.link }}">Open in Classroom</a>{% endif %}
+        <form class="inline" method="post" action="/announcements/{{ item.id }}/archive">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token_for(request) }}">
+          <button class="btn-ghost" type="submit">Archive</button>
+        </form>
+      </div>
 
       {% if not item.child_task_id %}
-      <form class="inline" method="post" action="/announcements/{{ item.id }}/create-task">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token_for(request) }}">
-        <input type="text" name="title" placeholder="{{ item.title }}">
-        <input type="text" name="actual_deadline" placeholder="due (optional)">
-        <button type="submit">Create task</button>
-      </form>
+      <details class="mini">
+        <summary>Create a task from this</summary>
+        <form method="post" action="/announcements/{{ item.id }}/create-task">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token_for(request) }}">
+          <input type="text" name="title" placeholder="{{ item.title }}">
+          <input type="text" name="actual_deadline" placeholder="due (optional)">
+          <button class="btn-teal" type="submit">Create task</button>
+        </form>
+      </details>
       {% endif %}
-      <form class="inline" method="post" action="/announcements/{{ item.id }}/archive">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token_for(request) }}">
-        <button type="submit">Archive</button>
-      </form>
-    </div>
+    </article>
   {% endfor %}
 {% else %}
   <p class="empty">Nothing awaiting triage.</p>

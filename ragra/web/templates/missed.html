@@ -8,16 +8,21 @@
 <body>
 {% include "_nav.html" %}
   <a class="back" href="/">&larr; Back to Today</a>
-  <h1>All missed tasks ({{ missed|length }})</h1>
-  <p class="meta">Ordered by academic deadline, most recent first. Nothing here has been deleted or hidden - this is the complete list.</p>
+  <div class="page-head">
+    <div>
+      <h1>All missed tasks ({{ missed|length }})</h1>
+      <p class="sub">Most recent deadline first. Nothing here has been deleted or hidden.</p>
+    </div>
+  </div>
 
   {% if missed %}
     {% for t in missed %}
     <div class="task">
       <div>
         <span class="badge missed">missed</span>
-        {{ t.course_code or t.course_name }} - <a href="/tasks/{{ t.id }}">{{ t.title }}</a>
-        <div class="meta">Deadline was {{ t.actual_deadline }} - marked missed {{ t.missed_at }}</div>
+        <span class="crs">{{ t.course_code or t.course_name }}</span>
+        <a href="/tasks/{{ t.id }}">{{ t.title }}</a>
+        <div class="meta">Deadline was {{ t.actual_deadline|when }} &middot; marked missed {{ t.missed_at|when }}</div>
       </div>
       <form class="inline" method="post" action="/tasks/{{ t.id }}/complete">
         <input type="hidden" name="csrf_token" value="{{ csrf_token_for(request) }}">

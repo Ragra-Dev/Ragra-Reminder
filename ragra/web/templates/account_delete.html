@@ -8,11 +8,10 @@
 <body>
 {% include "_nav.html" %}
 <a class="back" href="/account">&larr; Back to account</a>
-<h1>Delete this account</h1>
-<p>This cannot be undone. Everything listed below is removed immediately - nothing is recoverable
-  afterward, and no support flow can bring it back.</p>
+<div class="page-head"><div><h1>Delete this account</h1>
+  <p class="sub">This cannot be undone. Everything listed below is removed immediately.</p></div></div>
 
-<section>
+<section class="danger">
   <pre>{% for line in lines %}{{ line }}
 {% endfor %}</pre>
 

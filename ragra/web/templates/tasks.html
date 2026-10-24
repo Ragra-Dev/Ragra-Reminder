@@ -4,52 +4,62 @@
 <meta charset="utf-8">
 <title>Ragra - Tasks</title>
 {% include "_theme.html" %}
+<style>.task.stack { flex-direction: column; align-items: stretch; gap: var(--s2); }</style>
 </head>
 <body>
 {% include "_nav.html" %}
-<h1>Tasks</h1>
 
-<div class="new-task">
-  <form method="post" action="/tasks/new">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token_for(request) }}">
-    <strong>New personal task</strong>
-    <label>Title <input type="text" name="title" required></label>
-    <label>Notes <textarea name="description" rows="2"></textarea></label>
-    <label>Due (YYYY-MM-DD or ISO date-time) <input type="text" name="actual_deadline" placeholder="2026-09-15"></label>
-    <label>I plan to do it by <input type="text" name="personal_deadline" placeholder="2026-09-14"></label>
-    <p><button type="submit">Add task</button></p>
-  </form>
+<div class="page-head">
+  <div><h1>Tasks</h1><p class="sub">Your own to-dos, kept next to your classes.</p></div>
+  <span class="cnt">{{ tasks|length }}</span>
 </div>
 
-<h2>Your tasks ({{ tasks|length }})</h2>
+<details class="fold new-task" open>
+  <summary><span>New personal task</span></summary>
+  <form method="post" action="/tasks/new">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token_for(request) }}">
+    <label>Title <input type="text" name="title" required></label>
+    <label>Notes <textarea name="description" rows="2"></textarea></label>
+    <div class="grid-2">
+      <label>Due (YYYY-MM-DD or ISO date-time) <input type="text" name="actual_deadline" placeholder="2026-09-15"></label>
+      <label>I plan to do it by <input type="text" name="personal_deadline" placeholder="2026-09-14"></label>
+    </div>
+    <button type="submit">Add task</button>
+  </form>
+</details>
+
+<div class="sec-head"><h2>Your tasks ({{ tasks|length }})</h2></div>
 {% if tasks %}
   {% for task in tasks %}
-    <div class="task">
+    <article class="task stack">
       <div>
-        <strong>{{ task.title }}</strong>
-        {% if task.actual_deadline %}<span class="badge actual">due {{ task.actual_deadline }}</span>{% endif %}
+        <a href="/tasks/{{ task.id }}"><strong>{{ task.title }}</strong></a>
+        <span class="badge status-{{ task.status }}">{{ task.status }}</span>
+        {% if task.actual_deadline %}<span class="badge actual">due {{ task.actual_deadline|when }}</span>{% endif %}
         {% if task.personal_deadline %}<span class="badge personal">plan {{ task.personal_deadline }}</span>{% endif %}
+        {% if task.description %}<div class="meta">{{ task.description }}</div>{% endif %}
       </div>
-      {% if task.description %}<div class="meta">{{ task.description }}</div>{% endif %}
-      <div class="meta">
-        {{ task.status }}
+      <div class="actions">
         <form class="inline" method="post" action="/tasks/{{ task.id }}/complete">
           <input type="hidden" name="csrf_token" value="{{ csrf_token_for(request) }}">
           <button type="submit">Complete</button>
         </form>
         <form class="inline" method="post" action="/tasks/{{ task.id }}/cancel">
           <input type="hidden" name="csrf_token" value="{{ csrf_token_for(request) }}">
-          <button type="submit">Cancel</button>
+          <button class="btn-ghost" type="submit">Cancel</button>
         </form>
       </div>
-      <form method="post" action="/tasks/{{ task.id }}/edit">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token_for(request) }}">
-        <input type="text" name="title" value="{{ task.title }}">
-        <input type="text" name="description" value="{{ task.description or '' }}">
-        <input type="text" name="actual_deadline" value="{{ task.actual_deadline or '' }}">
-        <button type="submit">Save</button>
-      </form>
-    </div>
+      <details class="mini">
+        <summary>Edit</summary>
+        <form method="post" action="/tasks/{{ task.id }}/edit">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token_for(request) }}">
+          <input type="text" name="title" value="{{ task.title }}" aria-label="Title">
+          <input type="text" name="description" value="{{ task.description or '' }}" aria-label="Notes">
+          <input type="text" name="actual_deadline" value="{{ task.actual_deadline or '' }}" aria-label="Due">
+          <button class="btn-teal" type="submit">Save</button>
+        </form>
+      </details>
+    </article>
   {% endfor %}
 {% else %}
   <p class="empty">No personal tasks yet.</p>
