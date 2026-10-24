@@ -267,3 +267,49 @@ def test_the_smtp_password_reaches_the_provider_and_stays_in_the_environment(
         for value in tuple(row)
     )
     assert "super-secret-password" not in stored
+
+
+def test_a_brevo_api_key_selects_the_https_email_provider(tmp_path):
+    """Hosts that block outbound SMTP need the HTTPS provider, and it must win
+    over SMTP when both are configured."""
+    from ragra.adapters.notify import BrevoEmailProvider
+    from ragra.db.connection import connect_closing
+    from ragra.notifications.preferences import providers_for
+
+    with connect_closing(tmp_path / "b.db") as conn:
+        uid = owner_id(conn)
+        save_preferences(
+            conn, user_id=uid,
+            preferences=NotificationPreferences(email_enabled=True, email_to="student@example.com"),
+        )
+        config = _config(
+            tmp_path, brevo_api_key="key-123", smtp_host="smtp.example.com", email_from="from@example.com"
+        )
+        providers = providers_for(conn, config, user_id=uid)
+
+    assert [type(p) for p in providers] == [BrevoEmailProvider]
+
+
+def test_brevo_provider_posts_over_https_and_redacts_its_key(monkeypatch):
+    import requests
+    from ragra.adapters.notify import BrevoEmailProvider, Notification
+
+    seen = {}
+
+    class _Resp:
+        status_code = 401
+        text = "bad key key-123"
+
+    def fake_post(url, headers, json, timeout):
+        seen.update(url=url, headers=headers, json=json)
+        return _Resp()
+
+    monkeypatch.setattr(requests, "post", fake_post)
+    provider = BrevoEmailProvider(api_key="key-123", from_address="f@example.com", to_address="t@example.com")
+
+    result = provider.send(Notification(text="Assignment due", category="reminder"))
+
+    assert seen["json"]["to"] == [{"email": "t@example.com"}]
+    assert seen["headers"]["api-key"] == "key-123"
+    assert result.ok is False
+    assert "key-123" not in (result.error or "")

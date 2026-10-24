@@ -242,3 +242,48 @@ class EmailProvider:
             return _failure(EMAIL_TRANSPORT_ERROR, _redact(str(exc), self.password))
 
         return NotifyResult(ok=True)
+
+
+@dataclass(frozen=True)
+class BrevoEmailProvider:
+    """Email over HTTPS (via `requests`) through Brevo's transactional API.
+
+    Exists because some hosts (Railway's trial and hobby plans among them)
+    block outbound SMTP, which makes `EmailProvider` fail with "Network is
+    unreachable". HTTPS on 443 is not blocked. `from_address` must be a
+    sender verified in Brevo. Selected by RAGRA_BREVO_API_KEY; see
+    ragra/notifications/preferences.py."""
+
+    api_key: str
+    from_address: str
+    to_address: str
+    base_url: str | None = None
+    endpoint: str = "https://api.brevo.com/v3/smtp/email"
+
+    def send(self, notification: Notification) -> NotifyResult:
+        import requests
+
+        subject = f"Ragra: {notification.category}" if notification.category else "Ragra notification"
+        body = notification.text
+        if self.base_url:
+            body = f"{body}\n\nView in Ragra: {self.base_url}"
+
+        try:
+            response = requests.post(
+                self.endpoint,
+                headers={"api-key": self.api_key, "accept": "application/json"},
+                json={
+                    "sender": {"name": "Ragra", "email": self.from_address},
+                    "to": [{"email": self.to_address}],
+                    "subject": subject,
+                    "textContent": body,
+                },
+                timeout=30,
+            )
+        except requests.RequestException as exc:
+            return _failure(EMAIL_TRANSPORT_ERROR, _redact(str(exc), self.api_key))
+
+        if response.status_code >= 300:
+            detail = f"HTTP {response.status_code}: {response.text[:200]}"
+            return _failure(EMAIL_TRANSPORT_ERROR, _redact(detail, self.api_key))
+        return NotifyResult(ok=True)

@@ -83,6 +83,7 @@ class Config:
     email_from: str | None
     email_to: str | None
     web_base_url: str | None
+    brevo_api_key: str | None = None
 
 
 def load_config() -> Config:
@@ -155,4 +156,5 @@ def load_config() -> Config:
         # Optional deep link appended to email bodies (see EmailProvider) -
         # not required for email to work at all.
         web_base_url=os.environ.get("RAGRA_WEB_BASE_URL") or None,
+        brevo_api_key=(os.environ.get("RAGRA_BREVO_API_KEY") or "").strip() or None,
     )

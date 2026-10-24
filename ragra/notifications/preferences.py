@@ -23,7 +23,7 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 
-from ragra.adapters.notify import EmailProvider, HermesProvider, NotificationProvider
+from ragra.adapters.notify import BrevoEmailProvider, EmailProvider, HermesProvider, NotificationProvider
 from ragra.config import Config
 from ragra.db.repo import now_iso
 
@@ -115,6 +115,20 @@ def providers_for(
         )
 
     if (
+        preferences.email_enabled
+        and preferences.email_to
+        and config.brevo_api_key
+        and config.email_from
+    ):
+        providers.append(
+            BrevoEmailProvider(
+                api_key=config.brevo_api_key,
+                from_address=config.email_from,
+                to_address=preferences.email_to,
+                base_url=config.web_base_url,
+            )
+        )
+    elif (
         preferences.email_enabled
         and preferences.email_to
         and config.smtp_host
