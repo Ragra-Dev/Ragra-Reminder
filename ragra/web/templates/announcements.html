@@ -30,7 +30,7 @@
       {% endif %}
 
       <div class="actions">
-        {% if item.link %}<a class="btn btn-teal" href="{{ item.link }}">Open in Classroom</a>{% endif %}
+        {% if item.link %}<a class="btn btn-secondary" href="{{ item.link }}">Open in Classroom</a>{% endif %}
         <form class="inline" method="post" action="/announcements/{{ item.id }}/archive">
           <input type="hidden" name="csrf_token" value="{{ csrf_token_for(request) }}">
           <button class="btn-ghost" type="submit">Archive</button>
@@ -44,7 +44,7 @@
           <input type="hidden" name="csrf_token" value="{{ csrf_token_for(request) }}">
           <input type="text" name="title" placeholder="{{ item.title }}">
           <input type="text" name="actual_deadline" placeholder="due (optional)">
-          <button class="btn-teal" type="submit">Create task</button>
+          <button class="btn-secondary" type="submit">Create task</button>
         </form>
       </details>
       {% endif %}
