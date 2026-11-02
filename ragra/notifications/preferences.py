@@ -23,7 +23,13 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 
-from ragra.adapters.notify import BrevoEmailProvider, EmailProvider, HermesProvider, NotificationProvider
+from ragra.adapters.notify import (
+    BrevoEmailProvider,
+    EmailProvider,
+    HermesProvider,
+    Notification,
+    NotificationProvider,
+)
 from ragra.config import Config
 from ragra.db.repo import now_iso
 
@@ -203,3 +209,47 @@ def describe(preferences: NotificationPreferences) -> dict[str, str]:
             else "off"
         ),
     }
+
+
+WELCOME_TEXT = (
+    "Welcome to Ragra! This is a test message to confirm your reminders are set up. "
+    "From now on you will get a heads-up here a week, five days, two days and an hour "
+    "before each deadline. You can change or switch this off any time on your Account page."
+)
+
+_CHANNEL_PROVIDERS: dict[str, tuple[type, ...]] = {
+    "email": (EmailProvider, BrevoEmailProvider),
+    "hermes": (HermesProvider,),
+}
+
+
+def channels_needing_welcome(
+    before: NotificationPreferences, after: NotificationPreferences
+) -> list[str]:
+    """Channels that should get a welcome message after a save: switched on
+    just now, or already on but pointed at a new destination. A save that
+    changes nothing about a channel never re-sends its welcome."""
+    channels: list[str] = []
+    if after.email_enabled and after.email_to and (
+        not before.email_enabled or before.email_to != after.email_to
+    ):
+        channels.append("email")
+    if after.hermes_enabled and after.hermes_target and (
+        not before.hermes_enabled or before.hermes_target != after.hermes_target
+    ):
+        channels.append("hermes")
+    return channels
+
+
+def welcome_providers(
+    conn: sqlite3.Connection, config: Config, *, user_id: int, channels: list[str]
+) -> list[NotificationProvider]:
+    """This user's providers, narrowed to the channels that just changed -
+    so adding WhatsApp does not re-welcome an email address that was already
+    set up."""
+    wanted = tuple(cls for channel in channels for cls in _CHANNEL_PROVIDERS[channel])
+    return [p for p in providers_for(conn, config, user_id=user_id) if isinstance(p, wanted)]
+
+
+def welcome_notification() -> Notification:
+    return Notification(text=WELCOME_TEXT, category="Welcome", link_path="/account")

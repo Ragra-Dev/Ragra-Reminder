@@ -466,3 +466,56 @@ def test_no_account_page_shows_another_accounts_profile_or_preferences(db_path, 
     body = bea_client.get("/account").text
     assert "AliceOnlyCourse" not in body
     assert "alice@example.com" not in body
+
+
+# ---------------------------------------------------------------------------
+# Welcome message when a channel is set up
+# ---------------------------------------------------------------------------
+
+
+class _Spy:
+    def __init__(self):
+        self.sent = []
+
+    def send(self, notification):
+        from ragra.adapters.notify import NotifyResult
+
+        self.sent.append(notification)
+        return NotifyResult(ok=True)
+
+
+@pytest.fixture
+def spy(monkeypatch):
+    spy = _Spy()
+    monkeypatch.setattr(
+        "ragra.web.app.welcome_providers", lambda conn, config, *, user_id, channels: [spy] if channels else []
+    )
+    return spy
+
+
+def test_enabling_email_sends_a_welcome_message(client, spy, alice):
+    client.post("/account/notifications", data={"email_enabled": "1", "email_to": "me@example.com"})
+
+    assert len(spy.sent) == 1
+    assert "Welcome to Ragra" in spy.sent[0].text
+
+
+def test_saving_again_without_changes_does_not_resend_the_welcome(client, spy, alice):
+    data = {"email_enabled": "1", "email_to": "me@example.com"}
+    client.post("/account/notifications", data=data)
+    client.post("/account/notifications", data=data)
+
+    assert len(spy.sent) == 1
+
+
+def test_changing_the_address_sends_a_new_welcome(client, spy, alice):
+    client.post("/account/notifications", data={"email_enabled": "1", "email_to": "a@example.com"})
+    client.post("/account/notifications", data={"email_enabled": "1", "email_to": "b@example.com"})
+
+    assert len(spy.sent) == 2
+
+
+def test_a_channel_left_switched_off_gets_no_welcome(client, spy, alice):
+    client.post("/account/notifications", data={"email_to": "me@example.com"})
+
+    assert spy.sent == []

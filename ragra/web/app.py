@@ -25,7 +25,7 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from fastapi import FastAPI, Form, HTTPException, Request
+from fastapi import BackgroundTasks, FastAPI, Form, HTTPException, Request
 from fastapi.responses import PlainTextResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
@@ -34,10 +34,14 @@ from ragra import crypto
 from ragra.adapters import credential_health, google_credentials
 from ragra.db import repo
 from ragra.db.connection import connect_closing
+from ragra.adapters.notify import send_to_all_providers
 from ragra.notifications.preferences import (
     NotificationPreferences,
+    channels_needing_welcome,
     load_preferences,
     save_preferences,
+    welcome_notification,
+    welcome_providers,
 )
 from ragra.relevance.profile import load_raw_profile, save_profile
 from ragra.timetable.enrollment import EnrolledCourse
@@ -861,6 +865,7 @@ def create_app(
     @app.post("/account/notifications")
     def update_account_notifications(
         request: Request,
+        background: BackgroundTasks,
         email_enabled: str = Form(""),
         email_to: str = Form(""),
         hermes_enabled: str = Form(""),
@@ -878,8 +883,28 @@ def create_app(
             hermes_enabled=bool(hermes_enabled) and clean_hermes is not None,
             hermes_target=clean_hermes,
         )
+        welcome: list = []
         with connect_closing(db_path) as conn:
-            save_preferences(conn, user_id=_acting_user(conn, request), preferences=preferences)
+            user_id = _acting_user(conn, request)
+            before = load_preferences(conn, user_id=user_id)
+            save_preferences(conn, user_id=user_id, preferences=preferences)
+            # Tell the person their channel works: a welcome message to each
+            # channel that was just switched on or pointed somewhere new. It is
+            # sent after the response (a slow messaging service must not stall
+            # the page) and a failure to build or send it never undoes the save.
+            try:
+                from ragra.config import load_config
+
+                welcome = welcome_providers(
+                    conn,
+                    load_config(),
+                    user_id=user_id,
+                    channels=channels_needing_welcome(before, preferences),
+                )
+            except Exception:  # noqa: BLE001 - the welcome is a courtesy, not part of saving
+                welcome = []
+        if welcome:
+            background.add_task(send_to_all_providers, welcome, welcome_notification())
         return RedirectResponse("/account", status_code=303)
 
     @app.get("/account/delete")
