@@ -1237,6 +1237,7 @@ def due_pending_reminders(conn: sqlite3.Connection, *, user_id: int, now: str) -
            AND (reminders.next_retry_at IS NULL OR reminders.next_retry_at <= ?)
            AND tasks.status NOT IN ('COMPLETED', 'CANCELLED', 'MISSED')
            AND courses.state IN ('ACTIVE', 'PROVISIONED')
+           AND LOWER(tasks.relevance) != 'other_section'
            ORDER BY reminders.scheduled_for ASC""",
         (user_id, now, now),
     ).fetchall()
@@ -1704,3 +1705,35 @@ def list_recent_tick_sessions(
         "SELECT * FROM tick_sessions WHERE user_id = ? ORDER BY started_at DESC LIMIT ?",
         (user_id, limit),
     ).fetchall()
+
+
+def pending_work(conn: sqlite3.Connection, *, user_id: int, limit: int = 30) -> list[sqlite3.Row]:
+    """Everything this user still has to do: open assignments and personal
+    tasks (not announcements or materials), soonest deadline first, tasks with
+    no deadline last. Work for another section is left out, the same rule
+    that keeps it out of reminders."""
+    return conn.execute(
+        """SELECT tasks.*, courses.course_code, courses.name AS course_name
+           FROM tasks JOIN courses ON courses.id = tasks.course_id
+           WHERE tasks.user_id = ?
+             AND tasks.source_type NOT IN ('announcement', 'material')
+             AND tasks.status NOT IN ('COMPLETED', 'CANCELLED', 'MISSED', 'ARCHIVED')
+             AND LOWER(tasks.relevance) != 'other_section'
+           ORDER BY tasks.actual_deadline IS NULL, tasks.actual_deadline ASC
+           LIMIT ?""",
+        (user_id, limit),
+    ).fetchall()
+
+
+def user_id_for_whatsapp(conn: sqlite3.Connection, *, number: str) -> int | None:
+    """Who owns this WhatsApp number (digits, international form), or None.
+    A number belongs to one account: if two ever claim it, nobody is returned,
+    so a message is never answered with someone else's coursework.
+
+    ragra:token-scoped - the number IS the lookup key, and an inbound message
+    only reaches this after Meta's request signature has been verified."""
+    rows = conn.execute(
+        "SELECT user_id FROM notification_preferences WHERE whatsapp_to = ? AND whatsapp_enabled = 1",
+        (number,),
+    ).fetchall()
+    return rows[0]["user_id"] if len(rows) == 1 else None

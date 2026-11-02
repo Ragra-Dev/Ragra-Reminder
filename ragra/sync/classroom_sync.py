@@ -17,7 +17,7 @@ from ragra.db import repo
 from ragra.relevance.engine import RelevanceDecision, is_relevant
 from ragra.relevance.profile import UserAcademicProfile, load_profile
 from ragra.reminders.engine import compute_reminder_plan
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 
 class ClassroomClient(Protocol):
@@ -294,6 +294,11 @@ def _apply_upsert(
 
     if result.created:
         summary.tasks_created += 1
+        if source_type in _FEED_ALERT_TYPES:
+            _queue_feed_alert(
+                conn, user_id=user_id, task_id=result.task_id, item=item,
+                reminder_type=_FEED_ALERT_TYPES[source_type],
+            )
         if actual_deadline:
             # discovered_at is intentionally Ragra's OWN "right now", not
             # Classroom's item creationTime. Anchoring the reminder cadence
@@ -358,6 +363,43 @@ def _apply_upsert(
                                  title=item.get("title") or "",
                                  course_code=course_code, actual_deadline=result.new_deadline,
                                  discovered_at=repo.now_iso())
+
+
+# Items that are "something new was posted" rather than work with a deadline.
+_FEED_ALERT_TYPES = {"announcement": "NEW_ANNOUNCEMENT", "material": "NEW_MATERIAL"}
+
+# A post older than this when Ragra first sees it is backlog from before Ragra
+# was connected, not news - alerting on it would flood the first sync with
+# weeks of old posts.
+_ANNOUNCEMENT_ALERT_WINDOW = timedelta(days=3)
+
+
+def _queue_feed_alert(
+    conn: sqlite3.Connection, *, user_id: int, task_id: int, item: dict[str, Any], reminder_type: str
+) -> None:
+    """Queue one alert (NEW_ANNOUNCEMENT / NEW_MATERIAL) for a freshly
+    discovered, recent post. It goes through the reminders table like every other alert,
+    so it inherits idempotency, bounded retry and delivery recording - and the
+    dispatch query already drops anything judged to be for another section."""
+    posted = item.get("creationTime")
+    if not posted:
+        return
+    try:
+        posted_dt = datetime.fromisoformat(str(posted).replace("Z", "+00:00"))
+    except ValueError:
+        return
+    if posted_dt.tzinfo is None:
+        posted_dt = posted_dt.replace(tzinfo=timezone.utc)
+    if datetime.now(timezone.utc) - posted_dt > _ANNOUNCEMENT_ALERT_WINDOW:
+        return
+    repo.insert_reminder_if_absent(
+        conn,
+        user_id=user_id,
+        task_id=task_id,
+        reminder_type=reminder_type,
+        scheduled_for=repo.now_iso(),
+        idempotency_key=f"{task_id}:{reminder_type}",
+    )
 
 
 def _schedule_reminders(

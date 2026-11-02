@@ -821,6 +821,8 @@ def cmd_notify_set(args: argparse.Namespace) -> int:
             email_to=email_to,
             hermes_enabled=bool(hermes_target),
             hermes_target=hermes_target,
+            whatsapp_enabled=current.whatsapp_enabled,
+            whatsapp_to=current.whatsapp_to,
         )
         save_preferences(conn, user_id=user_id, preferences=updated)
 

@@ -42,6 +42,7 @@ class NotifyNotConfigured(RuntimeError):
 NOT_CONFIGURED = "NOT_CONFIGURED"
 HERMES_TRANSPORT_ERROR = "HERMES_TRANSPORT_ERROR"      # binary missing, unlaunchable, or timed out
 HERMES_COMMAND_ERROR = "HERMES_COMMAND_ERROR"          # binary ran and rejected the command
+WHATSAPP_TRANSPORT_ERROR = "WHATSAPP_TRANSPORT_ERROR"  # Meta Cloud API refused or unreachable
 EMAIL_TRANSPORT_ERROR = "EMAIL_TRANSPORT_ERROR"        # SMTP refused or unreachable
 
 
@@ -296,3 +297,74 @@ class BrevoEmailProvider:
             detail = f"HTTP {response.status_code}: {response.text[:200]}"
             return _failure(EMAIL_TRANSPORT_ERROR, _redact(detail, self.api_key))
         return NotifyResult(ok=True)
+
+
+# Meta's error code for "the 24-hour customer-service window is closed": a
+# business can only send free-form text within 24 hours of the person's last
+# message, and must use an approved template otherwise.
+_WHATSAPP_WINDOW_CLOSED = 131047
+_WHATSAPP_API = "https://graph.facebook.com/v21.0"
+
+
+def normalize_whatsapp_number(raw: str | None) -> str | None:
+    """Digits only, international form ("+92 300 1234567" -> "923001234567"),
+    which is the shape Meta uses for both sending and inbound `from`. Anything
+    that cannot be a phone number (outside 8-15 digits) is rejected."""
+    digits = "".join(ch for ch in (raw or "") if ch.isdigit())
+    if digits.startswith("00"):
+        digits = digits[2:]
+    return digits if 8 <= len(digits) <= 15 else None
+
+
+@dataclass(frozen=True)
+class WhatsAppCloudProvider:
+    """WhatsApp through Meta's Cloud API (HTTPS, so it works on Railway).
+
+    Free-form text is tried first; if Meta says the 24-hour window is closed
+    and an approved template is configured, the message is re-sent through the
+    template (one body variable carrying the text)."""
+
+    token: str
+    phone_number_id: str
+    to_number: str
+    template: str | None = None
+    template_lang: str = "en"
+    base_url: str | None = None
+
+    def _post(self, payload: dict) -> "tuple[bool, int | None, str]":
+        import requests
+
+        try:
+            response = requests.post(
+                f"{_WHATSAPP_API}/{self.phone_number_id}/messages",
+                headers={"Authorization": f"Bearer {self.token}"},
+                json=payload,
+                timeout=30,
+            )
+        except requests.RequestException as exc:
+            return False, None, _redact(str(exc), self.token)
+        if response.status_code < 300:
+            return True, None, ""
+        code = None
+        try:
+            code = (response.json().get("error") or {}).get("code")
+        except ValueError:
+            pass
+        return False, code, _redact(f"HTTP {response.status_code}: {response.text[:200]}", self.token)
+
+    def send(self, notification: Notification) -> NotifyResult:
+        body = _with_link(notification.text, self.base_url, notification.link_path)
+        ok, code, detail = self._post(
+            {"messaging_product": "whatsapp", "to": self.to_number, "type": "text",
+             "text": {"body": body[:4000], "preview_url": True}}
+        )
+        if not ok and code == _WHATSAPP_WINDOW_CLOSED and self.template:
+            ok, code, detail = self._post(
+                {"messaging_product": "whatsapp", "to": self.to_number, "type": "template",
+                 "template": {"name": self.template, "language": {"code": self.template_lang},
+                              "components": [{"type": "body", "parameters": [
+                                  {"type": "text", "text": " ".join(body.split())[:900]}]}]}}
+            )
+        if ok:
+            return NotifyResult(ok=True)
+        return _failure(WHATSAPP_TRANSPORT_ERROR, detail)

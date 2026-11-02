@@ -97,5 +97,8 @@ def reminder_message(reminder_type: str, task_title: str, course_code: str | Non
         # purpose, so it inherits the same idempotency, bounded retry and
         # delivery recording as everything else.
         "DEADLINE_CHANGED": f"Deadline changed: {label}",
+        # A new Classroom announcement (see classroom_sync._apply_upsert).
+        "NEW_ANNOUNCEMENT": f"New announcement: {label}",
+        "NEW_MATERIAL": f"New class material: {label}",
     }
     return messages.get(reminder_type, label)

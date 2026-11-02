@@ -29,6 +29,7 @@ from ragra.adapters.notify import (
     HermesProvider,
     Notification,
     NotificationProvider,
+    WhatsAppCloudProvider,
 )
 from ragra.config import Config
 from ragra.db.repo import now_iso
@@ -44,12 +45,16 @@ class NotificationPreferences:
     email_to: str | None = None
     hermes_enabled: bool = False
     hermes_target: str | None = None
+    # Hosted WhatsApp (Meta Cloud API): digits only, international form.
+    whatsapp_enabled: bool = False
+    whatsapp_to: str | None = None
 
     @property
     def any_channel_configured(self) -> bool:
         return bool(
             (self.email_enabled and self.email_to)
             or (self.hermes_enabled and self.hermes_target)
+            or (self.whatsapp_enabled and self.whatsapp_to)
         )
 
 
@@ -70,6 +75,8 @@ def load_preferences(conn: sqlite3.Connection, *, user_id: int) -> NotificationP
         email_to=row["email_to"],
         hermes_enabled=bool(row["hermes_enabled"]),
         hermes_target=row["hermes_target"],
+        whatsapp_enabled=bool(row["whatsapp_enabled"]),
+        whatsapp_to=row["whatsapp_to"],
     )
 
 
@@ -80,13 +87,15 @@ def save_preferences(
     conn.execute(
         """INSERT INTO notification_preferences
              (user_id, email_enabled, email_to, hermes_enabled, hermes_target,
-              created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)
+              whatsapp_enabled, whatsapp_to, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(user_id) DO UPDATE SET
              email_enabled = excluded.email_enabled,
              email_to = excluded.email_to,
              hermes_enabled = excluded.hermes_enabled,
              hermes_target = excluded.hermes_target,
+             whatsapp_enabled = excluded.whatsapp_enabled,
+             whatsapp_to = excluded.whatsapp_to,
              updated_at = excluded.updated_at""",
         (
             user_id,
@@ -94,6 +103,8 @@ def save_preferences(
             preferences.email_to,
             1 if preferences.hermes_enabled else 0,
             preferences.hermes_target,
+            1 if preferences.whatsapp_enabled else 0,
+            preferences.whatsapp_to,
             now,
             now,
         ),
@@ -118,6 +129,23 @@ def providers_for(
     if preferences.hermes_enabled and preferences.hermes_target and config.hermes_bin:
         providers.append(
             HermesProvider(hermes_bin=config.hermes_bin, target=preferences.hermes_target)
+        )
+
+    if (
+        preferences.whatsapp_enabled
+        and preferences.whatsapp_to
+        and config.whatsapp_token
+        and config.whatsapp_phone_number_id
+    ):
+        providers.append(
+            WhatsAppCloudProvider(
+                token=config.whatsapp_token,
+                phone_number_id=config.whatsapp_phone_number_id,
+                to_number=preferences.whatsapp_to,
+                template=config.whatsapp_template,
+                template_lang=config.whatsapp_template_lang,
+                base_url=config.web_base_url,
+            )
         )
 
     if (
@@ -208,6 +236,11 @@ def describe(preferences: NotificationPreferences) -> dict[str, str]:
             if preferences.hermes_enabled and preferences.hermes_target
             else "off"
         ),
+        "whatsapp": (
+            f"on -> +{preferences.whatsapp_to}"
+            if preferences.whatsapp_enabled and preferences.whatsapp_to
+            else "off"
+        ),
     }
 
 
@@ -220,6 +253,7 @@ WELCOME_TEXT = (
 _CHANNEL_PROVIDERS: dict[str, tuple[type, ...]] = {
     "email": (EmailProvider, BrevoEmailProvider),
     "hermes": (HermesProvider,),
+    "whatsapp": (WhatsAppCloudProvider,),
 }
 
 
@@ -238,6 +272,10 @@ def channels_needing_welcome(
         not before.hermes_enabled or before.hermes_target != after.hermes_target
     ):
         channels.append("hermes")
+    if after.whatsapp_enabled and after.whatsapp_to and (
+        not before.whatsapp_enabled or before.whatsapp_to != after.whatsapp_to
+    ):
+        channels.append("whatsapp")
     return channels
 
 

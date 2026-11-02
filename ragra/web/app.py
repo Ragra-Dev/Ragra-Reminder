@@ -21,8 +21,10 @@ from __future__ import annotations
 import sys
 import ipaddress
 import os
+import hmac
 import secrets
 import sqlite3
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -35,7 +37,7 @@ from ragra import crypto
 from ragra.adapters import credential_health, google_credentials
 from ragra.db import repo
 from ragra.db.connection import connect_closing
-from ragra.adapters.notify import send_to_all_providers
+from ragra.adapters.notify import normalize_whatsapp_number, send_to_all_providers
 from ragra.notifications.preferences import (
     NotificationPreferences,
     channels_needing_welcome,
@@ -48,7 +50,7 @@ from ragra.relevance.profile import load_raw_profile, save_profile
 from ragra.timetable.enrollment import EnrolledCourse
 from ragra.timetable.schedule import occurrences_for_local_day, weekly_class_from_row
 from ragra.tz import format_stored_local, local_day_bounds, utc_iso
-from ragra.web import auth, csrf, google_reconnect, sessions
+from ragra.web import auth, csrf, google_reconnect, sessions, whatsapp as whatsapp_web
 
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
 
@@ -267,6 +269,9 @@ def create_app(
                     secure=request.url.scheme == "https", path="/",
                 )
             return response
+
+        if request.url.path == "/whatsapp/webhook":
+            return await call_next(request)  # signed by Meta; checked in the route
 
         submitted = request.headers.get(csrf.HEADER_NAME)
         if submitted is None:
@@ -798,6 +803,41 @@ def create_app(
             )
         return templates.TemplateResponse(request, "deliveries.html", {"deliveries": rows})
 
+    # --- WhatsApp webhook (Meta Cloud API) ---------------------------------
+
+    @app.get("/whatsapp/webhook")
+    def whatsapp_verify(request: Request):
+        """Meta's one-off handshake when the webhook URL is registered: echo the
+        challenge back only if the verify token matches the one we hold."""
+        from ragra.config import load_config
+
+        params = request.query_params
+        expected = load_config().whatsapp_verify_token
+        token = params.get("hub.verify_token") or ""
+        if (
+            params.get("hub.mode") == "subscribe"
+            and expected
+            and hmac.compare_digest(token, expected)
+        ):
+            return PlainTextResponse(params.get("hub.challenge") or "")
+        return PlainTextResponse("Forbidden", status_code=403)
+
+    @app.post("/whatsapp/webhook")
+    async def whatsapp_inbound(request: Request, background: BackgroundTasks):
+        from ragra.config import load_config
+
+        body = await request.body()
+        if not whatsapp_web.signature_is_valid(
+            body=body,
+            header=request.headers.get("x-hub-signature-256"),
+            secret=load_config().whatsapp_app_secret,
+        ):
+            return PlainTextResponse("Invalid signature", status_code=403)
+        for number, text in whatsapp_web.extract_text_messages(whatsapp_web.parse_payload(body)):
+            background.add_task(whatsapp_web.reply_to_whatsapp, db_path, number, text)
+        # Always 200 once the signature is good: Meta retries anything else.
+        return PlainTextResponse("ok")
+
     # --- Account settings --------------------------------------------------
     #
     # The roadmap's Phase 3 frontend work lists a profile editor, notification
@@ -813,6 +853,9 @@ def create_app(
 
     @app.get("/account")
     def account_page(request: Request):
+        from ragra.config import load_config
+
+        _wa_config = load_config()
         with connect_closing(db_path) as conn:
             user_id = _acting_user(conn, request)
             user_row = repo.get_user(conn, user_id=user_id)
@@ -845,6 +888,8 @@ def create_app(
                 "enrollment_text": _enrollment_to_text(profile.enrollment),
                 "preferences": preferences,
                 "google_status": google_status,
+                "whatsapp_ready": bool(_wa_config.whatsapp_token and _wa_config.whatsapp_phone_number_id),
+                "whatsapp_bot_number": _wa_config.whatsapp_display_number,
             },
         )
 
@@ -894,6 +939,9 @@ def create_app(
         hermes_target: str = Form(""),
         email_change: str = Form(""),
         hermes_change: str = Form(""),
+        whatsapp_enabled: str = Form(""),
+        whatsapp_to: str = Form(""),
+        whatsapp_change: str = Form(""),
     ):
         # A checkbox's value is present only when checked, so "enabled" is
         # derived from presence - but the destination itself is saved
@@ -903,17 +951,28 @@ def create_app(
         # "Change"; the new value arrives in *_change and wins over the saved one.
         clean_email = email_change.strip() or email_to.strip() or None
         clean_hermes = hermes_change.strip() or hermes_target.strip() or None
+        typed_whatsapp = whatsapp_change.strip() or whatsapp_to.strip()
+        clean_whatsapp = normalize_whatsapp_number(typed_whatsapp)
+        bad_number = bool(typed_whatsapp) and clean_whatsapp is None
         preferences = NotificationPreferences(
             email_enabled=bool(email_enabled) and clean_email is not None,
             email_to=clean_email,
             hermes_enabled=bool(hermes_enabled) and clean_hermes is not None,
             hermes_target=clean_hermes,
+            whatsapp_enabled=bool(whatsapp_enabled) and clean_whatsapp is not None,
+            whatsapp_to=clean_whatsapp,
         )
         welcome: list = []
         wanted: list = []
         with connect_closing(db_path) as conn:
             user_id = _acting_user(conn, request)
             before = load_preferences(conn, user_id=user_id)
+            if bad_number:
+                # A number that cannot be a phone number is refused; whatever
+                # was saved before stays exactly as it was.
+                preferences = replace(
+                    preferences, whatsapp_enabled=before.whatsapp_enabled, whatsapp_to=before.whatsapp_to
+                )
             save_preferences(conn, user_id=user_id, preferences=preferences)
             # Tell the person their channel works: a welcome message to each
             # channel that was just switched on or pointed somewhere new. It is
@@ -932,7 +991,7 @@ def create_app(
             background.add_task(send_to_all_providers, welcome, welcome_notification())
         # What the page tells the person: saved, saved + welcome on its way, or
         # saved but the server has no way to send yet.
-        outcome = "welcome" if welcome else ("nosend" if wanted else "saved")
+        outcome = "badnumber" if bad_number else ("welcome" if welcome else ("nosend" if wanted else "saved"))
         return RedirectResponse(f"/account?saved={outcome}", status_code=303)
 
     @app.get("/account/delete")

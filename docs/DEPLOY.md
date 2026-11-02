@@ -37,9 +37,53 @@ instance.
 7. Open the URL, sign in, then connect Classroom and Calendar from the
    Account page.
 
+## WhatsApp alerts and chat (optional)
+
+Ragra can send alerts to WhatsApp and answer questions there ("pending",
+"today", "overdue", or a free question) through Meta's WhatsApp Cloud API. It
+works on Railway because it is plain HTTPS in both directions.
+
+1. https://developers.facebook.com -> Create app (type Business) -> add the
+   **WhatsApp** product. Meta gives a free test number.
+2. WhatsApp -> API Setup: copy the **Phone number ID**, and under "To" add your
+   own phone as a recipient (the test number can only message verified numbers).
+3. Create a permanent access token (Business settings -> System users -> add one,
+   assign the app, generate a token with `whatsapp_business_messaging`). The
+   24-hour token on the API Setup page also works for a first test.
+4. App settings -> Basic: copy the **App secret**.
+5. Railway Variables:
+
+| Variable | Value |
+|---|---|
+| `RAGRA_WHATSAPP_TOKEN` | the access token |
+| `RAGRA_WHATSAPP_PHONE_NUMBER_ID` | the Phone number ID |
+| `RAGRA_WHATSAPP_APP_SECRET` | the App secret (requests are rejected without it) |
+| `RAGRA_WHATSAPP_VERIFY_TOKEN` | any long random string you invent |
+| `RAGRA_WHATSAPP_DISPLAY_NUMBER` | optional, the bot's number as shown on the Account page |
+| `RAGRA_WHATSAPP_TEMPLATE` | optional, an approved template with one body variable, used for alerts after the 24-hour window closes |
+| `RAGRA_GEMINI_API_KEY` | free key from https://aistudio.google.com/apikey - enables free-form questions |
+| `RAGRA_GEMINI_MODEL` | optional, defaults to `gemini-2.5-flash` |
+
+6. WhatsApp -> Configuration -> Webhook: callback URL
+   `https://<your-domain>/whatsapp/webhook`, verify token = the value of
+   `RAGRA_WHATSAPP_VERIFY_TOKEN`, then Verify and save and subscribe to the
+   **messages** field.
+7. In Ragra: Account -> Notifications -> tick WhatsApp, enter your number, save.
+   Then send `hi` to the bot number from WhatsApp.
+
+Meta only allows free-form messages within 24 hours of the person's last message
+to the bot. Alerts sent after that window need an approved template
+(`RAGRA_WHATSAPP_TEMPLATE`); without one they fail and are retried, and they
+reach the person the next time they message the bot. Email is unaffected.
+
+New Classroom announcements (posted within the last 3 days when first seen) are
+sent to every enabled channel, the same way deadline reminders are. Anything the
+section filter judges to be for another section is not sent and is not shown in
+chat answers.
+
 ## Known limits
 
-- WhatsApp delivery goes through Hermes, which is not available on Railway.
-  Until a hosted WhatsApp channel is built, hosted reminders go by email.
+- The Hermes WhatsApp option does not work on Railway (Hermes is not in the
+  container); use the Cloud API channel above instead.
 - Back up `/data/ragra.db` (Railway volume backups or a scheduled copy).
 - Single instance only; moving to Postgres is what lifts that.

@@ -45,6 +45,7 @@
   {% set _saved = request.query_params.get('saved') %}
   {% if _saved == 'welcome' %}<p class="flash ok-flash">&#10003; Saved. A welcome message is on its way - check your inbox (and spam).</p>
   {% elif _saved == 'nosend' %}<p class="flash warn-flash">Saved, but this server has no way to send messages yet, so no welcome message was sent. Add the email settings on the server first.</p>
+  {% elif _saved == 'badnumber' %}<p class="flash warn-flash">That doesn't look like a phone number, so it wasn't saved. Use the international form, e.g. +92 300 1234567.</p>
   {% elif _saved == 'saved' %}<p class="flash ok-flash">&#10003; Saved.</p>{% endif %}
   <form method="post" action="/account/notifications">
     <input type="hidden" name="csrf_token" value="{{ csrf_token_for(request) }}">
@@ -69,15 +70,38 @@
 
     <div class="channel">
       <div class="checkbox-row">
+        <input type="checkbox" id="whatsapp_enabled" name="whatsapp_enabled" value="1" {% if preferences.whatsapp_enabled %}checked{% endif %}>
+        <label for="whatsapp_enabled">WhatsApp - alerts and chat</label>
+      </div>
+      {% if preferences.whatsapp_to %}
+      <div class="saved-row">
+        <span class="chip">Saved</span> <b>+{{ preferences.whatsapp_to }}</b>
+        <input type="hidden" name="whatsapp_to" value="{{ preferences.whatsapp_to }}">
+      </div>
+      <details class="mini"><summary>Change WhatsApp number</summary>
+        <input type="text" name="whatsapp_change" placeholder="+92 300 1234567" autocomplete="tel">
+      </details>
+      {% else %}
+      <label>Your WhatsApp number <input type="text" name="whatsapp_to" placeholder="+92 300 1234567" autocomplete="tel"></label>
+      {% endif %}
+      {% if whatsapp_ready %}
+      <p class="hint">After saving, open WhatsApp and send <b>hi</b> to {% if whatsapp_bot_number %}<b>{{ whatsapp_bot_number }}</b>{% else %}the Ragra number{% endif %}. Then you can ask things like <i>pending</i>, <i>today</i>, <i>overdue</i> or <i>what should I do first?</i> - and new announcements and deadlines arrive here too.</p>
+      {% else %}
+      <p class="hint">WhatsApp isn't switched on for this server yet, so nothing will be sent until it is set up.</p>
+      {% endif %}
+    </div>
+
+    <div class="channel">
+      <div class="checkbox-row">
         <input type="checkbox" id="hermes_enabled" name="hermes_enabled" value="1" {% if preferences.hermes_enabled %}checked{% endif %}>
-        <label for="hermes_enabled">Hermes delivery (e.g. WhatsApp)</label>
+        <label for="hermes_enabled">Hermes (advanced - only when Ragra runs on your own computer)</label>
       </div>
       {% if preferences.hermes_target %}
       <div class="saved-row">
         <span class="chip">Saved</span> <b>{{ preferences.hermes_target }}</b>
         <input type="hidden" name="hermes_target" value="{{ preferences.hermes_target }}">
       </div>
-      <details class="mini"><summary>Change WhatsApp number</summary>
+      <details class="mini"><summary>Change Hermes target</summary>
         <input type="text" name="hermes_change" placeholder="whatsapp:+92...">
       </details>
       {% else %}

@@ -84,6 +84,16 @@ class Config:
     email_to: str | None
     web_base_url: str | None
     brevo_api_key: str | None = None
+    # WhatsApp (Meta Cloud API) and the AI model behind the chat. All optional.
+    whatsapp_token: str | None = None
+    whatsapp_phone_number_id: str | None = None
+    whatsapp_verify_token: str | None = None
+    whatsapp_app_secret: str | None = None
+    whatsapp_template: str | None = None
+    whatsapp_template_lang: str = "en"
+    whatsapp_display_number: str | None = None
+    gemini_api_key: str | None = None
+    gemini_model: str = "gemini-2.5-flash"
 
 
 def load_config() -> Config:
@@ -157,4 +167,13 @@ def load_config() -> Config:
         # not required for email to work at all.
         web_base_url=os.environ.get("RAGRA_WEB_BASE_URL") or None,
         brevo_api_key=(os.environ.get("RAGRA_BREVO_API_KEY") or "").strip() or None,
+        whatsapp_token=(os.environ.get("RAGRA_WHATSAPP_TOKEN") or "").strip() or None,
+        whatsapp_phone_number_id=(os.environ.get("RAGRA_WHATSAPP_PHONE_NUMBER_ID") or "").strip() or None,
+        whatsapp_verify_token=(os.environ.get("RAGRA_WHATSAPP_VERIFY_TOKEN") or "").strip() or None,
+        whatsapp_app_secret=(os.environ.get("RAGRA_WHATSAPP_APP_SECRET") or "").strip() or None,
+        whatsapp_template=(os.environ.get("RAGRA_WHATSAPP_TEMPLATE") or "").strip() or None,
+        whatsapp_template_lang=(os.environ.get("RAGRA_WHATSAPP_TEMPLATE_LANG") or "en").strip(),
+        whatsapp_display_number=(os.environ.get("RAGRA_WHATSAPP_DISPLAY_NUMBER") or "").strip() or None,
+        gemini_api_key=(os.environ.get("RAGRA_GEMINI_API_KEY") or "").strip() or None,
+        gemini_model=(os.environ.get("RAGRA_GEMINI_MODEL") or "gemini-2.5-flash").strip(),
     )

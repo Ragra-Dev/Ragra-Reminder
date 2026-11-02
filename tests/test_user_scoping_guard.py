@@ -171,6 +171,7 @@ def test_the_exemption_markers_are_used_sparingly():
         "repo.py:consume_google_reconnect",
         "repo.py:purge_expired_google_reconnect_states",
         "repo.py:purge_old_tick_sessions",
+        "repo.py:user_id_for_whatsapp",
         "sessions.py:lookup_session",
         "sessions.py:purge_expired_sessions",
         "sessions.py:revoke_session",
