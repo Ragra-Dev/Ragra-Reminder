@@ -42,19 +42,50 @@
 
 <div class="sec-head tone-yellow"><h2>Notifications</h2></div>
 <section class="tone-yellow">
+  {% set _saved = request.query_params.get('saved') %}
+  {% if _saved == 'welcome' %}<p class="flash ok-flash">&#10003; Saved. A welcome message is on its way - check your inbox (and spam).</p>
+  {% elif _saved == 'nosend' %}<p class="flash warn-flash">Saved, but this server has no way to send messages yet, so no welcome message was sent. Add the email settings on the server first.</p>
+  {% elif _saved == 'saved' %}<p class="flash ok-flash">&#10003; Saved.</p>{% endif %}
   <form method="post" action="/account/notifications">
     <input type="hidden" name="csrf_token" value="{{ csrf_token_for(request) }}">
-    <div class="checkbox-row">
-      <input type="checkbox" id="email_enabled" name="email_enabled" value="1" {% if preferences.email_enabled %}checked{% endif %}>
-      <label for="email_enabled">Email reminders</label>
+
+    <div class="channel">
+      <div class="checkbox-row">
+        <input type="checkbox" id="email_enabled" name="email_enabled" value="1" {% if preferences.email_enabled %}checked{% endif %}>
+        <label for="email_enabled">Email reminders</label>
+      </div>
+      {% if preferences.email_to %}
+      <div class="saved-row">
+        <span class="chip">Saved</span> <b>{{ preferences.email_to }}</b>
+        <input type="hidden" name="email_to" value="{{ preferences.email_to }}">
+      </div>
+      <details class="mini"><summary>Change email</summary>
+        <input type="text" name="email_change" placeholder="new address, e.g. you@example.com" autocomplete="email">
+      </details>
+      {% else %}
+      <label>Email address <input type="text" name="email_to" placeholder="you@example.com" autocomplete="email"></label>
+      {% endif %}
     </div>
-    <label>Email address <input type="text" name="email_to" value="{{ preferences.email_to or '' }}" placeholder="you@example.com"></label>
-    <div class="checkbox-row">
-      <input type="checkbox" id="hermes_enabled" name="hermes_enabled" value="1" {% if preferences.hermes_enabled %}checked{% endif %}>
-      <label for="hermes_enabled">Hermes delivery (e.g. WhatsApp)</label>
+
+    <div class="channel">
+      <div class="checkbox-row">
+        <input type="checkbox" id="hermes_enabled" name="hermes_enabled" value="1" {% if preferences.hermes_enabled %}checked{% endif %}>
+        <label for="hermes_enabled">Hermes delivery (e.g. WhatsApp)</label>
+      </div>
+      {% if preferences.hermes_target %}
+      <div class="saved-row">
+        <span class="chip">Saved</span> <b>{{ preferences.hermes_target }}</b>
+        <input type="hidden" name="hermes_target" value="{{ preferences.hermes_target }}">
+      </div>
+      <details class="mini"><summary>Change WhatsApp number</summary>
+        <input type="text" name="hermes_change" placeholder="whatsapp:+92...">
+      </details>
+      {% else %}
+      <label>Hermes target <input type="text" name="hermes_target" placeholder="whatsapp:+92..."></label>
+      {% endif %}
     </div>
-    <label>Hermes target <input type="text" name="hermes_target" value="{{ preferences.hermes_target or '' }}" placeholder="whatsapp:+92..."></label>
-    <p class="hint">A channel only sends when it is ticked here and the server has it set up.</p>
+
+    <p class="hint">Saved once, kept for next time - you only type it again if you press Change. A welcome message is sent the first time a channel is switched on or its address changes. A channel only sends when it is ticked and the server has it set up.</p>
     <button type="submit">Save notification settings</button>
   </form>
 </section>

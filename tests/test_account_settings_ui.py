@@ -519,3 +519,71 @@ def test_a_channel_left_switched_off_gets_no_welcome(client, spy, alice):
     client.post("/account/notifications", data={"email_to": "me@example.com"})
 
     assert spy.sent == []
+
+
+# ---------------------------------------------------------------------------
+# Saved-once channels: shown as saved, changed only on request
+# ---------------------------------------------------------------------------
+
+
+def test_a_saved_address_is_shown_as_saved_with_a_change_option(client, db_path, alice):
+    with connect_closing(db_path) as conn:
+        save_preferences(
+            conn, user_id=alice,
+            preferences=NotificationPreferences(email_enabled=True, email_to="alice@example.com"),
+        )
+
+    body = client.get("/account").text
+
+    assert "Saved" in body and "alice@example.com" in body
+    assert "Change email" in body
+    assert 'name="email_change"' in body
+    assert '<input type="text" name="email_to"' not in body  # no empty box asking again
+
+
+def test_a_new_account_is_asked_for_the_address_once(client, alice):
+    body = client.get("/account").text
+
+    assert 'name="email_to"' in body
+    assert "Change email" not in body
+
+
+def test_change_replaces_the_saved_address_and_sends_a_new_welcome(client, db_path, spy, alice):
+    client.post("/account/notifications", data={"email_enabled": "1", "email_to": "old@example.com"})
+    resp = client.post(
+        "/account/notifications",
+        data={"email_enabled": "1", "email_to": "old@example.com", "email_change": "new@example.com"},
+    )
+    assert resp.status_code == 303
+
+    with connect_closing(db_path) as conn:
+        row = conn.execute("SELECT email_to FROM notification_preferences WHERE user_id = ?", (alice,)).fetchone()
+    assert row["email_to"] == "new@example.com"
+    assert len(spy.sent) == 2
+
+
+def test_resaving_with_the_change_box_empty_keeps_the_saved_address(client, db_path, spy, alice):
+    data = {"email_enabled": "1", "email_to": "me@example.com", "email_change": ""}
+    client.post("/account/notifications", data=data)
+    client.post("/account/notifications", data=data)
+
+    with connect_closing(db_path) as conn:
+        row = conn.execute("SELECT email_to FROM notification_preferences WHERE user_id = ?", (alice,)).fetchone()
+    assert row["email_to"] == "me@example.com"
+    assert len(spy.sent) == 1
+
+
+def test_the_page_confirms_the_save_and_the_welcome(client, spy, alice):
+    resp = client.post(
+        "/account/notifications", data={"email_enabled": "1", "email_to": "me@example.com"}, follow_redirects=False
+    )
+    assert resp.headers["location"] == "/account?saved=welcome"
+    assert "welcome message is on its way" in client.get("/account?saved=welcome").text
+
+
+def test_the_page_says_so_when_the_server_cannot_send(client, alice):
+    resp = client.post(
+        "/account/notifications", data={"email_enabled": "1", "email_to": "me@example.com"}, follow_redirects=False
+    )
+    assert resp.headers["location"] == "/account?saved=nosend"
+    assert "no way to send" in client.get("/account?saved=nosend").text

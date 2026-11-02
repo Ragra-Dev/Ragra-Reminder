@@ -892,13 +892,17 @@ def create_app(
         email_to: str = Form(""),
         hermes_enabled: str = Form(""),
         hermes_target: str = Form(""),
+        email_change: str = Form(""),
+        hermes_change: str = Form(""),
     ):
         # A checkbox's value is present only when checked, so "enabled" is
         # derived from presence - but the destination itself is saved
         # regardless of the toggle, so switching a channel off never throws
         # away the address it will be switched back on with.
-        clean_email = email_to.strip() or None
-        clean_hermes = hermes_target.strip() or None
+        # Once an address is saved the page shows it as saved and offers
+        # "Change"; the new value arrives in *_change and wins over the saved one.
+        clean_email = email_change.strip() or email_to.strip() or None
+        clean_hermes = hermes_change.strip() or hermes_target.strip() or None
         preferences = NotificationPreferences(
             email_enabled=bool(email_enabled) and clean_email is not None,
             email_to=clean_email,
@@ -906,6 +910,7 @@ def create_app(
             hermes_target=clean_hermes,
         )
         welcome: list = []
+        wanted: list = []
         with connect_closing(db_path) as conn:
             user_id = _acting_user(conn, request)
             before = load_preferences(conn, user_id=user_id)
@@ -917,17 +922,18 @@ def create_app(
             try:
                 from ragra.config import load_config
 
+                wanted = channels_needing_welcome(before, preferences)
                 welcome = welcome_providers(
-                    conn,
-                    load_config(),
-                    user_id=user_id,
-                    channels=channels_needing_welcome(before, preferences),
+                    conn, load_config(), user_id=user_id, channels=wanted
                 )
             except Exception:  # noqa: BLE001 - the welcome is a courtesy, not part of saving
                 welcome = []
         if welcome:
             background.add_task(send_to_all_providers, welcome, welcome_notification())
-        return RedirectResponse("/account", status_code=303)
+        # What the page tells the person: saved, saved + welcome on its way, or
+        # saved but the server has no way to send yet.
+        outcome = "welcome" if welcome else ("nosend" if wanted else "saved")
+        return RedirectResponse(f"/account?saved={outcome}", status_code=303)
 
     @app.get("/account/delete")
     def account_delete_page(request: Request):
