@@ -73,5 +73,12 @@ def verify(*, submitted: str | None, session_token: str | None) -> bool:
     return secrets.compare_digest(submitted, expected)
 
 
+# A visitor with no session (the single-user local mode, before anyone has
+# signed in) still needs forms that work. They get this cookie instead: random,
+# HttpOnly and SameSite=Strict, so a forged cross-site request can neither read
+# nor send it - the same property the session cookie gives a signed-in user.
+FALLBACK_COOKIE = "ragra_csrf"
+
+
 def session_token_from(request) -> str | None:
-    return request.cookies.get(sessions.COOKIE_NAME)
+    return request.cookies.get(sessions.COOKIE_NAME) or request.cookies.get(FALLBACK_COOKIE)

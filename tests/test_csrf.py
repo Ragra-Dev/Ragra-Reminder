@@ -262,3 +262,31 @@ def test_a_rendered_page_actually_contains_a_usable_token(client, task_id):
 
     assert match is not None
     assert match.group(1) == _valid_token(client)
+
+
+def test_a_visitor_without_a_session_still_gets_working_forms(tmp_path):
+    """Single-user local mode has no sign-in, hence no session cookie to derive
+    the token from; the page must still carry a token that its own POST accepts."""
+    import re
+
+    from fastapi.testclient import TestClient
+
+    from ragra.db.connection import connect_closing
+    from ragra.web.app import create_app
+
+    db = tmp_path / "anon.db"
+    with connect_closing(db):
+        pass
+    client = TestClient(create_app(db_path=db), base_url="http://127.0.0.1", client=("127.0.0.1", 5000))
+    page = client.get("/account")
+    token = re.search(r'name="csrf_token" value="([^"]+)"', page.text)
+    assert token, "form rendered with an empty token"
+    assert "ragra_csrf" in client.cookies
+
+    ok = client.post("/account/notifications", data={"csrf_token": token.group(1)}, follow_redirects=False)
+    assert ok.status_code == 303
+
+    forged = TestClient(create_app(db_path=db), base_url="http://127.0.0.1", client=("127.0.0.1", 5000)).post(
+        "/account/notifications", data={"csrf_token": token.group(1)}
+    )
+    assert forged.status_code == 403  # a different browser does not hold the cookie

@@ -21,6 +21,7 @@ from __future__ import annotations
 import sys
 import ipaddress
 import os
+import secrets
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -244,7 +245,28 @@ def create_app(
         state parameter is what protects it (see ragra/web/auth.py).
         """
         if request.method not in csrf.UNSAFE_METHODS:
-            return await call_next(request)
+            fallback = None
+            if (
+                request.method == "GET"
+                and sessions.COOKIE_NAME not in request.cookies
+                and csrf.FALLBACK_COOKIE not in request.cookies
+            ):
+                # No session to derive a token from: hand this visitor a private
+                # CSRF cookie, and make it visible to this very request so the
+                # page being rendered carries a matching token.
+                fallback = secrets.token_urlsafe(32)
+                headers = [(k, v) for k, v in request.scope["headers"] if k != b"cookie"]
+                existing = b"; ".join(v for k, v in request.scope["headers"] if k == b"cookie")
+                pair = f"{csrf.FALLBACK_COOKIE}={fallback}".encode()
+                headers.append((b"cookie", existing + b"; " + pair if existing else pair))
+                request.scope["headers"] = headers
+            response = await call_next(request)
+            if fallback:
+                response.set_cookie(
+                    csrf.FALLBACK_COOKIE, fallback, httponly=True, samesite="strict",
+                    secure=request.url.scheme == "https", path="/",
+                )
+            return response
 
         submitted = request.headers.get(csrf.HEADER_NAME)
         if submitted is None:
