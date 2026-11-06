@@ -101,13 +101,13 @@ def test_dashboard_shows_a_schedule_section(client, db_path):
     with connect_closing(db_path) as conn:
         _add_class(conn)
 
-    body = client.get("/").text
+    body = client.get("/overview").text
 
     assert 'id="schedule"' in body
 
 
 def test_dashboard_has_all_five_restructured_sections(client):
-    body = client.get("/").text
+    body = client.get("/overview").text
 
     for anchor in ('id="schedule"', 'id="announcements"', 'id="tasks"', 'id="deadlines"'):
         assert anchor in body
@@ -115,7 +115,7 @@ def test_dashboard_has_all_five_restructured_sections(client):
 
 
 def test_dashboard_navigation_links_every_section(client):
-    body = client.get("/").text
+    body = client.get("/overview").text
 
     for href in ('href="/tasks"', 'href="/announcements"', 'href="/missed"', 'href="/deliveries"'):
         assert href in body

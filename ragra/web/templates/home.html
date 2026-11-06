@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Ragra - Home</title>
+{% include "_theme.html" %}
+<style>
+  /* Sizes and colours are measured from the Ragra mockup (a 390px-wide phone screen). */
+  .home { --ink: #070B45; --ink-2: #4A4E96; --blue: #0B58FD; --chip: #DEE4FD; --chip-ink: #1A3BC4; --line: #EEF2FD;
+    max-width: 840px; margin: 0 auto; display: flex; flex-direction: column; gap: 14px; font-family: "Plus Jakarta Sans", "Inter", system-ui, sans-serif; color: var(--ink); letter-spacing: -.01em; }
+  .home h1, .home h2, .home p { margin: 0; }
+
+  /* welcome + robot: 123px tall, the robot's hand rests on the chat card */
+  .hm-hello { position: relative; height: 123px; margin-bottom: -14px; }
+  .hm-hello h1 { position: absolute; left: 7px; top: 50px; font: 800 24px/31px "Plus Jakarta Sans", "Inter", system-ui, sans-serif; letter-spacing: -.02em; color: var(--ink); white-space: nowrap; }
+  .hm-hello p { position: absolute; left: 7px; top: 84px; font: 500 13.5px/19px "Plus Jakarta Sans", system-ui, sans-serif; color: var(--ink-2); white-space: nowrap; }
+  .hm-bot { position: absolute; right: -3px; bottom: -3px; width: 165px; height: auto; pointer-events: none; }
+
+  /* cards */
+  .hm-card { position: relative; z-index: 1; background: #F8F9FE; border: 1px solid rgba(255,255,255,.9); border-radius: 26px; box-shadow: 0 10px 28px -12px rgba(70,100,210,.22), 0 1px 3px rgba(40,60,140,.05); }
+
+  /* Ragra Bot chat card */
+  .hm-chat { padding: 17px 12px 12px 17px; }
+  .hm-chat-top { display: flex; gap: 15px; }
+  .hm-chat-av { width: 44px; height: 44px; flex: none; margin-top: 8px; }
+  .hm-chat-av img { width: 100%; height: 100%; display: block; }
+  .hm-chat-main { flex: 1; min-width: 0; }
+  .hm-chat-name { display: flex; align-items: center; gap: 12px; height: 20px; font: 700 14px/20px "Plus Jakarta Sans", system-ui, sans-serif; color: var(--ink); }
+  .hm-on { display: inline-flex; align-items: center; gap: 7px; font: 500 11.5px/1 "Plus Jakarta Sans", system-ui, sans-serif; color: #3A7B94; }
+  .hm-on::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: #2ABE70; box-shadow: 0 0 0 3px #D6F2E3; }
+  .hm-bubble-row { display: flex; align-items: flex-end; gap: 12px; margin-top: 15px; }
+  .hm-bubble { flex: 1; min-width: 0; max-width: 199px; min-height: 75px; position: relative; background: #ECEFFD; border-radius: 4px 18px 18px 18px; padding: 9px 12px 10px; font: 500 12.5px/19px "Plus Jakarta Sans", system-ui, sans-serif; letter-spacing: -.02em; color: var(--ink-2); }
+  .hm-bubble::before { content: ""; position: absolute; left: -6px; top: 0; border-top: 10px solid #ECEFFD; border-left: 8px solid transparent; }
+  .hm-bubble b { display: block; font-weight: 500; font-size: 13px; color: #020237; }
+  .hm-bubble .tx { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; white-space: pre-line; }
+  .hm-bubble a.more { display: inline-block; margin-top: 6px; padding: 4px 12px; border-radius: 999px; background: #fff; color: var(--blue); font-weight: 700; font-size: 12.5px; text-decoration: none; }
+  .hm-go { width: 30px; height: 30px; flex: none; margin: 0 5px 9px auto; border-radius: 50%; display: grid; place-items: center; background: #EBF0FE; color: var(--ink); text-decoration: none; box-shadow: 0 3px 8px rgba(60,90,200,.18); }
+  .hm-go svg { width: 14px; height: 14px; }
+  .hm-input { display: flex; align-items: center; height: 41px; margin: 13px 0 0 -4px; padding: 0 3px 0 15px; border: 1px solid #DCE3FB; border-radius: 999px; background: #FFFFFF; }
+  .hm-input svg.sp { width: 17px; height: 17px; flex: none; }
+  .hm-input input[type=text] { flex: 1; min-width: 0; height: 100%; margin: 0 0 0 11px; padding: 0; border: 0; outline: 0; background: transparent; box-shadow: none; font: 400 12.5px/1 "Plus Jakarta Sans", system-ui, sans-serif; color: var(--ink); }
+  .hm-input input::placeholder { color: #7B7FC6; }
+  .hm-input input:focus { box-shadow: none; }
+  .hm-input button { width: 33px; height: 33px; padding: 0; margin: 0; border: 0; border-radius: 50%; background: #0E5AFC; color: #fff; display: grid; place-items: center; box-shadow: 0 4px 10px rgba(14,90,252,.4); }
+  .hm-input button svg { width: 15px; height: 15px; }
+  .hm-chips { display: flex; gap: 8px; margin: 8px 5px 0 0; overflow-x: auto; scrollbar-width: none; }
+  .hm-chips::-webkit-scrollbar { display: none; }
+  .hm-chips a, .hm-chips button { flex: 1 1 auto; letter-spacing: -.02em; display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 28px; padding: 0 9px; margin: 0; border-radius: 999px; border: 0; background: var(--chip); color: var(--chip-ink); box-shadow: none;
+    font: 500 11.5px/1 "Plus Jakarta Sans", system-ui, sans-serif; text-decoration: none; white-space: nowrap; }
+  .hm-chips svg { width: 12px; height: 12px; }
+
+  /* Upcoming Deadline card */
+  .hm-dl-card { padding: 0 17px 15px 21px; }
+  .hm-dl-head { display: flex; align-items: center; gap: 11px; height: 42px; margin-right: 0; border-bottom: 1px solid var(--line); margin-left: -21px; margin-right: -17px; padding: 0 17px 0 21px; }
+  .hm-dl-head svg.ci { width: 20px; height: 20px; flex: none; }
+  .hm-dl-head h2 { flex: 1; font: 700 15px/1 "Plus Jakarta Sans", system-ui, sans-serif; color: #00003D; letter-spacing: -.01em; }
+  .hm-dl-head a { display: inline-flex; align-items: center; gap: 6px; font: 600 12.5px/1 "Plus Jakarta Sans", system-ui, sans-serif; color: #003EF9; text-decoration: none; }
+  .hm-dl-head a svg { width: 14px; height: 14px; }
+  .hm-dl { display: flex; align-items: center; margin-top: 7px; text-decoration: none; color: inherit; }
+  .hm-date { width: 60px; height: 60px; flex: none; margin-left: -3px; display: flex; flex-direction: column; align-items: center; justify-content: center; background: #DCE8FD; border-radius: 13px; color: #000048; }
+  .hm-date small { font: 500 11px/14px "Plus Jakarta Sans", system-ui, sans-serif; }
+  .hm-date b { font: 800 26px/28px "Plus Jakarta Sans", system-ui, sans-serif; }
+  .hm-bar { width: 2.5px; height: 48px; margin: 0 11px; border-radius: 2px; background: var(--blue); flex: none; }
+  .hm-dl .tx { flex: 1; min-width: 0; align-self: flex-start; margin-top: 8px; }
+  .hm-dl .tx b { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; font: 700 14px/19px "Plus Jakarta Sans", system-ui, sans-serif; color: #00003B; overflow: hidden; }
+  .hm-dl .tx span { display: inline-flex; align-items: center; gap: 7px; margin-top: 6px; font: 500 12.5px/1 "Plus Jakarta Sans", system-ui, sans-serif; color: #4A4C90; }
+  .hm-dl .tx svg { width: 15px; height: 15px; }
+  .hm-pri { align-self: flex-start; margin: 14px 0 0 8px; height: 19px; padding: 0 9px; display: inline-flex; align-items: center; border-radius: 999px; font: 600 11px/1 "Plus Jakarta Sans", system-ui, sans-serif; background: #E1E0FE; color: #291DEE; }
+  .hm-pri.High { background: #FFE0E3; color: #C2273B; }
+  .hm-pri.Low { background: #DDF6EA; color: #0F8F6E; }
+  .hm-empty { padding-top: 14px; color: var(--ink-2); font-size: 14px; }
+
+  /* Quick Access card */
+  .hm-qa-card { padding: 14px 13px 10px; }
+  .hm-qa-t { display: flex; align-items: center; gap: 16px; height: 25px; padding-left: 9px; font: 700 15px/1 "Plus Jakarta Sans", system-ui, sans-serif; color: #00023A; letter-spacing: -.01em; }
+  .hm-qa-t svg { width: 15px; height: 20px; }
+  .hm-qa { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 11px; margin-top: 8px; }
+  .hm-qa a { height: 74px; display: flex; flex-direction: column; align-items: center; padding-top: 11px; border-radius: 16px; background: #E8EDFD; border: 1px solid #E2E5FC; box-shadow: 0 2px 6px rgba(60,90,200,.06);
+    color: #00084B; font: 500 11.5px/13px "Plus Jakarta Sans", system-ui, sans-serif; text-decoration: none; text-align: center; }
+  .hm-qa a svg { width: 22px; height: 22px; flex: none; color: #0057FB; }
+  .hm-qa a span { flex: 1; display: flex; align-items: center; padding-bottom: 6px; }
+
+  /* ---- other screen sizes ---- */
+  @media (max-width: 360px) {
+    .hm-hello h1 { font-size: 22px; } .hm-hello p { font-size: 13px; }
+    .hm-bot { width: 140px; }
+    .hm-chips a, .hm-chips button { padding: 0 9px; font-size: 12px; }
+    .hm-qa { gap: 7px; } .hm-qa a { font-size: 11px; }
+  }
+  @media (min-width: 641px) and (max-width: 980px) {
+    .hm-hello { height: 150px; } .hm-hello h1 { top: 64px; font-size: 32px; line-height: 38px; } .hm-hello p { top: 106px; font-size: 17px; }
+    .hm-bot { width: 210px; }
+    .hm-bubble { max-width: none; }
+  }
+  /* ---- desktop: exact layout of the desktop mockup (1672 x 941), scaled by --u ---- */
+  @media (min-width: 981px) {
+    body.pg-home:has(> .appbar) { padding-top: 0; padding-right: 0; }
+    body.pg-home > .home { max-width: none !important; margin: 0 !important; }
+    .home { max-width: none; width: calc(1301 * var(--u)); margin: 0; display: grid; grid-template-columns: calc(693 * var(--u)) calc(588 * var(--u)); column-gap: calc(20 * var(--u)); row-gap: calc(27 * var(--u)); align-items: start; letter-spacing: -.01em; }
+    .hm-hello { grid-column: 1 / -1; height: calc(255 * var(--u)); margin: 0 0 calc(-27 * var(--u)); }
+    .hm-hello h1 { left: 0; top: calc(89 * var(--u)); font-size: calc(56 * var(--u)); line-height: calc(66 * var(--u)); letter-spacing: -.025em; }
+    .hm-hello p { left: 0; top: calc(165 * var(--u)); font-size: calc(29 * var(--u)); line-height: calc(36 * var(--u)); }
+    .hm-bot { width: calc(349 * var(--u)); right: calc(83 * var(--u)); bottom: calc(-3 * var(--u)); }
+    .hm-card { border-radius: calc(30 * var(--u)); }
+
+    .hm-chat { padding: calc(25 * var(--u)) calc(22 * var(--u)) calc(16 * var(--u)) calc(32 * var(--u)); }
+    .hm-chat-top { gap: calc(32 * var(--u)); }
+    .hm-chat-av { width: calc(86 * var(--u)); height: calc(86 * var(--u)); margin-top: 0; }
+    .hm-chat-name { height: calc(30 * var(--u)); margin-top: calc(7 * var(--u)); gap: calc(16 * var(--u)); font-size: calc(23 * var(--u)); line-height: calc(30 * var(--u)); }
+    .hm-on { gap: calc(12 * var(--u)); font-size: calc(19.5 * var(--u)); }
+    .hm-on::before { width: calc(13 * var(--u)); height: calc(13 * var(--u)); box-shadow: 0 0 0 calc(5 * var(--u)) #D6F2E3; }
+    .hm-bubble-row { gap: calc(17 * var(--u)); margin: calc(20 * var(--u)) 0 0 calc(-3 * var(--u)); }
+    .hm-bubble { max-width: none; width: calc(443 * var(--u)); flex: none; min-height: calc(128 * var(--u)); padding: calc(19 * var(--u)) calc(20 * var(--u)) calc(14 * var(--u)); border-radius: calc(6 * var(--u)) calc(24 * var(--u)) calc(24 * var(--u)) calc(24 * var(--u)); font-size: calc(21 * var(--u)); line-height: calc(30 * var(--u)); }
+    .hm-bubble::before { display: none; }
+    .hm-bubble b { font-size: calc(22.5 * var(--u)); line-height: calc(32 * var(--u)); margin-bottom: calc(2 * var(--u)); }
+    .hm-bubble a.more { font-size: calc(18 * var(--u)); padding: calc(6 * var(--u)) calc(16 * var(--u)); }
+    .hm-go { width: calc(58 * var(--u)); height: calc(58 * var(--u)); margin: 0 calc(6 * var(--u)) calc(13 * var(--u)) 0; }
+    .hm-go svg { width: calc(24 * var(--u)); height: calc(24 * var(--u)); }
+    .hm-input { height: calc(61 * var(--u)); margin: calc(24 * var(--u)) calc(1 * var(--u)) 0 calc(-10 * var(--u)); padding: 0 calc(2 * var(--u)) 0 calc(26 * var(--u)); }
+    .hm-input svg.sp { width: calc(28 * var(--u)); height: calc(28 * var(--u)); }
+    .hm-input input[type=text] { margin-left: calc(18 * var(--u)); font-size: calc(21 * var(--u)); }
+    .hm-input button { width: calc(56 * var(--u)); height: calc(56 * var(--u)); }
+    .hm-input button svg { width: calc(24 * var(--u)); height: calc(24 * var(--u)); }
+    .hm-chips { gap: calc(13 * var(--u)); margin: calc(17 * var(--u)) calc(1 * var(--u)) 0 calc(-10 * var(--u)); }
+    .hm-chips a, .hm-chips button { flex: 1 1 auto; min-width: 0; height: calc(50 * var(--u)); padding: 0 calc(20 * var(--u)); gap: calc(12 * var(--u)); font-size: calc(21 * var(--u)); letter-spacing: -.01em; }
+    .hm-chips svg { width: calc(24 * var(--u)); height: calc(24 * var(--u)); }
+
+    .hm-dl-card { padding: 0 calc(28 * var(--u)) calc(44 * var(--u)) calc(30 * var(--u)); }
+    .hm-dl-head { height: calc(83 * var(--u)); padding: calc(9 * var(--u)) calc(5 * var(--u)) 0 calc(4 * var(--u)); margin: 0; gap: calc(22 * var(--u)); }
+    .hm-dl-head svg.ci { width: calc(34 * var(--u)); height: calc(34 * var(--u)); }
+    .hm-dl-head h2 { font-size: calc(25 * var(--u)); }
+    .hm-dl-head a { gap: calc(10 * var(--u)); font-size: calc(21 * var(--u)); }
+    .hm-dl-head a svg { width: calc(22 * var(--u)); height: calc(22 * var(--u)); }
+    .hm-dl { align-items: flex-start; margin: calc(18 * var(--u)) 0 0 calc(3 * var(--u)); }
+    .hm-date { width: calc(110 * var(--u)); height: calc(142 * var(--u)); margin: 0; border-radius: calc(18 * var(--u)); }
+    .hm-date small { font-size: calc(21 * var(--u)); line-height: calc(28 * var(--u)); }
+    .hm-date small:first-child { font-weight: 600; }
+    .hm-date b { font-size: calc(52 * var(--u)); line-height: calc(62 * var(--u)); }
+    .hm-bar { width: calc(3 * var(--u)); height: calc(122 * var(--u)); margin: calc(11 * var(--u)) calc(23 * var(--u)) 0 calc(22 * var(--u)); }
+    .hm-dl .tx { margin-top: calc(20 * var(--u)); }
+    .hm-dl .tx b { font-size: calc(20 * var(--u)); line-height: calc(30 * var(--u)); font-weight: 600; white-space: normal; }
+    .hm-dl .tx span { margin-top: calc(14 * var(--u)); gap: calc(12 * var(--u)); font-size: calc(21 * var(--u)); }
+    .hm-dl .tx svg { width: calc(26 * var(--u)); height: calc(26 * var(--u)); }
+    .hm-pri { height: calc(36 * var(--u)); margin: calc(35 * var(--u)) calc(-2 * var(--u)) 0 calc(12 * var(--u)); padding: 0 calc(13 * var(--u)); font-size: calc(17 * var(--u)); font-weight: 500; }
+    .hm-empty { padding-top: calc(22 * var(--u)); font-size: calc(20 * var(--u)); }
+
+    .hm-qa-card { grid-column: 1 / -1; padding: calc(24 * var(--u)) calc(22 * var(--u)) calc(18 * var(--u)); }
+    .hm-qa-t { height: calc(38 * var(--u)); gap: calc(25 * var(--u)); padding-left: calc(14 * var(--u)); font-size: calc(25.5 * var(--u)); }
+    .hm-qa-t svg { width: calc(28 * var(--u)); height: calc(38 * var(--u)); }
+    .hm-qa { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: calc(14 * var(--u)); margin-top: calc(11 * var(--u)); }
+    .hm-qa a { height: calc(119 * var(--u)); padding-top: calc(19 * var(--u)); border-radius: calc(26 * var(--u)); font-size: calc(20 * var(--u)); line-height: calc(21 * var(--u)); }
+    .hm-qa a svg { width: calc(36 * var(--u)); height: calc(36 * var(--u)); }
+    .hm-qa a span { padding-bottom: calc(4 * var(--u)); }
+  }
+</style>
+</head>
+<body class="pg-home">
+{% include "_nav.html" %}
+{% set _me = nav_user(request) %}
+
+<div class="home">
+  <div class="hm-hello">
+    <h1>Hello{% if _me %} {{ _me.name.split(' ')[0] }}{% endif %}! &#128075;</h1>
+    <p>Let&rsquo;s stay organized today!</p>
+    <img class="hm-bot" src="/static/icons/robot.svg" alt="" width="360" height="267">
+  </div>
+
+  {# ---- Ragra Bot chat widget ---- #}
+  {% set _last = chat_rows[-1] if chat_rows else None %}
+  <div class="hm-card hm-chat" role="region" aria-label="Ragra Bot chat">
+    <div class="hm-chat-top">
+      <div class="hm-chat-av"><img src="/static/icons/bot-avatar.png" alt="" width="92" height="92"></div>
+      <div class="hm-chat-main">
+        <div class="hm-chat-name">Ragra Bot <span class="hm-on">Online</span></div>
+        <div class="hm-bubble-row">
+          <div class="hm-bubble" id="hm-bubble">
+            {% if _last and _last.role == 'alert' %}
+              <b>New from Ragra</b><span class="tx">{{ _last.text }}</span>
+              {% if _last.link_path %}<a class="more" href="{{ _last.link_path }}">View Details</a>{% endif %}
+            {% else %}
+              <b>How can I help you today?</b><span class="tx">Ask me about your deadlines, or manage your tasks!</span>
+            {% endif %}
+          </div>
+          <a class="hm-go" href="/chat" aria-label="Open full chat" title="Open full chat">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg>
+          </a>
+        </div>
+      </div>
+    </div>
+    <form class="hm-input" id="hm-form" autocomplete="off">
+      <svg class="sp" viewBox="0 0 24 24"><path d="M10 2l2.2 6.8L19 11l-6.8 2.2L10 20l-2.2-6.8L1 11l6.8-2.2z" fill="#1E5BEF"/><path d="M19 1l.9 2.1L22 4l-2.1.9L19 7l-.9-2.1L16 4l2.1-.9z" fill="#1E5BEF"/></svg>
+      <input type="text" id="hm-text" maxlength="500" placeholder="Type your message..." aria-label="Message">
+      <button type="submit" aria-label="Send"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M21.7 2.3a1 1 0 0 0-1.1-.2l-18 7.5a1 1 0 0 0 .1 1.9l7.4 2.4 2.4 7.4a1 1 0 0 0 1.9.1l7.5-18a1 1 0 0 0-.2-1.1zM11.4 12.6L7 11.2l11.3-4.7z"/></svg></button>
+    </form>
+    <div class="hm-chips">
+      <a href="/tasks#new">Add Reminder
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M8 3v4M16 3v4M3 10h18"/></svg></a>
+      <a href="/overview#deadlines">View Deadlines
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="8"/><path d="M12 9v4M10 2h4"/></svg></a>
+      <button type="button" id="hm-help">Get Help
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 8.5a3.5 3.5 0 1 1 4.9 3.2c-.9.4-1.4 1.1-1.4 2v.8M12 19.5v.1"/></svg></button>
+    </div>
+  </div>
+
+  {# ---- Upcoming deadline ---- #}
+  <div class="hm-card hm-dl-card" role="region" aria-label="Upcoming deadline">
+    <div class="hm-dl-head">
+      <svg class="ci" viewBox="0 0 24 24" fill="none" stroke="#0B58FD" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M8 3v4M16 3v4M3 10h18"/><path d="M7.5 14h.01M11 14h.01M14.5 17h.01M7.5 17.5h.01" stroke-width="2.6"/></svg>
+      <h2>Upcoming Deadline</h2>
+      <a href="/tasks">View All <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h15M13 6l6 6-6 6"/></svg></a>
+    </div>
+    {% if nearest %}
+    <a class="hm-dl" href="/tasks/{{ nearest.id }}">
+      <div class="hm-date"><small>{{ nearest.month }}</small><b>{{ nearest.day }}</b><small>{{ nearest.weekday }}</small></div>
+      <span class="hm-bar"></span>
+      <div class="tx"><b>{{ nearest.title }}</b>
+        <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>{{ nearest.rel }} &bull; {{ nearest.time }}</span></div>
+      <span class="hm-pri {{ nearest.level }}">{{ nearest.level }}</span>
+    </a>
+    {% else %}<p class="hm-empty">Nothing due. You&rsquo;re all caught up.</p>{% endif %}
+  </div>
+
+  {# ---- Quick access ---- #}
+  <div class="hm-card hm-qa-card" role="region" aria-label="Quick access">
+    <h2 class="hm-qa-t"><svg viewBox="0 0 15 20"><path d="M10 0L0 11.5h6L4.5 20 15 8h-6.2z" fill="#FFB422"/></svg>Quick Access</h2>
+    <div class="hm-qa">
+      <a href="/tasks#new"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.5a6.3 6.3 0 0 0-6.3 6.3c0 4.7-2.2 6.6-2.2 6.6-.4.4-.2 1.1.4 1.1h16.2c.6 0 .8-.7.4-1.1 0 0-2.2-1.9-2.2-6.6A6.3 6.3 0 0 0 12 2.5z"/><path d="M9.5 18.5h5a2.5 2.5 0 0 1-5 0z"/></svg><span>Add<br>Reminder</span></a>
+      <a href="/overview#deadlines"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M8 3v4M16 3v4M3 10h18"/><path d="M7.5 14h.01M12 14h.01M16.5 14h.01M7.5 17.5h.01M12 17.5h.01" stroke-width="2.6"/></svg><span>View<br>Calendar</span></a>
+      <a href="/announcements"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="3.5" y="3.5" width="7" height="7" rx="2"/><rect x="13.5" y="3.5" width="7" height="7" rx="2"/><rect x="3.5" y="13.5" width="7" height="7" rx="2"/><rect x="13.5" y="13.5" width="7" height="7" rx="2"/></svg><span>Categories</span></a>
+      <a href="/account"><svg viewBox="0 0 24 24" fill="currentColor"><path fill-rule="evenodd" d="M10.3 2h3.4l.5 2.6 1.6.7 2.2-1.5 2.4 2.4-1.5 2.2.7 1.6 2.6.5v3.4l-2.6.5-.7 1.6 1.5 2.2-2.4 2.4-2.2-1.5-1.6.7-.5 2.6h-3.4l-.5-2.6-1.6-.7-2.2 1.5-2.4-2.4 1.5-2.2-.7-1.6L2 13.7v-3.4l2.6-.5.7-1.6-1.5-2.2 2.4-2.4 2.2 1.5 1.6-.7zM12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7z"/></svg><span>Settings</span></a>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var TOKEN = "{{ csrf_token_for(request) }}";
+  var bubble = document.getElementById('hm-bubble'), form = document.getElementById('hm-form'), input = document.getElementById('hm-text');
+  function api(url, opts) {
+    opts.headers = Object.assign({ 'Accept': 'application/json', 'X-CSRF-Token': TOKEN }, opts.headers || {});
+    return fetch(url, opts).then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); });
+  }
+  function say(title, text) {
+    bubble.textContent = '';
+    var b = document.createElement('b'); b.textContent = title; bubble.appendChild(b);
+    var s = document.createElement('span'); s.className = 'tx'; s.textContent = text; bubble.appendChild(s);
+  }
+  function send(text) {
+    if (!text.trim()) return;
+    input.value = '';
+    say('Ragra is typing...', '');
+    api('/chat/send', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ text: text }) })
+      .then(function (d) {
+        var reply = d.messages.filter(function (m) { return m.role !== 'user'; }).pop();
+        say('Ragra', reply ? reply.text : 'Done.');
+      })
+      .catch(function () { say('Could not reach Ragra', 'Please try again.'); });
+  }
+  form.addEventListener('submit', function (e) { e.preventDefault(); send(input.value); });
+  document.getElementById('hm-help').addEventListener('click', function () { send('help'); });
+})();
+</script>
+</body>
+</html>

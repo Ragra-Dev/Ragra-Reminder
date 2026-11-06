@@ -2,14 +2,14 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Ragra - Never miss a Classroom deadline</title>
+<title>Ragra Reminder - Never miss what's next</title>
 {% include "_theme.html" %}
 <style>body { padding-top: 28px; }</style>
 </head>
 <body class="pg-welcome">
 <div class="landing">
-  <div class="logo">R</div>
-  <h1>Never miss a Classroom deadline.</h1>
+  {% from "_logo.html" import mark %}<div class="logo">{{ mark(68) }}</div>
+  <h1>Never miss what's next.</h1>
   <p class="lead">Ragra reads your Google Classroom with your permission, shows what is due,
     and reminds you before every deadline.</p>
   <div class="cta-row">

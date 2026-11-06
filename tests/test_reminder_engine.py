@@ -55,8 +55,12 @@ def test_normal_task_gets_full_countdown():
     assert "T_MINUS_2D" in types
     assert "DUE_TODAY" in types
     assert "FINAL_1H" in types
+    assert types[-1] == "DEADLINE_REACHED"
     for p in plan:
-        assert discovered <= p.scheduled_for < deadline
+        if p.reminder_type == "DEADLINE_REACHED":
+            assert p.scheduled_for == deadline
+        else:
+            assert discovered <= p.scheduled_for < deadline
 
 
 def test_short_deadline_uses_compressed_reminders_not_full_cadence():
@@ -69,7 +73,7 @@ def test_short_deadline_uses_compressed_reminders_not_full_cadence():
     assert "T_MINUS_5D" not in types
     assert "T_MINUS_2D" not in types
     # No more than a handful of pings for a short-fuse task.
-    assert len(plan) <= 4
+    assert len(plan) <= 5
 
 
 def test_due_within_hours_gets_minimal_burst():
@@ -78,7 +82,7 @@ def test_due_within_hours_gets_minimal_burst():
     plan = compute_reminder_plan(actual_deadline=deadline, discovered_at=discovered)
     types = [p.reminder_type for p in plan]
     assert "NEW_ASSIGNMENT" in types
-    assert len(plan) <= 3
+    assert len(plan) <= 4
 
 
 def test_already_overdue_when_discovered_gets_no_reminders():

@@ -92,6 +92,8 @@ class Config:
     whatsapp_template: str | None = None
     whatsapp_template_lang: str = "en"
     whatsapp_display_number: str | None = None
+    telegram_bot_token: str | None = None
+    telegram_bot_username: str | None = None
     gemini_api_key: str | None = None
     gemini_model: str = "gemini-2.5-flash"
 
@@ -174,6 +176,8 @@ def load_config() -> Config:
         whatsapp_template=(os.environ.get("RAGRA_WHATSAPP_TEMPLATE") or "").strip() or None,
         whatsapp_template_lang=(os.environ.get("RAGRA_WHATSAPP_TEMPLATE_LANG") or "en").strip(),
         whatsapp_display_number=(os.environ.get("RAGRA_WHATSAPP_DISPLAY_NUMBER") or "").strip() or None,
+        telegram_bot_token=(os.environ.get("RAGRA_TELEGRAM_BOT_TOKEN") or "").strip() or None,
+        telegram_bot_username=(os.environ.get("RAGRA_TELEGRAM_BOT_USERNAME") or "").strip().lstrip("@") or None,
         gemini_api_key=(os.environ.get("RAGRA_GEMINI_API_KEY") or "").strip() or None,
         gemini_model=(os.environ.get("RAGRA_GEMINI_MODEL") or "gemini-2.5-flash").strip(),
     )

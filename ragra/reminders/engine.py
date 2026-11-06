@@ -72,7 +72,10 @@ def compute_reminder_plan(
 
     # Only keep reminders that are still in the future relative to discovery,
     # and that fire strictly before the deadline itself.
-    return [r for r in plan if discovered_at <= r.scheduled_for < actual_deadline]
+    plan = [r for r in plan if discovered_at <= r.scheduled_for < actual_deadline]
+    # The countdown ends with the moment the limit is reached.
+    plan.append(ReminderPlan("DEADLINE_REACHED", actual_deadline))
+    return plan
 
 
 def _same_day_morning(deadline: datetime) -> datetime:
@@ -96,6 +99,7 @@ def reminder_message(reminder_type: str, task_title: str, course_code: str | Non
         # authoritative deadline. Routed through the reminders table on
         # purpose, so it inherits the same idempotency, bounded retry and
         # delivery recording as everything else.
+        "DEADLINE_REACHED": f"Deadline reached: {label}",
         "DEADLINE_CHANGED": f"Deadline changed: {label}",
         # A new Classroom announcement (see classroom_sync._apply_upsert).
         "NEW_ANNOUNCEMENT": f"New announcement: {label}",

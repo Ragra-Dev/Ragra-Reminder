@@ -322,3 +322,29 @@ def test_restart_recovery_reminder_state_persists_across_reconnect(tmp_path):
     assert summary.sent == 0
     assert provider.calls == []
     conn2.close()
+
+
+def test_a_sent_alert_also_lands_in_the_in_app_chat(conn):
+    _make_task_with_reminder(conn, scheduled_for=PAST)
+    uid = owner_id(conn)
+
+    dispatch_due_reminders(
+        conn, providers=[FakeProvider(NotifyResult(ok=True))], now=NOW, user_id=uid
+    )
+    dispatch_due_reminders(
+        conn, providers=[FakeProvider(NotifyResult(ok=True))], now=NOW, user_id=uid
+    )
+
+    alerts = [m for m in repo.chat_messages(conn, user_id=uid) if m["role"] == "alert"]
+    assert len(alerts) == 1
+
+
+def test_a_failed_send_adds_nothing_to_the_in_app_chat(conn):
+    _make_task_with_reminder(conn, scheduled_for=PAST)
+    uid = owner_id(conn)
+
+    dispatch_due_reminders(
+        conn, providers=[FakeProvider(NotifyResult(ok=False, error="down"))], now=NOW, user_id=uid
+    )
+
+    assert repo.chat_messages(conn, user_id=uid) == []

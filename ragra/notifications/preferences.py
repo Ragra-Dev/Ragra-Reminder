@@ -29,6 +29,7 @@ from ragra.adapters.notify import (
     HermesProvider,
     Notification,
     NotificationProvider,
+    TelegramProvider,
     WhatsAppCloudProvider,
 )
 from ragra.config import Config
@@ -48,6 +49,9 @@ class NotificationPreferences:
     # Hosted WhatsApp (Meta Cloud API): digits only, international form.
     whatsapp_enabled: bool = False
     whatsapp_to: str | None = None
+    # Telegram: the chat id is only ever set by the link handshake with the bot.
+    telegram_enabled: bool = False
+    telegram_chat_id: str | None = None
 
     @property
     def any_channel_configured(self) -> bool:
@@ -55,6 +59,7 @@ class NotificationPreferences:
             (self.email_enabled and self.email_to)
             or (self.hermes_enabled and self.hermes_target)
             or (self.whatsapp_enabled and self.whatsapp_to)
+            or (self.telegram_enabled and self.telegram_chat_id)
         )
 
 
@@ -77,6 +82,8 @@ def load_preferences(conn: sqlite3.Connection, *, user_id: int) -> NotificationP
         hermes_target=row["hermes_target"],
         whatsapp_enabled=bool(row["whatsapp_enabled"]),
         whatsapp_to=row["whatsapp_to"],
+        telegram_enabled=bool(row["telegram_enabled"]),
+        telegram_chat_id=row["telegram_chat_id"],
     )
 
 
@@ -87,8 +94,9 @@ def save_preferences(
     conn.execute(
         """INSERT INTO notification_preferences
              (user_id, email_enabled, email_to, hermes_enabled, hermes_target,
-              whatsapp_enabled, whatsapp_to, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+              whatsapp_enabled, whatsapp_to, telegram_enabled, telegram_chat_id,
+              created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(user_id) DO UPDATE SET
              email_enabled = excluded.email_enabled,
              email_to = excluded.email_to,
@@ -96,6 +104,8 @@ def save_preferences(
              hermes_target = excluded.hermes_target,
              whatsapp_enabled = excluded.whatsapp_enabled,
              whatsapp_to = excluded.whatsapp_to,
+             telegram_enabled = excluded.telegram_enabled,
+             telegram_chat_id = excluded.telegram_chat_id,
              updated_at = excluded.updated_at""",
         (
             user_id,
@@ -105,6 +115,8 @@ def save_preferences(
             preferences.hermes_target,
             1 if preferences.whatsapp_enabled else 0,
             preferences.whatsapp_to,
+            1 if preferences.telegram_enabled else 0,
+            preferences.telegram_chat_id,
             now,
             now,
         ),
@@ -144,6 +156,15 @@ def providers_for(
                 to_number=preferences.whatsapp_to,
                 template=config.whatsapp_template,
                 template_lang=config.whatsapp_template_lang,
+                base_url=config.web_base_url,
+            )
+        )
+
+    if preferences.telegram_enabled and preferences.telegram_chat_id and config.telegram_bot_token:
+        providers.append(
+            TelegramProvider(
+                bot_token=config.telegram_bot_token,
+                chat_id=preferences.telegram_chat_id,
                 base_url=config.web_base_url,
             )
         )
@@ -241,6 +262,11 @@ def describe(preferences: NotificationPreferences) -> dict[str, str]:
             if preferences.whatsapp_enabled and preferences.whatsapp_to
             else "off"
         ),
+        "telegram": (
+            "on -> connected chat"
+            if preferences.telegram_enabled and preferences.telegram_chat_id
+            else "off"
+        ),
     }
 
 
@@ -254,6 +280,7 @@ _CHANNEL_PROVIDERS: dict[str, tuple[type, ...]] = {
     "email": (EmailProvider, BrevoEmailProvider),
     "hermes": (HermesProvider,),
     "whatsapp": (WhatsAppCloudProvider,),
+    "telegram": (TelegramProvider,),
 }
 
 
@@ -276,6 +303,10 @@ def channels_needing_welcome(
         not before.whatsapp_enabled or before.whatsapp_to != after.whatsapp_to
     ):
         channels.append("whatsapp")
+    if after.telegram_enabled and after.telegram_chat_id and (
+        not before.telegram_enabled or before.telegram_chat_id != after.telegram_chat_id
+    ):
+        channels.append("telegram")
     return channels
 
 

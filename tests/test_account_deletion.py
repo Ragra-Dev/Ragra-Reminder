@@ -103,6 +103,8 @@ def _populate(conn, user_id: int, key: bytes, *, label: str) -> dict:
         conn, state_hash=f"reconnect-hash-{label}", user_id=user_id, service=gc.CLASSROOM,
         code_verifier="verifier", now="2026-09-01T00:00:00+00:00", expires_at="2026-09-01T00:10:00+00:00",
     )
+    repo.create_telegram_link_code(conn, user_id=user_id)
+    repo.add_chat_message(conn, user_id=user_id, role="bot", text="hello")
     save_profile(
         conn, user_id=user_id, program="CS", batch_year="2025",
         enrollment_start_year=2025, enrollment_start_term="FALL",

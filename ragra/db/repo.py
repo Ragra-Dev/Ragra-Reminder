@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 
 def now_iso() -> str:
@@ -1215,6 +1215,15 @@ def insert_reminder_if_absent(
     return cur.rowcount > 0
 
 
+def _stale_cutoff(now: str) -> str:
+    """Oldest scheduled time at which a "deadline reached" alert is still worth
+    sending (30 minutes of grace for ticks that were delayed)."""
+    moment = datetime.fromisoformat(now)
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return (moment - timedelta(minutes=30)).isoformat()
+
+
 def due_pending_reminders(conn: sqlite3.Connection, *, user_id: int, now: str) -> list[sqlite3.Row]:
     """PENDING reminders due to fire, including ones currently waiting out a
     bounded retry backoff (excluded until next_retry_at passes).
@@ -1235,11 +1244,17 @@ def due_pending_reminders(conn: sqlite3.Connection, *, user_id: int, now: str) -
            WHERE reminders.user_id = ?
            AND reminders.status = 'PENDING' AND reminders.scheduled_for <= ?
            AND (reminders.next_retry_at IS NULL OR reminders.next_retry_at <= ?)
-           AND tasks.status NOT IN ('COMPLETED', 'CANCELLED', 'MISSED')
+           AND (
+                tasks.status NOT IN ('COMPLETED', 'CANCELLED', 'MISSED')
+                -- "Deadline reached" fires at the moment a task turns MISSED, so
+                -- it must still go out then - but not days late after downtime.
+                OR (reminders.reminder_type = 'DEADLINE_REACHED' AND tasks.status = 'MISSED')
+           )
+           AND (reminders.reminder_type != 'DEADLINE_REACHED' OR reminders.scheduled_for >= ?)
            AND courses.state IN ('ACTIVE', 'PROVISIONED')
            AND LOWER(tasks.relevance) != 'other_section'
            ORDER BY reminders.scheduled_for ASC""",
-        (user_id, now, now),
+        (user_id, now, now, _stale_cutoff(now)),
     ).fetchall()
 
 
@@ -1737,3 +1752,185 @@ def user_id_for_whatsapp(conn: sqlite3.Connection, *, number: str) -> int | None
         (number,),
     ).fetchall()
     return rows[0]["user_id"] if len(rows) == 1 else None
+
+
+_TELEGRAM_CODE_TTL = timedelta(minutes=30)
+
+
+def create_telegram_link_code(conn: sqlite3.Connection, *, user_id: int) -> str:
+    """A one-time code that, when the bot receives it as "/start <code>", ties
+    that Telegram chat to this account. Older unused codes for the same user
+    are dropped so only the latest link works."""
+    import secrets
+
+    conn.execute("DELETE FROM telegram_link_codes WHERE user_id = ?", (user_id,))
+    code = secrets.token_urlsafe(12)
+    conn.execute(
+        "INSERT INTO telegram_link_codes (code, user_id, created_at) VALUES (?, ?, ?)",
+        (code, user_id, now_iso()),
+    )
+    conn.commit()
+    return code
+
+
+def consume_telegram_link_code(conn: sqlite3.Connection, *, code: str) -> int | None:
+    """Spend a link code, returning the account it was minted for, or None if
+    it is unknown, expired or already used.
+
+    ragra:token-scoped - the code IS the credential: it is unguessable,
+    single-use, short-lived, and was minted for a signed-in user."""
+    row = conn.execute(
+        "SELECT user_id, created_at FROM telegram_link_codes WHERE code = ?", (code,)
+    ).fetchone()
+    if row is None:
+        return None
+    conn.execute("DELETE FROM telegram_link_codes WHERE code = ?", (code,))
+    conn.commit()
+    try:
+        created = datetime.fromisoformat(row["created_at"])
+    except ValueError:
+        return None
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=timezone.utc)
+    if datetime.now(timezone.utc) - created > _TELEGRAM_CODE_TTL:
+        return None
+    return row["user_id"]
+
+
+def connect_telegram_chat(conn: sqlite3.Connection, *, user_id: int, chat_id: str) -> None:
+    """Store the chat this account's alerts go to, and switch Telegram on.
+    A chat belongs to one account: any other account holding it is released."""
+    now = now_iso()
+    conn.execute(
+        "UPDATE notification_preferences SET telegram_chat_id = NULL, telegram_enabled = 0, updated_at = ? "
+        "WHERE telegram_chat_id = ? AND user_id != ?",
+        (now, chat_id, user_id),
+    )
+    conn.execute(
+        """INSERT INTO notification_preferences
+             (user_id, telegram_enabled, telegram_chat_id, created_at, updated_at)
+           VALUES (?, 1, ?, ?, ?)
+           ON CONFLICT(user_id) DO UPDATE SET
+             telegram_enabled = 1, telegram_chat_id = excluded.telegram_chat_id,
+             updated_at = excluded.updated_at""",
+        (user_id, chat_id, now, now),
+    )
+    conn.commit()
+
+
+def disconnect_telegram_chat(conn: sqlite3.Connection, *, user_id: int) -> None:
+    conn.execute(
+        "UPDATE notification_preferences SET telegram_enabled = 0, telegram_chat_id = NULL, updated_at = ? "
+        "WHERE user_id = ?",
+        (now_iso(), user_id),
+    )
+    conn.commit()
+
+
+def user_id_for_telegram(conn: sqlite3.Connection, *, chat_id: str) -> int | None:
+    """Who owns this Telegram chat, or None. A chat belongs to one account; if
+    two ever claim it, nobody is returned.
+
+    ragra:token-scoped - the chat id is the lookup key, and an inbound message
+    only reaches this after Telegram's webhook secret has been verified."""
+    rows = conn.execute(
+        "SELECT user_id FROM notification_preferences WHERE telegram_chat_id = ? AND telegram_enabled = 1",
+        (chat_id,),
+    ).fetchall()
+    return rows[0]["user_id"] if len(rows) == 1 else None
+
+
+# ---------------------------------------------------------------------------
+# In-app chat (see ragra/web/app.py /chat)
+# ---------------------------------------------------------------------------
+
+_CHAT_KEEP = 200
+
+
+def add_chat_message(
+    conn: sqlite3.Connection,
+    *,
+    user_id: int,
+    role: str,
+    text: str,
+    link_path: str | None = None,
+    next_nag_at: str | None = None,
+    repeat_of: int | None = None,
+) -> int:
+    """Append one message to this account's thread and trim it to the newest
+    _CHAT_KEEP so the table cannot grow without bound."""
+    cursor = conn.execute(
+        "INSERT INTO chat_messages (user_id, role, text, link_path, next_nag_at, repeat_of, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (user_id, role, text, link_path, next_nag_at, repeat_of, now_iso()),
+    )
+    conn.execute(
+        "DELETE FROM chat_messages WHERE user_id = ? AND id NOT IN "
+        "(SELECT id FROM chat_messages WHERE user_id = ? ORDER BY id DESC LIMIT ?)",
+        (user_id, user_id, _CHAT_KEEP),
+    )
+    conn.commit()
+    return cursor.lastrowid
+
+
+def chat_messages(
+    conn: sqlite3.Connection, *, user_id: int, after_id: int = 0, limit: int = 100
+) -> list[sqlite3.Row]:
+    """Messages newer than after_id, oldest first (the newest `limit` of them)."""
+    rows = conn.execute(
+        "SELECT * FROM (SELECT * FROM chat_messages WHERE user_id = ? AND id > ? ORDER BY id DESC LIMIT ?) "
+        "ORDER BY id",
+        (user_id, after_id, limit),
+    ).fetchall()
+    return rows
+
+
+def clear_chat(conn: sqlite3.Connection, *, user_id: int) -> None:
+    conn.execute("DELETE FROM chat_messages WHERE user_id = ?", (user_id,))
+    conn.commit()
+
+
+def ack_chat_message(conn: sqlite3.Connection, *, user_id: int, message_id: int) -> bool:
+    """The person pressed Received: stop repeating this alert. Returns False
+    when the message is not theirs or was already acknowledged."""
+    row = conn.execute(
+        "SELECT id, repeat_of FROM chat_messages WHERE id = ? AND user_id = ? AND role = 'alert'",
+        (message_id, user_id),
+    ).fetchone()
+    if row is None:
+        return False
+    root = row["repeat_of"] or row["id"]
+    cursor = conn.execute(
+        "UPDATE chat_messages SET acked_at = ?, next_nag_at = NULL "
+        "WHERE user_id = ? AND (id = ? OR repeat_of = ?) AND acked_at IS NULL",
+        (now_iso(), user_id, root, root),
+    )
+    conn.commit()
+    return cursor.rowcount > 0
+
+
+def ack_all_chat_alerts(conn: sqlite3.Connection, *, user_id: int) -> int:
+    cursor = conn.execute(
+        "UPDATE chat_messages SET acked_at = ?, next_nag_at = NULL "
+        "WHERE user_id = ? AND role = 'alert' AND acked_at IS NULL",
+        (now_iso(), user_id),
+    )
+    conn.commit()
+    return cursor.rowcount
+
+
+def due_nags(conn: sqlite3.Connection, *, user_id: int, now: str, limit: int = 20) -> list[sqlite3.Row]:
+    """Unacknowledged alerts whose next repeat is due."""
+    return conn.execute(
+        "SELECT * FROM chat_messages WHERE user_id = ? AND role = 'alert' AND acked_at IS NULL "
+        "AND next_nag_at IS NOT NULL AND next_nag_at <= ? ORDER BY id LIMIT ?",
+        (user_id, now, limit),
+    ).fetchall()
+
+
+def bump_nag(conn: sqlite3.Connection, *, user_id: int, message_id: int, next_at: str) -> None:
+    conn.execute(
+        "UPDATE chat_messages SET nag_count = nag_count + 1, next_nag_at = ? WHERE id = ? AND user_id = ?",
+        (next_at, message_id, user_id),
+    )
+    conn.commit()

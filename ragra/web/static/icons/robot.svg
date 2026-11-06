@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 534" width="720" height="534" role="img" aria-label="Ragra Bot">
+  <!-- Ragra Bot mascot, redrawn as vector art from the home-page mockup. Bottom edge is flat so it can rest on a card. -->
+  <defs>
+    <linearGradient id="rb-blue" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#5B9BFF"/><stop offset=".55" stop-color="#2563EB"/><stop offset="1" stop-color="#1A47C9"/>
+    </linearGradient>
+    <linearGradient id="rb-blue-dark" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2D5BE0"/><stop offset="1" stop-color="#1A3AAE"/>
+    </linearGradient>
+    <linearGradient id="rb-shell" x1="0" y1="0" x2=".6" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/><stop offset=".6" stop-color="#F2F6FE"/><stop offset="1" stop-color="#CFDCF8"/>
+    </linearGradient>
+    <linearGradient id="rb-screen" x1="0" y1="0" x2=".4" y2="1">
+      <stop offset="0" stop-color="#26307A"/><stop offset=".5" stop-color="#1A2262"/><stop offset="1" stop-color="#12184A"/>
+    </linearGradient>
+    <radialGradient id="rb-ball" cx=".35" cy=".3" r=".75">
+      <stop offset="0" stop-color="#7DB3FF"/><stop offset=".55" stop-color="#2F6BF2"/><stop offset="1" stop-color="#1D48C8"/>
+    </radialGradient>
+    <linearGradient id="rb-paw" x1="0" y1="0" x2=".3" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#DCE5F8"/>
+    </linearGradient>
+    <filter id="rb-soft" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="10" stdDeviation="12" flood-color="#1D4ED8" flood-opacity=".22"/>
+    </filter>
+  </defs>
+
+  <!-- sparkle lines -->
+  <g stroke="#FBBF24" stroke-width="19" stroke-linecap="round">
+    <line x1="122" y1="104" x2="140" y2="146"/>
+    <line x1="58" y1="152" x2="104" y2="180"/>
+    <line x1="42" y1="228" x2="90" y2="223"/>
+  </g>
+
+  <!-- body: neck and right shoulder, behind the head -->
+  <ellipse cx="392" cy="462" rx="78" ry="30" fill="url(#rb-blue-dark)" stroke="#142265" stroke-width="5"/>
+  <path d="M470 534c8-40 44-62 86-58 40 4 62 30 64 58z" fill="url(#rb-blue)" stroke="#142265" stroke-width="5" stroke-linejoin="round"/>
+
+  <g filter="url(#rb-soft)">
+    <g transform="rotate(10 420 275)">
+      <!-- antenna -->
+      <line x1="470" y1="116" x2="470" y2="70" stroke="#2457E0" stroke-width="11" stroke-linecap="round"/>
+      <line x1="470" y1="116" x2="470" y2="70" stroke="#142265" stroke-width="3" stroke-linecap="round" opacity=".35"/>
+      <circle cx="470" cy="48" r="27" fill="url(#rb-ball)" stroke="#142265" stroke-width="5"/>
+      <ellipse cx="460" cy="38" rx="9" ry="6" fill="#fff" opacity=".7"/>
+
+      <!-- ears / headphones -->
+      <rect x="146" y="200" width="66" height="150" rx="32" fill="url(#rb-blue)" stroke="#142265" stroke-width="5"/>
+      <rect x="166" y="222" width="22" height="104" rx="11" fill="#1A3AAE" opacity=".45"/>
+      <rect x="628" y="200" width="66" height="150" rx="32" fill="url(#rb-blue)" stroke="#142265" stroke-width="5"/>
+      <rect x="652" y="222" width="22" height="104" rx="11" fill="#1A3AAE" opacity=".45"/>
+
+      <!-- head shell -->
+      <rect x="185" y="100" width="470" height="350" rx="170" fill="url(#rb-shell)" stroke="#142265" stroke-width="6"/>
+      <path d="M250 150c40-22 110-30 170-30" fill="none" stroke="#fff" stroke-width="12" stroke-linecap="round" opacity=".9"/>
+
+      <!-- face screen -->
+      <rect x="226" y="140" width="388" height="256" rx="112" fill="url(#rb-screen)" stroke="#142265" stroke-width="4"/>
+      <path d="M268 200c20-28 60-40 110-42" fill="none" stroke="#5A67C8" stroke-width="8" stroke-linecap="round" opacity=".45"/>
+
+      <!-- happy eyes and smile -->
+      <g fill="none" stroke="#FFFFFF" stroke-width="16" stroke-linecap="round">
+        <path d="M300 268c6-30 52-30 60 0"/>
+        <path d="M478 268c6-30 52-30 60 0"/>
+        <path d="M392 302c12 16 40 16 52 0"/>
+      </g>
+    </g>
+  </g>
+
+  <!-- left arm and paw resting on the edge -->
+  <path d="M26 534c0-58 34-102 92-112l46 18-14 94z" fill="url(#rb-blue)" stroke="#142265" stroke-width="5" stroke-linejoin="round"/>
+  <path d="M104 478c-4-46 32-76 84-76 46 0 70 30 68 70-2 38-22 62-58 62h-60c-22 0-32-24-34-56z"
+        fill="url(#rb-paw)" stroke="#142265" stroke-width="5" stroke-linejoin="round"/>
+  <path d="M150 400c10-14 30-18 46-12" fill="none" stroke="#142265" stroke-width="5" stroke-linecap="round"/>
+  <g fill="none" stroke="#142265" stroke-width="4.5" stroke-linecap="round">
+    <path d="M162 486c-4 16-2 32 4 46"/>
+    <path d="M204 482c-4 18-2 34 6 50"/>
+  </g>
+  <path d="M130 430c14-10 34-14 52-12" fill="none" stroke="#fff" stroke-width="7" stroke-linecap="round" opacity=".9"/>
+</svg>

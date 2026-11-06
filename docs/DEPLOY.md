@@ -37,7 +37,38 @@ instance.
 7. Open the URL, sign in, then connect Classroom and Calendar from the
    Account page.
 
+## Telegram alerts and chat (optional, free, recommended)
+
+The simplest hosted chat channel: no business account, no approvals, no
+24-hour window. The bot receives messages through a webhook that Ragra
+registers by itself when the server starts.
+
+1. In Telegram, open **@BotFather**, send `/newbot`, pick a name and a username
+   ending in `bot`. It replies with a token.
+2. Railway Variables:
+
+| Variable | Value |
+|---|---|
+| `RAGRA_TELEGRAM_BOT_TOKEN` | the token from BotFather |
+| `RAGRA_TELEGRAM_BOT_USERNAME` | the bot's username, with or without `@` |
+| `RAGRA_WEB_BASE_URL` | `https://<your-domain>` (must be https; already set for email links) |
+| `RAGRA_GEMINI_API_KEY` | optional, free key from https://aistudio.google.com/apikey for free-form questions |
+
+3. Wait for the redeploy. The log shows `telegram: webhook registered`.
+   (`python -m ragra.cli telegram-set-webhook` does the same by hand.)
+4. In Ragra: Account -> Notifications -> **Connect Telegram**, then press
+   **Start** in the chat that opens. Ragra links that chat to your account and
+   replies. Ask `pending`, `today`, `overdue`, `week`, `news`, or any question.
+
+Alerts for new announcements, assignments, materials and deadline changes then
+arrive in that chat, filtered to your section. The link code is single-use and
+expires after 30 minutes; the chat id is only ever set by that handshake.
+
 ## WhatsApp alerts and chat (optional)
+
+Note: a brand-new, unverified Meta business account can be locked by Meta
+(error 131031 "Business Account locked"), after which nothing is delivered.
+Telegram above avoids that.
 
 Ragra can send alerts to WhatsApp and answer questions there ("pending",
 "today", "overdue", or a free question) through Meta's WhatsApp Cloud API. It

@@ -1,0 +1,116 @@
+{# Shared app shell, included by _nav.html on every signed-in page: the soft blue look of the home page,
+   a phone/tablet header (logo, bell, profile) and a bottom bar (Home, Tasks, Stats, Profile).
+   On desktop the sidebar from _nav.html is used instead. Needs _p (request path) and _u (nav user). #}
+<link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  /* ---- soft blue surface for every page ---- */
+  html body { background:
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 390 845' preserveAspectRatio='none'%3E%3Cdefs%3E%3ClinearGradient id='a' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%2398BCFD'/%3E%3Cstop offset='1' stop-color='%23578DFB'/%3E%3C/linearGradient%3E%3ClinearGradient id='b' x1='0' y1='0' x2='1' y2='0'%3E%3Cstop offset='0' stop-color='%23EAF0FF' stop-opacity='0'/%3E%3Cstop offset='1' stop-color='%23A9C4FD'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cpath d='M0 0h390v120C300 60 200 150 120 110S20 40 0 60z' fill='%23F3F5FE' opacity='.8'/%3E%3Cpath d='M390 95c-38 25-55 70-34 130s22 70 34 90z' fill='url(%23a)' opacity='.85'/%3E%3Cpath d='M390 625c-70 0-150 30-215 120c90-40 160-50 215-45z' fill='url(%23b)' opacity='.75'/%3E%3C/svg%3E") top center / 100% 100% no-repeat fixed,
+      linear-gradient(180deg, #E6EBFD 0%, #ECF0FE 45%, #EEF1FE 100%) fixed; }
+  :root { --clay: #FFFFFF; --heading: #0F1B4D; --text: #0F1E45; }
+  .task, .item, .field, .reminder-row, .history-row, section, .priority, .fold, .profile-card, .feature, .doc, .clay,
+  .task[class*="tone-"], .item[class*="tone-"], .field[class*="tone-"], .fold[class*="tone-"], .profile-card[class*="tone-"], section[class*="tone-"], .reminder-row[class*="tone-"] {
+    background: rgba(255,255,255,.94); border: 0; border-radius: 24px; box-shadow: 0 14px 30px -18px rgba(37,99,235,.38), 0 2px 6px rgba(15,30,69,.05); }
+  section, .doc { border-radius: 28px; }
+  .task:hover { transform: none; box-shadow: 0 18px 34px -16px rgba(37,99,235,.45), 0 2px 6px rgba(15,30,69,.05); }
+  .fold .task, .fold .reminder-row { background: #F1F5FF; box-shadow: none; }
+  .empty { background: #EAF0FD; box-shadow: none; border-radius: 20px; }
+  table { background: #fff; border: 0; border-radius: 20px; box-shadow: 0 14px 30px -18px rgba(37,99,235,.38); }
+  th { background: #EAF0FD; }
+
+  /* buttons: flat, rounded */
+  button, .btn { background: #E4EAFB; color: #1D4ED8; box-shadow: none; }
+  button:hover, .btn:hover { transform: none; filter: brightness(.97); box-shadow: none; }
+  section button[type=submit], .new-task button[type=submit], .btn-primary, .fold button[type=submit], .btn-secondary, .task button[type=submit] {
+    background: #2563EB; color: #fff; text-shadow: none; box-shadow: 0 8px 16px -6px rgba(37,99,235,.55); }
+  .btn-secondary:hover, .task button[type=submit]:hover, .btn-primary:hover { box-shadow: 0 8px 16px -6px rgba(37,99,235,.55); }
+  .btn-sun { background: #FBBF24; color: #3d2a00; text-shadow: none; box-shadow: 0 8px 16px -6px rgba(217,154,0,.55); }
+  .btn-ghost { background: transparent; color: var(--muted); }
+  .danger button, button.btn-danger { background: #E5484D; box-shadow: 0 8px 16px -6px rgba(214,47,58,.5); }
+
+  /* inputs: white with a soft outline */
+  input[type=text], input[type=date], input[type=email], input[type=tel], input[type=password], select, textarea { background: #fff; border: 1.5px solid #D5DFFA; box-shadow: none; }
+  input:focus, select:focus, textarea:focus { border-color: #2563EB; box-shadow: 0 0 0 4px rgba(37,99,235,.16); }
+
+  /* tab strip: light pill instead of the dark one */
+  .seg { background: #E4EAFB; border: 0; box-shadow: none; }
+  .seg label { color: #1D4ED8; }
+  .seg label .cnt { background: rgba(37,99,235,.14); color: #1D4ED8; }
+
+  /* overview hero: plain blue card */
+  .hero-wrap { filter: none; }
+  .hero { -webkit-mask: none; mask: none; border-radius: 28px; padding: 26px; background: linear-gradient(135deg, #2563EB, #1D4ED8); box-shadow: 0 18px 34px -18px rgba(37,99,235,.6); }
+  .stat .ico, .stat[class*="tone-"] .ico { box-shadow: 0 10px 20px -12px rgba(37,99,235,.45); border: 0; }
+  .page-head h1, h1 { color: #0F1B4D; }
+
+  /* ---- phone / tablet chrome, measured from the mockup (390px-wide phone) ---- */
+  .hm-top, .hm-nav { display: none; }
+  .hm-top { align-items: center; gap: 0; height: 52px; }
+  .hm-top .brand-t { flex: 1; display: flex; align-items: center; gap: 11px; font: 800 19px/20px "Plus Jakarta Sans", "Inter", system-ui, sans-serif; letter-spacing: -.01em; color: #070B45; text-decoration: none; }
+  .hm-top .brand-t img { width: 54px; height: auto; display: block; margin-left: 7px; }
+  .hm-bell { position: relative; width: 36px; height: 36px; margin-right: 12px; display: grid; place-items: center; color: #070B45; text-decoration: none; }
+  .hm-bell svg { width: 23px; height: 23px; }
+  .hm-bell .dot { position: absolute; top: 1px; right: 3px; width: 9px; height: 9px; border-radius: 50%; background: #FF3B30; }
+  .hm-bell .nb { position: absolute; top: -4px; right: -6px; }
+  .hm-av { width: 36px; height: 36px; margin-right: 3px; border-radius: 50%; background: #1380FE; color: #fff; display: grid; place-items: center; font: 600 17px/1 "Plus Jakarta Sans", system-ui, sans-serif; text-decoration: none; overflow: hidden; box-shadow: 0 4px 10px rgba(19,128,254,.3); }
+  .hm-av img { width: 100%; height: 100%; object-fit: cover; }
+  .hm-nav { position: fixed; left: 0; right: 0; bottom: 0; z-index: 50; max-width: 840px; margin: 0 auto; height: calc(84px + env(safe-area-inset-bottom)); padding: 0 6px env(safe-area-inset-bottom);
+    background: #F8F9FD; border-radius: 30px 30px 0 0; box-shadow: 0 -6px 24px rgba(60,90,200,.10); justify-content: space-around; align-items: flex-start; }
+  .hm-nav a { position: relative; flex: 1; display: flex; flex-direction: column; align-items: center; gap: 5px; padding-top: 15px; color: #4C559F; font: 500 12.5px/1 "Plus Jakarta Sans", system-ui, sans-serif; text-decoration: none; }
+  .hm-nav a svg { width: 23px; height: 23px; }
+  .hm-nav a.on { color: #0B47F5; font-weight: 700; }
+  .hm-nav a.on::before { content: ""; position: absolute; top: 2px; left: 50%; width: 41px; margin-left: -20.5px; height: 2.5px; border-radius: 2px; background: #0B58FD; }
+  @media (max-width: 980px) {
+    .appbar, .dock { display: none !important; }
+    body:has(> .hm-top) { padding: 20px 14px 110px; }
+    .hm-top { display: flex; }
+    .hm-nav { display: flex; }
+  }
+  @media (max-width: 360px) {
+    body:has(> .hm-top) { padding: 14px 10px 104px; }
+    .hm-top .brand-t { font-size: 17px; line-height: 17px; } .hm-top .brand-t img { width: 46px; }
+    .hm-nav a { font-size: 12.5px; }
+  }
+  @media (max-height: 460px) and (orientation: landscape) { .hm-nav { position: static; margin-top: 14px; border-radius: 30px; } body:has(> .hm-top) { padding-bottom: 20px; } }
+
+  /* ---- desktop (981px+): sidebar and page frame measured from the desktop mockup (1672px wide);
+     every size is scaled by --u so the layout keeps its proportions on any desktop width ---- */
+  @media (min-width: 981px) {
+    :root { --u: calc(100vw / 1672); }
+    html body { background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1672 941' preserveAspectRatio='none'%3E%3Cdefs%3E%3ClinearGradient id='a' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%2399BBFC'/%3E%3Cstop offset='1' stop-color='%23588CF6'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cpath d='M900 0h772v60C1560 20 1420 120 1260 90S1000 10 900 0z' fill='%23E3EAFE'/%3E%3Cpath d='M1672 120c-70 40-110 120-80 200 15 40 50 70 80 80z' fill='url(%23a)' opacity='.9'/%3E%3Cpath d='M1672 0v70c-60-30-150-40-230-20 60-30 140-50 230-50z' fill='%23C9D8FD' opacity='.8'/%3E%3Cpath d='M1672 600c-160 20-300 120-360 341h360z' fill='%23E2E9FE' opacity='.8'/%3E%3C/svg%3E") top left / 100% 100% no-repeat fixed, linear-gradient(180deg, #ECF0FE 0%, #EEF1FE 100%) fixed; }
+    body:has(> .appbar) { padding: calc(40 * var(--u)) calc(24 * var(--u)) 48px calc(347 * var(--u)); }
+    .appbar { top: calc(20 * var(--u)); left: calc(14 * var(--u)); bottom: calc(38 * var(--u)); right: auto; width: calc(280 * var(--u)); }
+    .appbar-inner { height: 100%; gap: calc(52 * var(--u)); padding: calc(55 * var(--u)) calc(22 * var(--u)) calc(22 * var(--u)); border: 0; border-radius: calc(44 * var(--u));
+      background: linear-gradient(180deg, #2F6DF3 0%, #2558E1 55%, #1F4BD0 100%); box-shadow: 0 24px 44px -20px rgba(30,70,200,.55), inset 0 1px 0 rgba(255,255,255,.18); overflow-y: auto; scrollbar-width: none; }
+    .appbar-inner::before { background: radial-gradient(calc(260 * var(--u)) calc(220 * var(--u)) at 0% 0%, rgba(120,170,255,.30), transparent 70%); }
+    .brand { padding: 0 0 0 calc(4 * var(--u)); gap: calc(22 * var(--u)); color: #fff; font: 700 calc(30 * var(--u))/1 "Plus Jakarta Sans", system-ui, sans-serif; letter-spacing: -.01em; }
+    .brand .logo { width: calc(80 * var(--u)); height: calc(80 * var(--u)); border-radius: calc(22 * var(--u)); box-shadow: 0 10px 20px -8px rgba(5,20,90,.55); }
+    .tabs { gap: 0; }
+    .tabs a { height: calc(81 * var(--u)); padding: 0 0 0 calc(21 * var(--u)); gap: calc(25 * var(--u)); border-radius: calc(20 * var(--u)); color: #fff;
+      font: 600 calc(19.5 * var(--u))/1 "Plus Jakarta Sans", system-ui, sans-serif; letter-spacing: -.02em; flex: none; }
+    .tabs a svg, .tabs a svg.i3 { width: calc(40 * var(--u)); height: calc(40 * var(--u)); flex: none; }
+    .tabs a { white-space: nowrap; overflow: hidden; }
+    .tabs a:hover { background: rgba(255,255,255,.08); color: #fff; }
+    .tabs a.on { height: calc(83 * var(--u)); background: rgba(255,255,255,.17); color: #fff; box-shadow: inset 0 1px 0 rgba(255,255,255,.22), 0 12px 24px -14px rgba(5,20,90,.6); }
+    .tabs a.on svg { color: inherit; }
+    .tabs a .nb { margin-left: auto; margin-right: calc(16 * var(--u)); }
+    .nav-user { display: none; }
+  }
+</style>
+{% set _bell_dot = has_open_alert is defined and has_open_alert %}
+<header class="hm-top">
+  <a class="brand-t" href="/"><img src="/static/icons/logo-mark.png" alt="" width="138" height="124"><span>Ragra<br>Reminder</span></a>
+  <a class="hm-bell" href="/chat" aria-label="Chat and notifications">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9a6 6 0 0 1 12 0c0 6 2 7 2 7H4s2-1 2-7"/><path d="M10 20a2 2 0 0 0 4 0"/></svg>
+    <span class="nb" hidden></span>{% if _bell_dot %}<span class="dot"></span>{% endif %}
+  </a>
+  <a class="hm-av" href="/account" aria-label="Profile">
+    {% if _u and _u.picture %}<img src="{{ _u.picture }}" alt="" referrerpolicy="no-referrer">{% else %}{{ _u.initial if _u else 'R' }}{% endif %}
+  </a>
+</header>
+<nav class="hm-nav" aria-label="Main">
+  <a href="/" {% if _p == '/' or _p.startswith('/chat') %}class="on"{% endif %}><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1v-9.5z"/></svg>Home</a>
+  <a href="/tasks" {% if _p.startswith('/tasks') %}class="on"{% endif %}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="4"/><path d="M8.5 12.5l2.5 2.5 4.5-5"/></svg>Tasks</a>
+  <a href="/overview" {% if _p.startswith('/overview') or _p.startswith('/missed') or _p.startswith('/announcements') %}class="on"{% endif %}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="12" width="4" height="8" rx="1.5"/><rect x="10" y="4" width="4" height="16" rx="1.5"/><rect x="16" y="9" width="4" height="11" rx="1.5"/></svg>Stats</a>
+  <a href="/account" {% if _p.startswith('/account') or _p.startswith('/deliveries') %}class="on"{% endif %}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>Profile</a>
+</nav>

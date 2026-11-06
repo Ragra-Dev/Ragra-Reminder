@@ -46,7 +46,7 @@ def client(tmp_path: Path):
 
 
 def test_main_dashboard_shows_only_the_preview_limit_of_missed_tasks(client):
-    resp = client.get("/")
+    resp = client.get("/overview")
     missed_section = resp.text.split("<!--panel:missed-->")[1].split("<!--/panel-->")[0]
 
     # Most-recently-due ones (1, 5, 10, 30, 60 days ago) should be shown...
@@ -60,7 +60,7 @@ def test_main_dashboard_shows_only_the_preview_limit_of_missed_tasks(client):
 
 
 def test_main_dashboard_links_to_the_full_missed_list(client):
-    resp = client.get("/")
+    resp = client.get("/overview")
     assert 'href="/missed"' in resp.text
     assert "See all 8 missed tasks" in resp.text
 

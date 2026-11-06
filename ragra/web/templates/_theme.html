@@ -1,6 +1,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="light">
-<meta name="theme-color" content="#FFFFFF">
+<meta name="theme-color" content="#2563EB">
+<link rel="icon" type="image/png" sizes="32x32" href="/static/icons/favicon-32.png">
+<link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Ragra">
+<meta name="mobile-web-app-capable" content="yes">
+<script>if ("serviceWorker" in navigator) { window.addEventListener("load", function () { navigator.serviceWorker.register("/sw.js").catch(function () {}); }); }</script>
 <style>
   /* ======================================================================
      Ragra design system - frosted lavender surfaces, indigo night panels.
@@ -81,7 +88,8 @@
     box-shadow: 0 12px 32px -14px rgba(29,78,216,.38), inset 0 1px 0 rgba(255,255,255,.8);
     -webkit-backdrop-filter: blur(18px) saturate(160%); backdrop-filter: blur(18px) saturate(160%); }
   .brand { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 1.08rem; letter-spacing: -.02em; color: var(--text); text-decoration: none; }
-  .logo { width: 36px; height: 36px; border-radius: 13px; background: var(--primary-clay); color: #fff; display: grid; place-items: center;
+  .logo img { display: block; width: 100%; height: 100%; border-radius: inherit; }
+  .logo { width: 36px; height: 36px; border-radius: 13px; background: var(--primary-clay); color: #fff; display: grid; place-items: center; overflow: hidden;
     font-weight: 800; box-shadow: var(--clay-primary-shadow); }
   .tabs { display: flex; gap: var(--s1); overflow-x: auto; scrollbar-width: none; flex: 1; justify-content: center; }
   .tabs::-webkit-scrollbar { display: none; }

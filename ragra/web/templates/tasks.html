@@ -14,7 +14,7 @@
   <span class="cnt">{{ tasks|length }}</span>
 </div>
 
-<details class="fold new-task tone-green" open>
+<details class="fold new-task tone-green" id="new" open>
   <summary><span>New personal task</span></summary>
   <form method="post" action="/tasks/new">
     <input type="hidden" name="csrf_token" value="{{ csrf_token_for(request) }}">

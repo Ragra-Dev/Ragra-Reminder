@@ -132,7 +132,7 @@ def _snapshot(db_path) -> list[tuple]:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("path", ["/", "/missed", "/tasks", "/announcements", "/deliveries", "/brief"])
+@pytest.mark.parametrize("path", ["/", "/overview", "/missed", "/tasks", "/announcements", "/deliveries", "/brief"])
 def test_no_page_shows_the_other_accounts_content(bea_client, path):
     body = bea_client.get(path).text
 
@@ -143,7 +143,7 @@ def test_no_page_shows_the_other_accounts_content(bea_client, path):
 @pytest.mark.parametrize(
     ("path", "expected"),
     [
-        ("/", ALICE_SECRET),
+        ("/overview", ALICE_SECRET),
         ("/missed", ALICE_SECRET),
         ("/tasks", ALICE_SECRET),
         ("/announcements", ALICE_ANNOUNCEMENT),

@@ -50,9 +50,11 @@ from ragra.relevance.profile import load_raw_profile, save_profile
 from ragra.timetable.enrollment import EnrolledCourse
 from ragra.timetable.schedule import occurrences_for_local_day, weekly_class_from_row
 from ragra.tz import format_stored_local, local_day_bounds, utc_iso
-from ragra.web import auth, csrf, google_reconnect, sessions, whatsapp as whatsapp_web
+from ragra import chat as chat_module
+from ragra.web import auth, csrf, google_reconnect, sessions, telegram as telegram_web, whatsapp as whatsapp_web
 
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
+_STATIC_DIR = Path(__file__).parent / "static"
 
 
 class NotSignedIn(Exception):
@@ -183,6 +185,9 @@ def create_app(
     consent round trip.
     """
     app = FastAPI(title="Ragra")
+    from fastapi.staticfiles import StaticFiles
+
+    app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")  # logo and app icons; public
     templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
     settings = auth_settings if auth_settings is not None else auth.load_auth_settings()
 
@@ -270,8 +275,8 @@ def create_app(
                 )
             return response
 
-        if request.url.path == "/whatsapp/webhook":
-            return await call_next(request)  # signed by Meta; checked in the route
+        if request.url.path in ("/whatsapp/webhook", "/telegram/webhook"):
+            return await call_next(request)  # authenticated by their own secret; checked in the route
 
         submitted = request.headers.get(csrf.HEADER_NAME)
         if submitted is None:
@@ -341,6 +346,34 @@ def create_app(
     # code cannot be redeemed; a verified ID token rather than a decoded
     # one; identity keyed on the Google subject rather than the email - so
     # these handlers stay thin enough to read in one sitting.
+
+    @app.get("/manifest.webmanifest")
+    def web_manifest():
+        """Makes Ragra installable: the home-screen name, icon and colours."""
+        from fastapi.responses import JSONResponse
+
+        return JSONResponse(
+            {
+                "name": "Ragra Reminder", "short_name": "Ragra",
+                "description": "Never miss what's next. Classroom deadlines, announcements and class alerts.",
+                "start_url": "/chat", "scope": "/", "display": "standalone",
+                "background_color": "#F1F5FF", "theme_color": "#2563EB",
+                "icons": [
+                    {"src": "/static/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+                    {"src": "/static/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
+                    {"src": "/static/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"},
+                ],
+            },
+            media_type="application/manifest+json",
+        )
+
+    @app.get("/sw.js")
+    def service_worker():
+        """Served from the root so its scope covers the whole app."""
+        from fastapi.responses import FileResponse
+
+        return FileResponse(_STATIC_DIR / "sw.js", media_type="text/javascript",
+                            headers={"Cache-Control": "no-cache", "Service-Worker-Allowed": "/"})
 
     @app.get("/privacy")
     def privacy(request: Request):
@@ -550,7 +583,10 @@ def create_app(
         response.delete_cookie(sessions.COOKIE_NAME, path="/")
         return response
 
+    # "/" is the chat-first home; "/overview" keeps the full planner page
+    # (stats, tabs, folds) that used to be the home page.
     @app.get("/")
+    @app.get("/overview")
     def today(request: Request):
         now = datetime.now(timezone.utc)
         now_iso = utc_iso(now)
@@ -596,13 +632,62 @@ def create_app(
                 conn, user_id=user_id, now=now_iso
             )
             recently_completed = repo.recently_completed_tasks(conn, user_id=user_id)
+            is_home = request.url.path == "/"
+            chat_rows = []
+            if is_home:
+                if not repo.chat_messages(conn, user_id=user_id, limit=1):
+                    repo.add_chat_message(conn, user_id=user_id, role="bot", text=chat_module.HELP_TEXT)
+                chat_rows = repo.chat_messages(conn, user_id=user_id, limit=8)
 
         priority = due_today[0] if due_today else (overdue[0] if overdue else (due_soon[0] if due_soon else None))
+        # The home page's "Upcoming Deadlines": everything open, soonest first.
+        upcoming = sorted(
+            [*overdue, *due_today, *due_soon],
+            key=lambda t: t["actual_deadline"] or "9999",
+        )[:6]
+        upcoming_total = len(overdue) + len(due_today) + len(due_soon)
+
+        # The single nearest deadline for the home card: the next one coming
+        # up, or (if nothing is coming) the oldest overdue one.
+        nearest = None
+        pick = next(iter(sorted([*due_today, *due_soon], key=lambda t: t["actual_deadline"] or "9999")), None)
+        pick = pick or (overdue[0] if overdue else None)
+        if is_home and pick is not None and pick["actual_deadline"]:
+            from ragra.tz import parse_instant, to_local
+
+            when_local = to_local(parse_instant(str(pick["actual_deadline"])))
+            days = (when_local.date() - to_local(now).date()).days
+            if days < 0:
+                level, rel = "High", "Overdue"
+            elif days == 0:
+                level, rel = "High", "Today"
+            elif days == 1:
+                level, rel = "Medium", "Tomorrow"
+            else:
+                level, rel = ("Medium" if days <= 3 else "Low"), when_local.strftime("%A")
+            hour = when_local.strftime("%I").lstrip("0") or "12"
+            nearest = {
+                "id": pick["id"],
+                "title": pick["title"],
+                "course": pick["course_code"] or pick["course_name"],
+                "month": when_local.strftime("%b"),
+                "day": when_local.day,
+                "weekday": when_local.strftime("%a"),
+                "rel": rel,
+                "time": f"{hour}:{when_local.strftime('%M %p')}",
+                "level": level,
+            }
 
         return templates.TemplateResponse(
             request,
-            "today.html",
+            "home.html" if is_home else "today.html",
             {
+                "chat_rows": chat_rows,
+                "nearest": nearest,
+                "has_open_alert": any(r["role"] == "alert" and r["acked_at"] is None for r in chat_rows),
+                "upcoming": upcoming,
+                "upcoming_total": upcoming_total,
+                "overdue_ids": {t["id"] for t in overdue},
                 "overdue": overdue,
                 "missed": missed,
                 "missed_total": missed_total,
@@ -803,6 +888,82 @@ def create_app(
             )
         return templates.TemplateResponse(request, "deliveries.html", {"deliveries": rows})
 
+    # --- In-app Agent chat ---------------------------------------------------
+    #
+    # One thread per account. The person's messages and the agent's replies
+    # use the same answerer as WhatsApp/Telegram (ragra/chat.py); alerts the
+    # reminder dispatcher sends (announcements, assignments, deadline changes)
+    # are appended to the same thread with role "alert".
+
+    def _chat_json(rows) -> list[dict]:
+        return [
+            {"id": r["id"], "role": r["role"], "text": r["text"], "link": r["link_path"],
+             "at": r["created_at"], "acked": r["acked_at"] is not None}
+            for r in rows
+        ]
+
+    @app.get("/chat")
+    def chat_page(request: Request):
+        with connect_closing(db_path) as conn:
+            user_id = _acting_user(conn, request)
+            if not repo.chat_messages(conn, user_id=user_id, limit=1):
+                repo.add_chat_message(conn, user_id=user_id, role="bot", text=chat_module.HELP_TEXT)
+            rows = repo.chat_messages(conn, user_id=user_id)
+        return templates.TemplateResponse(request, "chat.html", {"messages": rows})
+
+    @app.get("/chat/messages")
+    def chat_poll(request: Request, after: int = 0):
+        from fastapi.responses import JSONResponse
+
+        with connect_closing(db_path) as conn:
+            rows = repo.chat_messages(conn, user_id=_acting_user(conn, request), after_id=max(after, 0))
+        return JSONResponse({"messages": _chat_json(rows)})
+
+    @app.post("/chat/send")
+    def chat_send(request: Request, text: str = Form("")):
+        from fastapi.responses import JSONResponse
+        from ragra.config import load_config
+
+        text = text.strip()[:500]
+        wants_json = "application/json" in request.headers.get("accept", "")
+        if not text:
+            return JSONResponse({"messages": []}) if wants_json else RedirectResponse("/chat", status_code=303)
+        config = load_config()
+        with connect_closing(db_path) as conn:
+            user_id = _acting_user(conn, request)
+            mine = repo.add_chat_message(conn, user_id=user_id, role="user", text=text)
+            try:
+                reply = chat_module.answer(conn, config, user_id=user_id, text=text)
+            except Exception:  # noqa: BLE001 - the thread must never break on one bad answer
+                reply = "Sorry, something went wrong. Try 'pending', 'today' or 'overdue'."
+            repo.add_chat_message(conn, user_id=user_id, role="bot", text=reply)
+            rows = repo.chat_messages(conn, user_id=user_id, after_id=mine - 1)
+        if wants_json:
+            return JSONResponse({"messages": _chat_json(rows)})
+        return RedirectResponse("/chat", status_code=303)
+
+    @app.post("/chat/{message_id}/ack")
+    def chat_ack(request: Request, message_id: int):
+        from fastapi.responses import JSONResponse
+
+        with connect_closing(db_path) as conn:
+            repo.ack_chat_message(conn, user_id=_acting_user(conn, request), message_id=message_id)
+        if "application/json" in request.headers.get("accept", ""):
+            return JSONResponse({"ok": True})
+        return RedirectResponse("/chat", status_code=303)
+
+    @app.post("/chat/ack-all")
+    def chat_ack_all(request: Request):
+        with connect_closing(db_path) as conn:
+            repo.ack_all_chat_alerts(conn, user_id=_acting_user(conn, request))
+        return RedirectResponse("/chat", status_code=303)
+
+    @app.post("/chat/clear")
+    def chat_clear(request: Request):
+        with connect_closing(db_path) as conn:
+            repo.clear_chat(conn, user_id=_acting_user(conn, request))
+        return RedirectResponse("/chat", status_code=303)
+
     # --- WhatsApp webhook (Meta Cloud API) ---------------------------------
 
     @app.get("/whatsapp/webhook")
@@ -837,6 +998,42 @@ def create_app(
             background.add_task(whatsapp_web.reply_to_whatsapp, db_path, number, text)
         # Always 200 once the signature is good: Meta retries anything else.
         return PlainTextResponse("ok")
+
+    # --- Telegram bot ------------------------------------------------------
+
+    @app.post("/telegram/webhook")
+    async def telegram_inbound(request: Request, background: BackgroundTasks):
+        from ragra.config import load_config
+
+        config = load_config()
+        if not telegram_web.secret_is_valid(
+            header=request.headers.get("x-telegram-bot-api-secret-token"),
+            bot_token=config.telegram_bot_token,
+        ):
+            return PlainTextResponse("Forbidden", status_code=403)
+        parsed = telegram_web.parse_update(await request.body())
+        if parsed:
+            background.add_task(telegram_web.reply_to_telegram, db_path, parsed[0], parsed[1])
+        return PlainTextResponse("ok")  # always 200 once authentic: Telegram retries anything else
+
+    @app.post("/account/telegram/link")
+    def telegram_link(request: Request):
+        from ragra.config import load_config
+
+        config = load_config()
+        if not (config.telegram_bot_token and config.telegram_bot_username):
+            return RedirectResponse("/account?saved=notelegram", status_code=303)
+        with connect_closing(db_path) as conn:
+            code = repo.create_telegram_link_code(conn, user_id=_acting_user(conn, request))
+        return RedirectResponse(
+            f"https://t.me/{config.telegram_bot_username}?start={code}", status_code=303
+        )
+
+    @app.post("/account/telegram/disconnect")
+    def telegram_disconnect(request: Request):
+        with connect_closing(db_path) as conn:
+            repo.disconnect_telegram_chat(conn, user_id=_acting_user(conn, request))
+        return RedirectResponse("/account?saved=saved", status_code=303)
 
     # --- Account settings --------------------------------------------------
     #
@@ -888,6 +1085,7 @@ def create_app(
                 "enrollment_text": _enrollment_to_text(profile.enrollment),
                 "preferences": preferences,
                 "google_status": google_status,
+                "telegram_ready": bool(_wa_config.telegram_bot_token and _wa_config.telegram_bot_username),
                 "whatsapp_ready": bool(_wa_config.whatsapp_token and _wa_config.whatsapp_phone_number_id),
                 "whatsapp_bot_number": _wa_config.whatsapp_display_number,
             },
@@ -942,6 +1140,7 @@ def create_app(
         whatsapp_enabled: str = Form(""),
         whatsapp_to: str = Form(""),
         whatsapp_change: str = Form(""),
+        telegram_enabled: str = Form(""),
     ):
         # A checkbox's value is present only when checked, so "enabled" is
         # derived from presence - but the destination itself is saved
@@ -967,6 +1166,13 @@ def create_app(
         with connect_closing(db_path) as conn:
             user_id = _acting_user(conn, request)
             before = load_preferences(conn, user_id=user_id)
+            # The Telegram chat is only ever set by the link handshake with the
+            # bot - never from this form - so only the on/off switch is read.
+            preferences = replace(
+                preferences,
+                telegram_chat_id=before.telegram_chat_id,
+                telegram_enabled=bool(telegram_enabled) and before.telegram_chat_id is not None,
+            )
             if bad_number:
                 # A number that cannot be a phone number is refused; whatever
                 # was saved before stays exactly as it was.
@@ -987,6 +1193,12 @@ def create_app(
                 )
             except Exception:  # noqa: BLE001 - the welcome is a courtesy, not part of saving
                 welcome = []
+            if welcome:
+                # The same welcome shows in the in-app chat as an unread alert.
+                note = welcome_notification()
+                repo.add_chat_message(
+                    conn, user_id=user_id, role="alert", text=note.text, link_path=note.link_path
+                )
         if welcome:
             background.add_task(send_to_all_providers, welcome, welcome_notification())
         # What the page tells the person: saved, saved + welcome on its way, or

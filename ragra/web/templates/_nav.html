@@ -1,12 +1,15 @@
 {% set _p = request.url.path %}
 {% set _u = nav_user(request) %}
 {% from "_icons.html" import icon, sprite %}
+{% from "_logo.html" import mark %}
 {{ sprite() }}
 <header class="appbar">
   <div class="appbar-inner">
-    <a class="brand" href="/"><span class="logo">R</span><span>Ragra</span></a>
+    <a class="brand" href="/"><span class="logo">{{ mark(36) }}</span><span>Ragra</span></a>
     <nav class="tabs">
-      <a href="/" {% if _p == '/' %}class="on"{% endif %}>{{ icon('today') }}Today</a>
+      <a href="/" {% if _p == '/' %}class="on"{% endif %}>{{ icon('today') }}Home</a>
+      <a href="/overview" {% if _p.startswith('/overview') %}class="on"{% endif %}>{{ icon('calendar') }}Overview</a>
+      <a href="/chat" {% if _p.startswith('/chat') %}class="on"{% endif %}>{{ icon('chat') }}Chat<span class="nb" hidden></span></a>
       <a href="/tasks" {% if _p.startswith('/tasks') %}class="on"{% endif %}>{{ icon('tasks') }}Tasks</a>
       <a href="/announcements" {% if _p.startswith('/announcements') %}class="on"{% endif %}>{{ icon('news') }}Announcements</a>
       <a href="/missed" {% if _p.startswith('/missed') %}class="on"{% endif %}>{{ icon('missed') }}Missed</a>
@@ -26,6 +29,43 @@
   <a href="/tasks" {% if _p.startswith('/tasks') %}class="on"{% endif %}>{{ icon('tasks') }}Tasks</a>
   <a href="/announcements" {% if _p.startswith('/announcements') %}class="on"{% endif %}>{{ icon('news') }}News</a>
   <a href="/" class="center" aria-label="Today">{{ icon('today', flat=True) }}</a>
-  <a href="/missed" {% if _p.startswith('/missed') %}class="on"{% endif %}>{{ icon('missed') }}Missed</a>
+  <a href="/chat" {% if _p.startswith('/chat') %}class="on"{% endif %}>{{ icon('chat') }}Chat<span class="nb" hidden></span></a>
   <a href="/account" {% if _p.startswith('/account') or _p.startswith('/deliveries') %}class="on"{% endif %}>{{ icon('user') }}Account</a>
 </nav>
+<style>
+  .tabs a, .dock a { position: relative; }
+  .nb { min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: #E5484D; color: #fff; font: 700 .68rem/18px system-ui, sans-serif; text-align: center; }
+  .dock a .nb { position: absolute; top: 0; right: 6px; }
+  .nb[hidden] { display: none; }
+</style>
+<script>
+/* Unread count on the Chat links. Shares "rgSeen" (last seen message id) with the floating chat. */
+(function () {
+  var onChat = location.pathname.indexOf('/chat') === 0;
+  function get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+  function set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+  function show(n) {
+    document.querySelectorAll('.nb').forEach(function (b) {
+      b.textContent = n > 9 ? '9+' : n; b.hidden = !n;
+    });
+  }
+  function check() {
+    if (document.hidden) return;
+    if (onChat) {
+      var max = 0;
+      document.querySelectorAll('.msg').forEach(function (n) { max = Math.max(max, +n.dataset.id || 0); });
+      if (max > (+get('rgSeen') || 0)) set('rgSeen', max);
+      show(0); return;
+    }
+    fetch('/chat/messages?after=' + (+get('rgSeen') || 0), { headers: { 'Accept': 'application/json' } })
+      .then(function (r) { return r.ok ? r.json() : { messages: [] }; })
+      .then(function (d) { show(d.messages.filter(function (m) { return m.role === 'alert'; }).length); })
+      .catch(function () {});
+  }
+  check(); setInterval(check, 20000);
+  window.addEventListener('storage', check);
+  window.addEventListener('pagehide', function () { if (onChat) check(); });
+})();
+</script>
+{% include "_shell.html" %}
+{% include "_chat_widget.html" %}

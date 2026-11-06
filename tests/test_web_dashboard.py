@@ -44,7 +44,7 @@ def _between(html: str, name: str) -> str:
 
 
 def test_dashboard_loads_and_shows_overdue_task(client):
-    resp = client.get("/")
+    resp = client.get("/overview")
     assert resp.status_code == 200
     assert "Assignment 2" in resp.text
     assert "overdue" in resp.text
@@ -54,7 +54,7 @@ def test_complete_task_removes_it_from_overdue(client):
     resp = client.post(f"/tasks/{client.task_id}/complete", follow_redirects=False)
     assert resp.status_code == 303
 
-    resp = client.get("/")
+    resp = client.get("/overview")
     # No longer flagged as overdue work needing action...
     overdue_section = _between(resp.text, "overdue")
     assert "Assignment 2" not in overdue_section
@@ -73,7 +73,7 @@ def test_dashboard_flags_deadlined_task_missing_personal_target(client):
     # The fixture's "Assignment 2" has an actual_deadline and no
     # personal_deadline - it should be flagged as needing a personal target
     # even though it already has an official Classroom due date.
-    resp = client.get("/")
+    resp = client.get("/overview")
     assert "Has an academic deadline - when do you plan to actually do it?" in resp.text
     assert "no personal target set yet" in resp.text
 
@@ -86,7 +86,7 @@ def test_setting_personal_target_removes_deadlined_task_from_that_section(client
     )
     assert resp.status_code == 303
 
-    resp = client.get("/")
+    resp = client.get("/overview")
     assert "no personal target set yet" not in resp.text
     assert "Every deadlined task already has a personal target." in resp.text
 
@@ -120,7 +120,7 @@ def test_due_today_and_due_soon_are_separate_sections(client):
     )
     conn.close()
 
-    resp = client.get("/")
+    resp = client.get("/overview")
     today_section = _between(resp.text, "due-today")
     soon_section = _between(resp.text, "due-soon")
 
@@ -149,7 +149,7 @@ def test_scheduled_reminders_section_shows_upcoming_reminders(client):
     )
     conn.close()
 
-    resp = client.get("/")
+    resp = client.get("/overview")
     assert "Reminder Bearing Task" in resp.text
     assert "T_MINUS_1D" in resp.text
     assert "No reminders currently scheduled." not in resp.text
@@ -178,14 +178,14 @@ def test_missed_task_appears_in_missed_section(client):
     repo.mark_missed(conn, task_id=client.task_id, user_id=owner_id(conn))
     conn.close()
 
-    resp = client.get("/")
+    resp = client.get("/overview")
     missed_section = _between(resp.text, "missed")
     assert "Assignment 2" in missed_section
     assert "missed" in missed_section.lower()
 
 
 def test_overdue_task_stays_in_overdue_section_and_not_in_missed(client):
-    resp = client.get("/")
+    resp = client.get("/overview")
     overdue_section = _between(resp.text, "overdue")
     missed_section = _between(resp.text, "missed")
     assert "Assignment 2" in overdue_section
@@ -200,7 +200,7 @@ def test_completed_task_does_not_appear_in_overdue_or_missed(client):
     repo.mark_completed(conn, task_id=completed_id, user_id=owner_id(conn))
     conn.close()
 
-    resp = client.get("/")
+    resp = client.get("/overview")
     overdue_section = _between(resp.text, "overdue")
     missed_section = _between(resp.text, "missed")
     assert "Completed Long Ago" not in overdue_section
@@ -215,7 +215,7 @@ def test_cancelled_task_does_not_appear_in_overdue_or_missed(client):
     repo.cancel_task_from_source(conn, task_id=cancelled_id, user_id=owner_id(conn))
     conn.close()
 
-    resp = client.get("/")
+    resp = client.get("/overview")
     overdue_section = _between(resp.text, "overdue")
     missed_section = _between(resp.text, "missed")
     assert "Cancelled Assignment" not in overdue_section
@@ -236,7 +236,7 @@ def test_set_personal_deadline(client):
     )
     conn.close()
 
-    resp = client.get("/")
+    resp = client.get("/overview")
     assert "Lecture slides" in resp.text
 
     resp = client.post(
@@ -250,3 +250,22 @@ def test_set_personal_deadline(client):
     row = conn.execute("SELECT personal_deadline, status FROM tasks WHERE id = ?", (result.task_id,)).fetchone()
     conn.close()
     assert row["personal_deadline"] == "2026-08-30"
+
+
+def test_home_shows_the_nearest_deadline_with_a_priority(client):
+    now = datetime.now(timezone.utc)
+    conn = connect(client.db_path)
+    course_id = conn.execute("SELECT id FROM courses LIMIT 1").fetchone()["id"]
+    repo.upsert_task_from_source(
+        conn, course_id=course_id, source_type="coursework", external_id="cw-near",
+        title="Nearest Home Task", description=None, link=None, kind="ACTIONABLE",
+        actual_deadline=(now + timedelta(days=5)).isoformat(),
+        source_published_at=repo.now_iso(), source_updated_at=repo.now_iso(), user_id=owner_id(conn),
+    )
+    conn.close()
+
+    html = client.get("/").text
+    assert "Nearest Home Task" in html
+    assert 'class="hm-pri Low"' in html
+    assert "Upcoming Deadline" in html
+    assert 'href="/chat"' in html

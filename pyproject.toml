@@ -44,4 +44,4 @@ build-backend = "setuptools.build_meta"
 include = ["ragra*"]
 
 [tool.setuptools.package-data]
-ragra = ["web/templates/*.html", "db/schema.sql", "db/migrations/*"]
+ragra = ["web/templates/*.html", "web/static/icons/*", "web/static/*", "web/static/*.js", "db/schema.sql", "db/migrations/*"]

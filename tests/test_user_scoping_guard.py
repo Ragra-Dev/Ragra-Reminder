@@ -60,6 +60,8 @@ USER_OWNED_TABLES = (
     "notification_preferences",
     "credential_health",
     "google_reconnect_states",
+    "telegram_link_codes",
+    "chat_messages",
 )
 
 _TABLE_REFERENCE = re.compile(
@@ -169,8 +171,10 @@ def test_the_exemption_markers_are_used_sparingly():
                 exempted.append(f"{path.name}:{node.name}")
     assert sorted(exempted) == [
         "repo.py:consume_google_reconnect",
+        "repo.py:consume_telegram_link_code",
         "repo.py:purge_expired_google_reconnect_states",
         "repo.py:purge_old_tick_sessions",
+        "repo.py:user_id_for_telegram",
         "repo.py:user_id_for_whatsapp",
         "sessions.py:lookup_session",
         "sessions.py:purge_expired_sessions",

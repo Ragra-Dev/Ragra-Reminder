@@ -257,7 +257,7 @@ def test_a_rendered_page_actually_contains_a_usable_token(client, task_id):
     """End to end: the token in the HTML a browser receives is the one the
     middleware will accept. A template global that silently rendered empty
     would pass every check above and break every button."""
-    html = client.get("/").text
+    html = client.get("/overview").text
     match = re.search(r'name="csrf_token" value="([^"]+)"', html)
 
     assert match is not None

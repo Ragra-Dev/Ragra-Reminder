@@ -1,0 +1,137 @@
+{# Floating Ragra chat: a draggable bubble on every page that opens a side panel. Not shown on /chat itself. #}
+{% if not request.url.path.startswith('/chat') and request.url.path != '/' %}
+<style>
+  #rg-bubble { position: fixed; z-index: 60; width: 62px; height: 62px; border-radius: 20px; padding: 0; border: 0; cursor: grab; touch-action: none;
+    background: none; box-shadow: 0 10px 28px rgba(37,99,235,.45); user-select: none; -webkit-user-select: none; }
+  #rg-bubble img { width: 100%; height: 100%; border-radius: 20px; display: block; pointer-events: none; }
+  #rg-bubble.drag { cursor: grabbing; transform: scale(1.06); }
+  #rg-badge { position: absolute; top: -6px; right: -6px; min-width: 22px; height: 22px; padding: 0 6px; border-radius: 11px; background: #E5484D; color: #fff;
+    font: 700 .75rem/22px system-ui, sans-serif; text-align: center; box-shadow: 0 2px 6px rgba(0,0,0,.3); display: none; }
+  #rg-panel { position: fixed; z-index: 70; top: 0; right: 0; bottom: 0; width: min(400px, 100vw); background: var(--surface, #fff); display: none; flex-direction: column;
+    box-shadow: -12px 0 40px rgba(15,30,69,.28); border-radius: 22px 0 0 22px; overflow: hidden; }
+  #rg-panel.open { display: flex; }
+  .rg-head { display: flex; align-items: center; gap: 10px; padding: 14px 16px; background: linear-gradient(135deg, #2563EB, #1D4ED8); color: #fff; }
+  .rg-head img { width: 36px; height: 36px; border-radius: 12px; }
+  .rg-head b { flex: 1; font-size: 1.05rem; }
+  .rg-head small { display: block; font-weight: 500; opacity: .85; font-size: .75rem; }
+  .rg-head button { background: rgba(255,255,255,.18); color: #fff; border: 0; border-radius: 10px; width: 34px; height: 34px; font-size: 1.1rem; cursor: pointer; box-shadow: none; padding: 0; }
+  #rg-thread { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 9px; background: var(--surface-2, #EDF3FD); }
+  .rg-m { max-width: 85%; padding: 9px 13px; border-radius: 16px; line-height: 1.4; font-size: .92rem; white-space: pre-wrap; word-wrap: break-word; }
+  .rg-m.user { align-self: flex-end; background: #2563EB; color: #fff; border-bottom-right-radius: 4px; }
+  .rg-m.bot { align-self: flex-start; background: #fff; color: #0F1E45; border-bottom-left-radius: 4px; box-shadow: 0 1px 3px rgba(15,30,69,.12); }
+  .rg-m.alert { align-self: flex-start; background: #FFF7DB; color: #5a4300; border-left: 4px solid #F5B301; border-bottom-left-radius: 4px; }
+  .rg-m.alert i { display: block; font-style: normal; font-size: .68rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; margin-bottom: 3px; }
+  .rg-m a { color: inherit; font-weight: 700; }
+  .rg-chips { display: flex; gap: 6px; flex-wrap: wrap; padding: 8px 14px 0; }
+  .rg-chips button { padding: 5px 11px; font-size: .8rem; border-radius: 999px; border: 1px solid rgba(37,99,235,.25); background: #fff; color: #1D4ED8; cursor: pointer; box-shadow: none; }
+  #rg-form { display: flex; gap: 8px; padding: 12px 14px calc(12px + env(safe-area-inset-bottom)); }
+  #rg-form input { flex: 1; min-width: 0; }
+  #rg-form button { padding: 0 16px; }
+  /* On phones the Chat tab in the bottom bar is used instead of the floating bubble. */
+  @media (max-width: 980px) { #rg-bubble, #rg-panel { display: none !important; } }
+</style>
+<button id="rg-bubble" type="button" aria-label="Open Ragra chat" title="Ragra - drag to move, tap to chat">
+  <img src="/static/icons/logo-96.png" alt=""><span id="rg-badge"></span>
+</button>
+<aside id="rg-panel" aria-label="Ragra chat">
+  <div class="rg-head"><img src="/static/icons/logo-96.png" alt=""><b>Ragra<small>Your Classroom assistant</small></b>
+    <button type="button" id="rg-full" title="Open full chat" aria-label="Open full chat">&#x2197;</button>
+    <button type="button" id="rg-close" aria-label="Close chat">&times;</button></div>
+  <div id="rg-thread" aria-live="polite"></div>
+  <div class="rg-chips">{% for q in ['pending', 'today', 'overdue', 'week', 'news'] %}<button type="button" data-q="{{ q }}">{{ q }}</button>{% endfor %}</div>
+  <form id="rg-form" autocomplete="off">
+    <input type="text" id="rg-text" maxlength="500" placeholder="Ask about your assignments..." aria-label="Message">
+    <button type="submit" class="btn-sun">Send</button>
+  </form>
+</aside>
+<script>
+(function () {
+  var TOKEN = "{{ csrf_token_for(request) }}";
+  var bubble = document.getElementById('rg-bubble'), panel = document.getElementById('rg-panel'), thread = document.getElementById('rg-thread');
+  var badge = document.getElementById('rg-badge'), input = document.getElementById('rg-text');
+  var lastId = 0, seenId = 0, loaded = false;
+  function store(k, v) { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) {} return null; }
+  seenId = +store('rgSeen') || 0;
+
+  // ---- draggable bubble (mouse, touch, pen) ----
+  function place(x, y) {
+    var w = window.innerWidth - bubble.offsetWidth - 6, h = window.innerHeight - bubble.offsetHeight - 6;
+    bubble.style.left = Math.max(6, Math.min(w, x)) + 'px'; bubble.style.top = Math.max(6, Math.min(h, y)) + 'px';
+  }
+  var saved = (store('rgPos') || '').split(',');
+  if (saved.length === 2 && !isNaN(+saved[0])) place(+saved[0], +saved[1]);
+  else place(window.innerWidth - 84, window.innerHeight - (window.innerWidth < 700 ? 170 : 96));
+  var start = null, moved = false;
+  bubble.addEventListener('pointerdown', function (e) {
+    start = { x: e.clientX, y: e.clientY, l: bubble.offsetLeft, t: bubble.offsetTop }; moved = false; bubble.setPointerCapture(e.pointerId);
+  });
+  bubble.addEventListener('pointermove', function (e) {
+    if (!start) return;
+    var dx = e.clientX - start.x, dy = e.clientY - start.y;
+    if (!moved && Math.abs(dx) + Math.abs(dy) < 6) return;
+    moved = true; bubble.classList.add('drag'); place(start.l + dx, start.t + dy);
+  });
+  bubble.addEventListener('pointerup', function () {
+    bubble.classList.remove('drag');
+    if (moved) store('rgPos', bubble.offsetLeft + ',' + bubble.offsetTop); else toggle(true);
+    start = null;
+  });
+  window.addEventListener('resize', function () { place(bubble.offsetLeft, bubble.offsetTop); });
+
+  // ---- panel ----
+  function markSeen() {
+    seenId = lastId; store('rgSeen', seenId); badge.style.display = 'none';
+  }
+  function toggle(open) {
+    panel.classList.toggle('open', open); bubble.style.display = open ? 'none' : '';
+    if (open) { load(); input.focus(); }
+  }
+  document.getElementById('rg-close').addEventListener('click', function () { toggle(false); });
+  document.getElementById('rg-full').addEventListener('click', function () { location.href = '/chat'; });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && panel.classList.contains('open')) toggle(false); });
+
+  function api(url, opts) {
+    opts.headers = Object.assign({ 'Accept': 'application/json', 'X-CSRF-Token': TOKEN }, opts.headers || {});
+    return fetch(url, opts).then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); });
+  }
+  function add(m) {
+    if (m.id <= lastId) return;
+    lastId = m.id;
+    var el = document.createElement('div'); el.className = 'rg-m ' + m.role;
+    if (m.role === 'alert') { var t = document.createElement('i'); t.textContent = 'Classroom alert'; el.appendChild(t); }
+    el.appendChild(document.createTextNode(m.text));
+    if (m.role === 'alert' && m.link && m.link.charAt(0) === '/') {
+      el.appendChild(document.createElement('br'));
+      var a = document.createElement('a'); a.href = m.link; a.textContent = 'Open'; el.appendChild(a);
+    }
+    thread.appendChild(el);
+  }
+  function load() {
+    api('/chat/messages?after=' + lastId, { method: 'GET' }).then(function (d) {
+      d.messages.forEach(add);
+      loaded = true;
+      if (panel.classList.contains('open')) { thread.scrollTop = thread.scrollHeight; markSeen(); return; }
+      var unseen = 0;
+      d.messages.forEach(function (m) { if (m.id > seenId && m.role === 'alert') unseen++; });
+      if (unseen) { badge.dataset.n = (+badge.dataset.n || 0) + unseen; }
+      var n = +badge.dataset.n || 0;
+      if (n) { badge.textContent = n > 9 ? '9+' : n; badge.style.display = 'block'; }
+    }).catch(function () {});
+  }
+  function send(text) {
+    if (!text.trim()) return;
+    input.value = '';
+    var wait = document.createElement('div'); wait.className = 'rg-m bot'; wait.textContent = 'Ragra is typing...';
+    thread.appendChild(wait); thread.scrollTop = thread.scrollHeight;
+    api('/chat/send', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ text: text }) })
+      .then(function (d) { wait.remove(); d.messages.forEach(add); thread.scrollTop = thread.scrollHeight; markSeen(); })
+      .catch(function () { wait.textContent = 'Could not reach Ragra. Try again.'; });
+  }
+  document.getElementById('rg-form').addEventListener('submit', function (e) { e.preventDefault(); send(input.value); });
+  panel.querySelectorAll('[data-q]').forEach(function (b) { b.addEventListener('click', function () { send(b.dataset.q); }); });
+  badge.dataset.n = '0';
+  load();
+  setInterval(function () { if (!document.hidden) load(); }, 15000);
+})();
+</script>
+{% endif %}

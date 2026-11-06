@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Ragra - Agent</title>
+{% include "_theme.html" %}
+<style>
+  .chat { display: flex; flex-direction: column; gap: var(--s3); }
+  .thread { display: flex; flex-direction: column; gap: 10px; height: min(62vh, 560px); overflow-y: auto; padding: var(--s4); background: var(--surface-2); border-radius: var(--r-md); box-shadow: var(--clay-press); }
+  .msg { max-width: 82%; padding: 10px 14px; border-radius: 16px; line-height: 1.45; white-space: pre-wrap; word-wrap: break-word; font-size: .95rem; }
+  .msg time { display: block; font-size: .7rem; opacity: .6; margin-top: 4px; }
+  .msg.user { align-self: flex-end; background: var(--primary); color: #fff; border-bottom-right-radius: 4px; }
+  .msg.bot { align-self: flex-start; background: #fff; color: var(--text); border-bottom-left-radius: 4px; box-shadow: 0 1px 3px rgba(15,30,69,.12); }
+  .msg.alert { align-self: flex-start; background: #FFF7DB; color: #5a4300; border-left: 4px solid #F5B301; border-bottom-left-radius: 4px; }
+  .msg.alert .tag { display: block; font-size: .7rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; margin-bottom: 4px; }
+  .msg a { color: inherit; font-weight: 600; }
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; }
+  .chips button { padding: 6px 12px; font-size: .85rem; }
+  .composer { display: flex; gap: 8px; }
+  .composer input[type=text] { flex: 1; min-width: 0; }
+  .msg .ok { display: block; margin-top: 6px; font-weight: 700; color: #16794c; }
+  .msg .ack { margin-top: 8px; padding: 5px 14px; font-size: .85rem; }
+  .typing { align-self: flex-start; color: var(--muted); font-size: .85rem; }
+</style>
+</head>
+<body class="pg-chat">
+{% include "_nav.html" %}
+
+<div class="page-head">
+  <div><a href="/" style="font-weight:700;text-decoration:none">&larr; Home</a><h1>Ragra Bot</h1><p class="sub">Chat with Ragra. New Classroom alerts show up here as they arrive.</p></div>
+  <form class="inline" method="post" action="/chat/clear" onsubmit="return confirm('Clear this conversation?')">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token_for(request) }}">
+    <button class="btn-ghost" type="submit">Clear</button>
+  </form>
+</div>
+
+<section class="chat">
+  <div class="thread" id="thread" aria-live="polite">
+    {% for m in messages %}
+    <div class="msg {{ m.role }}" data-id="{{ m.id }}">
+      {% if m.role == 'alert' %}<span class="tag">Classroom alert</span>{% endif %}
+      {{ m.text }}
+      {% if m.role == 'alert' and m.link_path %}<br><a href="{{ m.link_path }}">Open</a>{% endif %}
+      {% if m.role == 'alert' %}
+        {% if m.acked_at %}<span class="ok">&#10003; Received</span>
+        {% else %}<form class="inline ackf" method="post" action="/chat/{{ m.id }}/ack">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token_for(request) }}">
+          <button type="submit" class="btn-sun ack">Received</button>
+        </form>{% endif %}
+      {% endif %}
+      <time>{{ m.created_at|when }}</time>
+    </div>
+    {% endfor %}
+  </div>
+
+  <div class="chips">
+    {% for q in ['pending', 'today', 'overdue', 'week', 'news'] %}
+    <button type="button" class="btn-secondary" data-q="{{ q }}">{{ q }}</button>
+    {% endfor %}
+  </div>
+
+  <form class="composer" id="composer" method="post" action="/chat/send" autocomplete="off">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token_for(request) }}">
+    <input type="text" name="text" id="text" maxlength="500" placeholder="Ask about your assignments..." aria-label="Message" autofocus>
+    <button type="submit" class="btn-sun">Send</button>
+  </form>
+</section>
+
+<script>
+(function () {
+  var thread = document.getElementById('thread');
+  var form = document.getElementById('composer');
+  var input = document.getElementById('text');
+  var token = form.querySelector('[name=csrf_token]').value;
+  var lastId = 0;
+  thread.querySelectorAll('.msg').forEach(function (n) { lastId = Math.max(lastId, +n.dataset.id || 0); });
+  thread.scrollTop = thread.scrollHeight;
+
+  function when(iso) {
+    var d = new Date(iso);
+    return isNaN(d) ? '' : d.toLocaleString([], { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
+  }
+  function received() {
+    var ok = document.createElement('span');
+    ok.className = 'ok'; ok.textContent = '\u2713 Received';
+    return ok;
+  }
+  function ackButton(id) {
+    var b = document.createElement('button');
+    b.type = 'button'; b.className = 'btn-sun ack'; b.textContent = 'Received';
+    b.addEventListener('click', function () { ack(id, b); });
+    return b;
+  }
+  function ack(id, button) {
+    api('/chat/' + id + '/ack', { method: 'POST' }).then(function () {
+      location.reload();
+    }).catch(function () { var f = button.closest('form'); if (f) f.submit(); });
+  }
+  function add(m) {
+    if (m.id <= lastId) return;
+    lastId = m.id;
+    var el = document.createElement('div');
+    el.className = 'msg ' + m.role;
+    if (m.role === 'alert') {
+      var tag = document.createElement('span');
+      tag.className = 'tag'; tag.textContent = 'Classroom alert';
+      el.appendChild(tag);
+    }
+    el.appendChild(document.createTextNode(m.text));
+    el.dataset.id = m.id;
+    if (m.role === 'alert' && m.link && m.link.charAt(0) === '/') {
+      el.appendChild(document.createElement('br'));
+      var a = document.createElement('a');
+      a.href = m.link; a.textContent = 'Open';
+      el.appendChild(a);
+    }
+    if (m.role === 'alert') el.appendChild(m.acked ? received() : ackButton(m.id));
+    var t = document.createElement('time');
+    t.textContent = when(m.at);
+    el.appendChild(t);
+    thread.appendChild(el);
+    thread.scrollTop = thread.scrollHeight;
+  }
+  function api(url, opts) {
+    opts.headers = Object.assign({ 'Accept': 'application/json', 'X-CSRF-Token': token }, opts.headers || {});
+    return fetch(url, opts).then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); });
+  }
+  function send(text) {
+    if (!text.trim()) return;
+    input.value = '';
+    var wait = document.createElement('div');
+    wait.className = 'typing'; wait.textContent = 'Ragra is typing...';
+    thread.appendChild(wait); thread.scrollTop = thread.scrollHeight;
+    api('/chat/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ text: text })
+    }).then(function (d) { wait.remove(); d.messages.forEach(add); })
+      .catch(function () { wait.remove(); form.submit(); });
+  }
+  form.addEventListener('submit', function (e) { e.preventDefault(); send(input.value); });
+  document.querySelectorAll('.ackf').forEach(function (f) {
+    f.addEventListener('submit', function (e) {
+      e.preventDefault();
+      ack(+f.getAttribute('action').split('/')[2], f.querySelector('button'));
+    });
+  });
+  document.querySelectorAll('[data-q]').forEach(function (b) {
+    b.addEventListener('click', function () { send(b.dataset.q); });
+  });
+  setInterval(function () {
+    if (document.hidden) return;
+    api('/chat/messages?after=' + lastId, { method: 'GET' })
+      .then(function (d) { d.messages.forEach(add); }).catch(function () {});
+  }, 15000);
+})();
+</script>
+</body>
+</html>

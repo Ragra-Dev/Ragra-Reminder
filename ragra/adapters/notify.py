@@ -42,6 +42,7 @@ class NotifyNotConfigured(RuntimeError):
 NOT_CONFIGURED = "NOT_CONFIGURED"
 HERMES_TRANSPORT_ERROR = "HERMES_TRANSPORT_ERROR"      # binary missing, unlaunchable, or timed out
 HERMES_COMMAND_ERROR = "HERMES_COMMAND_ERROR"          # binary ran and rejected the command
+TELEGRAM_TRANSPORT_ERROR = "TELEGRAM_TRANSPORT_ERROR"  # Telegram Bot API refused or unreachable
 WHATSAPP_TRANSPORT_ERROR = "WHATSAPP_TRANSPORT_ERROR"  # Meta Cloud API refused or unreachable
 EMAIL_TRANSPORT_ERROR = "EMAIL_TRANSPORT_ERROR"        # SMTP refused or unreachable
 
@@ -368,3 +369,31 @@ class WhatsAppCloudProvider:
         if ok:
             return NotifyResult(ok=True)
         return _failure(WHATSAPP_TRANSPORT_ERROR, detail)
+
+
+@dataclass(frozen=True)
+class TelegramProvider:
+    """Telegram through the Bot API (HTTPS, so it works on Railway). Free, with
+    no business account, and a bot may message a chat at any time once the
+    person has started it - there is no 24-hour window to design around."""
+
+    bot_token: str
+    chat_id: str
+    base_url: str | None = None
+
+    def send(self, notification: Notification) -> NotifyResult:
+        import requests
+
+        body = _with_link(notification.text, self.base_url, notification.link_path)
+        try:
+            response = requests.post(
+                f"https://api.telegram.org/bot{self.bot_token}/sendMessage",
+                json={"chat_id": self.chat_id, "text": body[:4000], "disable_web_page_preview": True},
+                timeout=30,
+            )
+        except requests.RequestException as exc:
+            return _failure(TELEGRAM_TRANSPORT_ERROR, _redact(str(exc), self.bot_token))
+        if response.status_code >= 300:
+            detail = f"HTTP {response.status_code}: {response.text[:200]}"
+            return _failure(TELEGRAM_TRANSPORT_ERROR, _redact(detail, self.bot_token))
+        return NotifyResult(ok=True)

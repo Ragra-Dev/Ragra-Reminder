@@ -36,6 +36,7 @@ from datetime import datetime, timedelta, timezone
 from ragra.adapters.notify import Notification, NotificationProvider, send_to_all_providers
 from ragra.db import repo
 from ragra.reminders.engine import reminder_message
+from ragra.reminders.nags import next_nag_at
 
 MAX_ATTEMPTS = 3
 RETRY_DELAY = timedelta(minutes=15)
@@ -135,6 +136,11 @@ def dispatch_due_reminders(
 
         if delivered:
             repo.mark_reminder_sent(conn, user_id=user_id, reminder_id=reminder["id"])
+            # The same alert also lands in the in-app Agent thread.
+            repo.add_chat_message(
+                conn, user_id=user_id, role="alert", text=message,
+                link_path=notification.link_path, next_nag_at=next_nag_at(now_dt),
+            )
             summary.sent += 1
             continue
 

@@ -35,6 +35,7 @@ from ragra.db.connection import connect_closing
 from ragra.adapters.user_clients import UserCredentialsUnavailable, calendar_client_for, classroom_client_for
 from ragra.notifications.preferences import providers_for
 from ragra.reminders.dispatch import dispatch_due_reminders, preview_due_reminders
+from ragra.reminders.nags import run_nags
 from ragra.sync.calendar_sync import sync_all_task_events
 from ragra.sync.classroom_sync import sync_classroom
 
@@ -336,6 +337,13 @@ def _run_reminders_dispatch(conn, config: Config, log, *, user_id: int) -> tuple
         )
     for error in summary.errors:
         log(f"  reminder error: {error}")
+
+    try:
+        repeated = run_nags(conn, user_id=user_id)
+        if repeated:
+            log(f"Repeat alerts: {repeated} posted in the app (waiting for Received)")
+    except Exception as exc:  # noqa: BLE001 - repeats must never fail the dispatch stage
+        log(f"Repeat alerts failed unexpectedly: {exc}")
 
     if summary.permanently_failed:
         return 1, "; ".join(summary.errors)
@@ -677,6 +685,10 @@ def cmd_serve_hosted(args: argparse.Namespace) -> int:
             stop.wait(interval)
 
     threading.Thread(target=_loop, name="ragra-tick", daemon=True).start()
+    if config.telegram_bot_token:
+        from ragra.web.telegram import register_webhook
+
+        print(register_webhook(config))
     app = create_app(config.db_path)
     port = int(os.environ.get("PORT") or config.web_port)
     try:
@@ -689,6 +701,15 @@ def cmd_serve_hosted(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 # Credential storage (P3-6)
 # ---------------------------------------------------------------------------
+
+
+def cmd_telegram_set_webhook(args: argparse.Namespace) -> int:
+    """Point the Telegram bot at this deployment. Runs automatically when the
+    hosted server starts; this is for doing it by hand."""
+    from ragra.web.telegram import register_webhook
+
+    print(register_webhook(load_config()))
+    return 0
 
 
 def cmd_generate_credential_key(args: argparse.Namespace) -> int:
@@ -823,6 +844,8 @@ def cmd_notify_set(args: argparse.Namespace) -> int:
             hermes_target=hermes_target,
             whatsapp_enabled=current.whatsapp_enabled,
             whatsapp_to=current.whatsapp_to,
+            telegram_enabled=current.telegram_enabled,
+            telegram_chat_id=current.telegram_chat_id,
         )
         save_preferences(conn, user_id=user_id, preferences=updated)
 
@@ -919,6 +942,9 @@ def build_parser() -> argparse.ArgumentParser:
         "serve-hosted",
         help="Hosted mode: dashboard on $PORT plus the reminder tick loop in one process",
     ).set_defaults(func=cmd_serve_hosted)
+    sub.add_parser(
+        "telegram-set-webhook", help="Register this deployment's webhook with the Telegram bot"
+    ).set_defaults(func=cmd_telegram_set_webhook)
     sub.add_parser(
         "tick",
         help="Run sync + reminder dispatch once, logging to a file - the unattended/scheduled-task entrypoint",
