@@ -269,3 +269,24 @@ def test_home_shows_the_nearest_deadline_with_a_priority(client):
     assert 'class="hm-pri Low"' in html
     assert "Upcoming Deadline" in html
     assert 'href="/chat"' in html
+
+
+def test_deadlines_page_groups_open_deadlines_soonest_first(client):
+    now = datetime.now(timezone.utc)
+    conn = connect(client.db_path)
+    course_id = conn.execute("SELECT id FROM courses LIMIT 1").fetchone()["id"]
+    for ext, title, delta in [("d-far", "Far Away Task", 20), ("d-soon", "Soon Task", 4)]:
+        repo.upsert_task_from_source(
+            conn, course_id=course_id, source_type="coursework", external_id=ext,
+            title=title, description=None, link=None, kind="ACTIONABLE",
+            actual_deadline=(now + timedelta(days=delta)).isoformat(),
+            source_published_at=repo.now_iso(), source_updated_at=repo.now_iso(), user_id=owner_id(conn),
+        )
+    conn.close()
+
+    html = client.get("/deadlines").text
+    assert "Upcoming Deadlines" in html
+    assert html.index("Soon Task") < html.index("Far Away Task")
+    assert 'data-g="week"' in html and 'data-g="later"' in html
+    # The home page's "View All" now opens this page.
+    assert 'href="/deadlines"' in client.get("/").text

@@ -23,7 +23,7 @@
   .hm-chat { padding: 17px 12px 12px 17px; }
   .hm-chat-top { display: flex; gap: 15px; }
   .hm-chat-av { width: 44px; height: 44px; flex: none; margin-top: 8px; }
-  .hm-chat-av img { width: 100%; height: 100%; display: block; }
+  .hm-chat-av img { width: 100%; height: 100%; display: block; border-radius: 28%; }
   .hm-chat-main { flex: 1; min-width: 0; }
   .hm-chat-name { display: flex; align-items: center; gap: 12px; height: 20px; font: 700 14px/20px "Plus Jakarta Sans", system-ui, sans-serif; color: var(--ink); }
   .hm-on { display: inline-flex; align-items: center; gap: 7px; font: 500 11.5px/1 "Plus Jakarta Sans", system-ui, sans-serif; color: #3A7B94; }
@@ -169,7 +169,7 @@
   {% set _last = chat_rows[-1] if chat_rows else None %}
   <div class="hm-card hm-chat" role="region" aria-label="Ragra Bot chat">
     <div class="hm-chat-top">
-      <div class="hm-chat-av"><img src="/static/icons/bot-avatar.png" alt="" width="92" height="92"></div>
+      <div class="hm-chat-av"><img src="/static/icons/ragra-bot-160.png" alt="Ragra Bot" width="160" height="160"></div>
       <div class="hm-chat-main">
         <div class="hm-chat-name">Ragra Bot <span class="hm-on">Online</span></div>
         <div class="hm-bubble-row">
@@ -195,7 +195,7 @@
     <div class="hm-chips">
       <a href="/tasks#new">Add Reminder
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M8 3v4M16 3v4M3 10h18"/></svg></a>
-      <a href="/overview#deadlines">View Deadlines
+      <a href="/deadlines">View Deadlines
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="8"/><path d="M12 9v4M10 2h4"/></svg></a>
       <button type="button" id="hm-help">Get Help
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 8.5a3.5 3.5 0 1 1 4.9 3.2c-.9.4-1.4 1.1-1.4 2v.8M12 19.5v.1"/></svg></button>
@@ -207,7 +207,7 @@
     <div class="hm-dl-head">
       <svg class="ci" viewBox="0 0 24 24" fill="none" stroke="#0B58FD" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M8 3v4M16 3v4M3 10h18"/><path d="M7.5 14h.01M11 14h.01M14.5 17h.01M7.5 17.5h.01" stroke-width="2.6"/></svg>
       <h2>Upcoming Deadline</h2>
-      <a href="/tasks">View All <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h15M13 6l6 6-6 6"/></svg></a>
+      <a href="/deadlines">View All <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h15M13 6l6 6-6 6"/></svg></a>
     </div>
     {% if nearest %}
     <a class="hm-dl" href="/tasks/{{ nearest.id }}">

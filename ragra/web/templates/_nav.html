@@ -8,13 +8,12 @@
     <a class="brand" href="/"><span class="logo">{{ mark(36) }}</span><span>Ragra</span></a>
     <nav class="tabs">
       <a href="/" {% if _p == '/' %}class="on"{% endif %}>{{ icon('today') }}Home</a>
-      <a href="/overview" {% if _p.startswith('/overview') %}class="on"{% endif %}>{{ icon('calendar') }}Overview</a>
       <a href="/chat" {% if _p.startswith('/chat') %}class="on"{% endif %}>{{ icon('chat') }}Chat<span class="nb" hidden></span></a>
       <a href="/tasks" {% if _p.startswith('/tasks') %}class="on"{% endif %}>{{ icon('tasks') }}Tasks</a>
       <a href="/announcements" {% if _p.startswith('/announcements') %}class="on"{% endif %}>{{ icon('news') }}Announcements</a>
       <a href="/missed" {% if _p.startswith('/missed') %}class="on"{% endif %}>{{ icon('missed') }}Missed</a>
-      <a href="/deliveries" {% if _p.startswith('/deliveries') %}class="on"{% endif %}>{{ icon('sent') }}Deliveries</a>
-      <a href="/account" {% if _p.startswith('/account') %}class="on"{% endif %}>{{ icon('user') }}Account</a>
+      <a href="/deliveries" {% if _p.startswith('/deliveries') %}class="on"{% endif %}>{{ icon('sent') }}Notifications</a>
+      <a href="/account" {% if _p.startswith('/account') %}class="on"{% endif %}>{{ icon('user') }}Profile</a>
     </nav>
     {% if _u %}
     <a class="nav-user" href="/account" title="{{ _u.email or _u.name }}">
@@ -30,7 +29,7 @@
   <a href="/announcements" {% if _p.startswith('/announcements') %}class="on"{% endif %}>{{ icon('news') }}News</a>
   <a href="/" class="center" aria-label="Today">{{ icon('today', flat=True) }}</a>
   <a href="/chat" {% if _p.startswith('/chat') %}class="on"{% endif %}>{{ icon('chat') }}Chat<span class="nb" hidden></span></a>
-  <a href="/account" {% if _p.startswith('/account') or _p.startswith('/deliveries') %}class="on"{% endif %}>{{ icon('user') }}Account</a>
+  <a href="/account" {% if _p.startswith('/account') or _p.startswith('/deliveries') %}class="on"{% endif %}>{{ icon('user') }}Profile</a>
 </nav>
 <style>
   .tabs a, .dock a { position: relative; }

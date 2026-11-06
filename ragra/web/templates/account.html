@@ -2,130 +2,165 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Ragra - Account</title>
+<title>Ragra - Profile</title>
 {% include "_theme.html" %}
+<style>
+  .pf { display: flex; flex-direction: column; gap: 16px; font-family: "Plus Jakarta Sans", "Inter", system-ui, sans-serif; }
+  .pf h1 { margin: 0; }
+  .pf-card { background: #fff; border-radius: 24px; padding: 20px 22px; box-shadow: 0 14px 30px -18px rgba(37,99,235,.38), 0 2px 6px rgba(15,30,69,.05); }
+  .pf-card > h2 { margin: 0 0 4px; font-size: 1.05rem; color: #0F1B4D; }
+  .pf-card > .sub { margin: 0 0 12px; color: #5A6BA8; font-size: .86rem; }
+
+  .pf-me { display: flex; align-items: center; gap: 16px; }
+  .pf-me .avatar.lg { width: 64px; height: 64px; font-size: 1.6rem; box-shadow: none; }
+  .pf-me .name { font-size: 1.2rem; font-weight: 800; color: #0F1B4D; }
+  .pf-me .email { color: #5A6BA8; font-size: .9rem; overflow-wrap: anywhere; }
+
+  .pf-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 0; border-top: 1px solid #EEF2FD; }
+  .pf-row:first-of-type { border-top: 0; }
+  .pf-row .nm { font-weight: 700; color: #0F1B4D; }
+  .pf-row .hint { margin: 2px 0 0; font-size: .78rem; }
+  .pf-row form.inline button { padding: 8px 16px; font-size: .82rem; }
+
+  .ch { padding: 12px 0; border-top: 1px solid #EEF2FD; }
+  .ch:first-of-type { border-top: 0; }
+  .ch-top { display: flex; align-items: center; gap: 10px; }
+  .ch-top label { margin: 0; font-weight: 700; color: #0F1B4D; font-size: .95rem; flex: 1; }
+  .ch-top .state { font-size: .75rem; font-weight: 700; padding: 3px 10px; border-radius: 999px; background: #EAF0FD; color: #5A6BA8; }
+  .ch-top .state.on { background: #DDF6EA; color: #0F8F6E; }
+  .ch .saved-row, .ch .mini, .ch > label, .ch > .hint { margin-left: 28px; }
+  .ch > label { display: block; font-size: .8rem; font-weight: 700; color: #5A6BA8; margin-top: 8px; }
+  .ch > label input { width: 100%; margin-top: 6px; }
+  .ch .hint { font-size: .78rem; margin-top: 6px; }
+  .pf-save { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 12px; }
+  .pf-save button { margin: 0; padding: 11px 28px; background: #2563EB; color: #fff; box-shadow: 0 8px 16px -6px rgba(37,99,235,.55); }
+  .pf h1 { margin-top: 8px; }
+  .pf-save .hint { margin: 0; font-size: .78rem; }
+  .pf .fold { margin: 0; }
+  .pf .flash { margin-bottom: 8px; }
+</style>
 </head>
 <body class="pg-account">
 {% include "_nav.html" %}
-<h1>Account</h1>
 
-<div class="profile-card tone-blue">
-  {% if account_picture %}<img class="avatar lg" src="{{ account_picture }}" alt="" referrerpolicy="no-referrer" width="84" height="84">
+<div class="pf">
+<h1>Profile</h1>
+
+{# ---- who is signed in ---- #}
+<div class="pf-card pf-me">
+  {% if account_picture %}<img class="avatar lg" src="{{ account_picture }}" alt="" referrerpolicy="no-referrer" width="64" height="64">
   {% else %}<span class="avatar lg">{{ (display_name or account_email or "?")[:1]|upper }}</span>{% endif %}
-  <div class="info">
+  <div>
     <div class="name">{{ display_name or "Your account" }}</div>
     {% if account_email %}<div class="email">{{ account_email }}</div>{% endif %}
     <span class="chip">Signed in with Google</span>
   </div>
 </div>
 
-<div class="sec-head tone-sky"><h2>Connected services</h2><a class="see-all" href="/deliveries">Delivery history</a></div>
-<section class="tone-sky">
+{# ---- Google connections ---- #}
+<div class="pf-card">
+  <h2>Google connections</h2>
+  <p class="sub">Ragra reads your Classroom and Calendar through these.</p>
   {% for service, status in google_status.items() %}
-  <div class="service-row">
+  <div class="pf-row">
     <div>
-      <span class="name">{{ service | capitalize }}</span>
+      <span class="nm">{{ service | capitalize }}</span>
       <span class="badge badge-{{ status.state }}">{{ status.state | replace("_", " ") }}</span>
       {% if status.detail %}<div class="hint">{{ status.detail }}</div>{% endif %}
       {% if status.last_success_at %}<div class="hint">Last worked: {{ status.last_success_at }}</div>{% endif %}
     </div>
     <form class="inline" method="post" action="/account/google/reconnect/{{ service }}">
       <input type="hidden" name="csrf_token" value="{{ csrf_token_for(request) }}">
-      <button type="submit">
-        {% if status.state == "not_connected" %}Connect{% else %}Reconnect{% endif %} {{ service | capitalize }}
-      </button>
+      <button type="submit">{% if status.state == "not_connected" %}Connect{% else %}Reconnect{% endif %} {{ service | capitalize }}</button>
     </form>
   </div>
   {% endfor %}
-  <p class="hint">Opens Google's own permission screen. Tick every box there, and nothing is granted without your approval.</p>
-</section>
+</div>
 
-<div class="sec-head tone-yellow"><h2>Notifications</h2></div>
-<section class="tone-yellow">
+{# ---- where alerts go ---- #}
+<div class="pf-card" id="notifications">
+  <h2>Where to send alerts</h2>
+  <p class="sub">Tick a channel to get reminders there. <a href="/deliveries">See sent notifications</a></p>
   {% set _saved = request.query_params.get('saved') %}
-  {% if _saved == 'welcome' %}<p class="flash ok-flash">&#10003; Saved. A welcome message is on its way - check your inbox (and spam).</p>
-  {% elif _saved == 'nosend' %}<p class="flash warn-flash">Saved, but this server has no way to send messages yet, so no welcome message was sent. Add the email settings on the server first.</p>
-  {% elif _saved == 'notelegram' %}<p class="flash warn-flash">Telegram isn't set up on this server yet, so it can't be connected.</p>
-  {% elif _saved == 'badnumber' %}<p class="flash warn-flash">That doesn't look like a phone number, so it wasn't saved. Use the international form, e.g. +92 300 1234567.</p>
+  {% if _saved == 'welcome' %}<p class="flash ok-flash">&#10003; Saved. A welcome message is on its way.</p>
+  {% elif _saved == 'nosend' %}<p class="flash warn-flash">Saved, but the server has no way to send yet.</p>
+  {% elif _saved == 'notelegram' %}<p class="flash warn-flash">Telegram isn't set up on this server.</p>
+  {% elif _saved == 'badnumber' %}<p class="flash warn-flash">Not a valid number. Use e.g. +92 300 1234567.</p>
   {% elif _saved == 'saved' %}<p class="flash ok-flash">&#10003; Saved.</p>{% endif %}
   <form method="post" action="/account/notifications">
     <input type="hidden" name="csrf_token" value="{{ csrf_token_for(request) }}">
 
-    <div class="channel">
-      <div class="checkbox-row">
-        <input type="checkbox" id="telegram_enabled" name="telegram_enabled" value="1" {% if preferences.telegram_enabled %}checked{% endif %} {% if not preferences.telegram_chat_id %}disabled{% endif %}>
-        <label for="telegram_enabled">Telegram - alerts and chat (free)</label>
-      </div>
-      {% if preferences.telegram_chat_id %}
-      <div class="saved-row"><span class="chip">Connected</span> <span>Ask the bot <i>pending</i>, <i>today</i> or <i>overdue</i> any time.</span></div>
-      {% elif telegram_ready %}
-      <p class="hint">Not connected yet. Press <b>Connect Telegram</b> below, then press <b>Start</b> in the chat that opens.</p>
-      {% else %}
-      <p class="hint">Telegram isn't switched on for this server yet.</p>
-      {% endif %}
-    </div>
-
-    <div class="channel">
-      <div class="checkbox-row">
+    <div class="ch">
+      <div class="ch-top">
         <input type="checkbox" id="email_enabled" name="email_enabled" value="1" {% if preferences.email_enabled %}checked{% endif %}>
-        <label for="email_enabled">Email reminders</label>
+        <label for="email_enabled">Email</label>
+        <span class="state {{ 'on' if preferences.email_enabled }}">{{ 'On' if preferences.email_enabled else 'Off' }}</span>
       </div>
       {% if preferences.email_to %}
-      <div class="saved-row">
-        <span class="chip">Saved</span> <b>{{ preferences.email_to }}</b>
-        <input type="hidden" name="email_to" value="{{ preferences.email_to }}">
-      </div>
+      <div class="saved-row"><span class="chip">Saved</span> <b>{{ preferences.email_to }}</b>
+        <input type="hidden" name="email_to" value="{{ preferences.email_to }}"></div>
       <details class="mini"><summary>Change email</summary>
-        <input type="text" name="email_change" placeholder="new address, e.g. you@example.com" autocomplete="email">
+        <input type="text" name="email_change" placeholder="you@example.com" autocomplete="email">
       </details>
       {% else %}
       <label>Email address <input type="text" name="email_to" placeholder="you@example.com" autocomplete="email"></label>
       {% endif %}
     </div>
 
-    <div class="channel">
-      <div class="checkbox-row">
+    <div class="ch">
+      <div class="ch-top">
         <input type="checkbox" id="whatsapp_enabled" name="whatsapp_enabled" value="1" {% if preferences.whatsapp_enabled %}checked{% endif %}>
-        <label for="whatsapp_enabled">WhatsApp - alerts and chat</label>
+        <label for="whatsapp_enabled">WhatsApp</label>
+        <span class="state {{ 'on' if preferences.whatsapp_enabled }}">{{ 'On' if preferences.whatsapp_enabled else 'Off' }}</span>
       </div>
       {% if preferences.whatsapp_to %}
-      <div class="saved-row">
-        <span class="chip">Saved</span> <b>+{{ preferences.whatsapp_to }}</b>
-        <input type="hidden" name="whatsapp_to" value="{{ preferences.whatsapp_to }}">
-      </div>
+      <div class="saved-row"><span class="chip">Saved</span> <b>+{{ preferences.whatsapp_to }}</b>
+        <input type="hidden" name="whatsapp_to" value="{{ preferences.whatsapp_to }}"></div>
       <details class="mini"><summary>Change WhatsApp number</summary>
         <input type="text" name="whatsapp_change" placeholder="+92 300 1234567" autocomplete="tel">
       </details>
       {% else %}
-      <label>Your WhatsApp number <input type="text" name="whatsapp_to" placeholder="+92 300 1234567" autocomplete="tel"></label>
+      <label>WhatsApp number <input type="text" name="whatsapp_to" placeholder="+92 300 1234567" autocomplete="tel"></label>
       {% endif %}
       {% if whatsapp_ready %}
-      <p class="hint">After saving, open WhatsApp and send <b>hi</b> to {% if whatsapp_bot_number %}<b>{{ whatsapp_bot_number }}</b>{% else %}the Ragra number{% endif %}. Then you can ask things like <i>pending</i>, <i>today</i>, <i>overdue</i> or <i>what should I do first?</i> - and new announcements and deadlines arrive here too.</p>
+      <p class="hint">Then send <b>hi</b> to {% if whatsapp_bot_number %}<b>{{ whatsapp_bot_number }}</b>{% else %}the Ragra number{% endif %} on WhatsApp.</p>
       {% else %}
-      <p class="hint">WhatsApp isn't switched on for this server yet, so nothing will be sent until it is set up.</p>
+      <p class="hint">Not set up on this server yet.</p>
       {% endif %}
     </div>
 
-    <div class="channel">
-      <div class="checkbox-row">
+    <div class="ch">
+      <div class="ch-top">
+        <input type="checkbox" id="telegram_enabled" name="telegram_enabled" value="1" {% if preferences.telegram_enabled %}checked{% endif %} {% if not preferences.telegram_chat_id %}disabled{% endif %}>
+        <label for="telegram_enabled">Telegram</label>
+        <span class="state {{ 'on' if preferences.telegram_chat_id }}">{{ 'Connected' if preferences.telegram_chat_id else 'Off' }}</span>
+      </div>
+      {% if not preferences.telegram_chat_id %}
+      <p class="hint">{% if telegram_ready %}Press Connect Telegram below, then Start.{% else %}Not set up on this server yet.{% endif %}</p>
+      {% endif %}
+    </div>
+
+    <details class="ch mini" style="margin-left:0">
+      <summary>Advanced: Hermes</summary>
+      <div class="ch-top" style="margin-top:8px">
         <input type="checkbox" id="hermes_enabled" name="hermes_enabled" value="1" {% if preferences.hermes_enabled %}checked{% endif %}>
-        <label for="hermes_enabled">Hermes (advanced - only when Ragra runs on your own computer)</label>
+        <label for="hermes_enabled">Hermes (only when Ragra runs on your computer)</label>
       </div>
       {% if preferences.hermes_target %}
-      <div class="saved-row">
-        <span class="chip">Saved</span> <b>{{ preferences.hermes_target }}</b>
-        <input type="hidden" name="hermes_target" value="{{ preferences.hermes_target }}">
-      </div>
+      <div class="saved-row"><span class="chip">Saved</span> <b>{{ preferences.hermes_target }}</b>
+        <input type="hidden" name="hermes_target" value="{{ preferences.hermes_target }}"></div>
       <details class="mini"><summary>Change Hermes target</summary>
         <input type="text" name="hermes_change" placeholder="whatsapp:+92...">
       </details>
       {% else %}
-      <label>Hermes target <input type="text" name="hermes_target" placeholder="whatsapp:+92..."></label>
+      <label style="display:block;margin:8px 0 0 28px">Hermes target <input type="text" name="hermes_target" placeholder="whatsapp:+92..." style="width:100%;margin-top:6px"></label>
       {% endif %}
-    </div>
+    </details>
 
-    <p class="hint">Saved once, kept for next time - you only type it again if you press Change. A welcome message is sent the first time a channel is switched on or its address changes. A channel only sends when it is ticked and the server has it set up.</p>
-    <button type="submit">Save notification settings</button>
+    <div class="pf-save">
+      <button type="submit">Save</button>
+      <span class="hint">A welcome message is sent when you turn a channel on.</span>
+    </div>
   </form>
   {% if telegram_ready or preferences.telegram_chat_id %}
   <div class="actions">
@@ -143,40 +178,36 @@
     {% endif %}
   </div>
   {% endif %}
-</section>
+</div>
 
-<div class="sec-head"><h2>More</h2></div>
-
+{# ---- rarely needed ---- #}
 <details class="fold tone-violet">
-  <summary><span>Academic profile</span></summary>
+  <summary><span>Academic details</span></summary>
   <form method="post" action="/account/profile">
     <input type="hidden" name="csrf_token" value="{{ csrf_token_for(request) }}">
     <label>Program <input type="text" name="program" value="{{ profile.program }}" required></label>
     <label>Batch year <input type="text" name="batch_year" value="{{ profile.batch_year or '' }}"></label>
-    <label>Enrollment start year
-      <input type="text" name="enrollment_start_year" value="{{ profile.enrollment_start_year }}">
-    </label>
-    <label>Enrollment start term
+    <label>Start year <input type="text" name="enrollment_start_year" value="{{ profile.enrollment_start_year }}"></label>
+    <label>Start term
       <select name="enrollment_start_term">
         <option value="FALL" {% if profile.enrollment_start_term == "FALL" %}selected{% endif %}>FALL</option>
         <option value="SPRING" {% if profile.enrollment_start_term == "SPRING" %}selected{% endif %}>SPRING</option>
       </select>
     </label>
-    <label>Enrolled courses, one per line
-      <textarea name="enrollment" rows="6" placeholder="Digital Logic Design | CS-G | REGULAR | 2025 | DLD,Digital Logic">{{ enrollment_text }}</textarea>
+    <label>Courses, one per line
+      <textarea name="enrollment" rows="5" placeholder="Digital Logic Design | CS-G | REGULAR | 2025 | DLD,Digital Logic">{{ enrollment_text }}</textarea>
     </label>
-    <p class="hint">Format: <code>Course Name | Section | REGULAR or REPEAT | batch year (optional) | aliases (optional)</code>.
-      Used only for section matching and the descriptive "expected semester". It never hides a course.</p>
-    <button class="btn-primary" type="submit">Save profile</button>
+    <p class="hint">Format: <code>Course | Section | REGULAR or REPEAT | batch (optional) | aliases (optional)</code></p>
+    <button class="btn-primary" type="submit">Save details</button>
   </form>
 </details>
 
 <details class="fold danger-fold">
   <summary><span class="danger-heading">Delete account</span></summary>
-  <p>Permanently delete this account and everything it owns: tasks, reminders, calendar links,
-    stored Google authorization, notification settings and sign-in sessions.</p>
+  <p>Removes your account and all its data for good.</p>
   <p><a href="/account/delete"><button type="button" class="btn-danger">Delete my account&hellip;</button></a></p>
 </details>
+</div>
 
 </body>
 </html>

@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Ragra - Upcoming Deadlines</title>
+{% include "_theme.html" %}
+<style>
+  .dlp { --ink: #0F1B4D; --ink-2: #5A6BA8; --blue: #0B58FD; display: flex; flex-direction: column; gap: 18px; font-family: "Plus Jakarta Sans", "Inter", system-ui, sans-serif; }
+  .dlp-head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  .dlp-head .ic { width: 52px; height: 52px; border-radius: 16px; background: #fff; display: grid; place-items: center; box-shadow: 0 10px 24px -14px rgba(37,99,235,.55); flex: none; }
+  .dlp-head .ic svg { width: 28px; height: 28px; }
+  .dlp-head h1 { margin: 0; font-size: clamp(1.5rem, 3vw, 2rem); color: var(--ink); }
+  .dlp-head p { margin: 2px 0 0; color: var(--ink-2); font-size: .9rem; }
+
+  /* filter pills */
+  .dlp-filter { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; }
+  .dlp-filter::-webkit-scrollbar { display: none; }
+  .dlp-filter button { flex: none; margin: 0; display: inline-flex; align-items: center; gap: 8px; padding: 9px 16px; border-radius: 999px; border: 1px solid #DCE4FB; background: #fff; color: var(--ink-2);
+    font: 600 .85rem/1 inherit; box-shadow: none; }
+  .dlp-filter button b { min-width: 22px; height: 22px; padding: 0 7px; border-radius: 999px; display: inline-grid; place-items: center; background: #EEF2FD; color: var(--ink-2); font-size: .72rem; }
+  .dlp-filter button.on { background: #2563EB; border-color: #2563EB; color: #fff; box-shadow: 0 8px 16px -8px rgba(37,99,235,.7); }
+  .dlp-filter button.on b { background: rgba(255,255,255,.22); color: #fff; }
+  .dlp-filter button:hover { transform: none; }
+
+  /* groups */
+  .dlp-group { background: #fff; border-radius: 26px; padding: 6px 22px 10px; box-shadow: 0 14px 30px -18px rgba(37,99,235,.38), 0 2px 6px rgba(15,30,69,.05); }
+  .dlp-group > h2 { display: flex; align-items: center; gap: 10px; margin: 0; padding: 16px 0 12px; border-bottom: 1px solid #EEF2FD; font-size: 1.02rem; color: var(--ink); }
+  .dlp-group > h2 .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--blue); }
+  .dlp-group > h2 .n { margin-left: auto; font-size: .78rem; font-weight: 700; color: var(--ink-2); }
+  .dlp-group.g-overdue > h2 .dot { background: #E5484D; }
+  .dlp-group.g-today > h2 .dot { background: #F59E0B; }
+  .dlp-group.g-tomorrow > h2 .dot { background: #8B5CF6; }
+  .dlp-group.g-later > h2 .dot { background: #94A3B8; }
+
+  /* one deadline: same card as on the home page */
+  .dl { display: flex; align-items: center; gap: 0; padding: 14px 0; border-top: 1px solid #F1F4FD; text-decoration: none; color: inherit; border-radius: 16px; transition: background .15s; }
+  .dlp-group > h2 + .dl { border-top: 0; }
+  .dl:hover { background: #F7F9FF; }
+  .dl-date { width: 62px; height: 66px; flex: none; display: flex; flex-direction: column; align-items: center; justify-content: center; border-radius: 14px; background: #DCE8FD; color: #000048; line-height: 1.1; }
+  .dl-date small { font-size: .72rem; font-weight: 600; }
+  .dl-date b { font-size: 1.6rem; font-weight: 800; }
+  .dl-bar { width: 3px; height: 48px; margin: 0 14px; border-radius: 2px; background: var(--blue); flex: none; }
+  .dl-tx { flex: 1; min-width: 0; }
+  .dl-tx b { display: block; font-size: 1rem; font-weight: 700; color: #00003B; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dl-tx .meta2 { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 5px; color: #4A4C90; font-size: .85rem; }
+  .dl-tx .meta2 svg { width: 15px; height: 15px; }
+  .dl-tx .crs { margin: 0; padding: 2px 9px; border-radius: 999px; background: #EEF2FD; color: #3B4C93; font-size: .74rem; font-weight: 700; }
+  .dl-pri { flex: none; margin-left: 12px; padding: 5px 12px; border-radius: 999px; font-size: .76rem; font-weight: 700; background: #E1E0FE; color: #291DEE; }
+  .dl-pri.High { background: #FFE0E3; color: #C2273B; }
+  .dl-pri.Low { background: #DDF6EA; color: #0F8F6E; }
+  .dl.overdue .dl-date { background: #FFE4E6; color: #9F1239; }
+  .dl.overdue .dl-bar { background: #E5484D; }
+  .dl.today .dl-bar { background: #F59E0B; }
+  .dl .go { width: 20px; height: 20px; margin-left: 10px; color: #A3B1DC; flex: none; }
+
+  .dlp-empty { background: #fff; border-radius: 26px; padding: 40px 24px; text-align: center; color: var(--ink-2); box-shadow: 0 14px 30px -18px rgba(37,99,235,.38); }
+  .dlp-empty b { display: block; font-size: 1.1rem; color: var(--ink); margin-bottom: 4px; }
+
+  @media (max-width: 980px) { .dlp { margin-top: 10px; } }
+  @media (max-width: 640px) {
+    .dlp-group { padding: 4px 14px 8px; border-radius: 22px; }
+    .dl-date { width: 54px; height: 60px; } .dl-date b { font-size: 1.35rem; }
+    .dl-bar { margin: 0 10px; height: 42px; }
+    .dl-tx b { font-size: .92rem; white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+    .dl-pri { margin-left: 8px; padding: 4px 9px; font-size: .7rem; }
+    .dl .go { display: none; }
+  }
+</style>
+</head>
+<body class="pg-deadlines">
+{% include "_nav.html" %}
+
+<div class="dlp">
+  <div class="dlp-head">
+    <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="#0B58FD" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M8 3v4M16 3v4M3 10h18"/><path d="M7.5 14h.01M11 14h.01M14.5 14h.01M7.5 17.5h.01M11 17.5h.01" stroke-width="2.6"/></svg></span>
+    <div><h1>Upcoming Deadlines</h1>
+      <p>{% if total %}{{ total }} open deadline{{ '' if total == 1 else 's' }}, soonest first.{% else %}Nothing due right now.{% endif %}</p></div>
+  </div>
+
+  {% if total %}
+  <div class="dlp-filter" role="tablist" aria-label="Filter deadlines">
+    <button type="button" class="on" data-f="all">All <b>{{ total }}</b></button>
+    {% for key, label in [('overdue', 'Overdue'), ('today', 'Today'), ('tomorrow', 'Tomorrow'), ('week', 'This week'), ('later', 'Later')] %}
+      {% if counts[key] %}<button type="button" data-f="{{ key }}">{{ label }} <b>{{ counts[key] }}</b></button>{% endif %}
+    {% endfor %}
+  </div>
+
+  {% for g in groups %}
+  <div class="dlp-group g-{{ g.key }}" data-g="{{ g.key }}">
+    <h2><span class="dot"></span>{{ g.label }}<span class="n">{{ g['items']|length }}</span></h2>
+    {% for d in g['items'] %}
+    <a class="dl {{ d.group }}" href="/tasks/{{ d.id }}">
+      <div class="dl-date"><small>{{ d.month }}</small><b>{{ d.day }}</b><small>{{ d.weekday }}</small></div>
+      <span class="dl-bar"></span>
+      <div class="dl-tx"><b>{{ d.title }}</b>
+        <div class="meta2">
+          {% if d.course %}<span class="crs">{{ d.course }}</span>{% endif %}
+          <span style="display:inline-flex;align-items:center;gap:6px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>{{ d.rel }} &bull; {{ d.time }}</span>
+        </div></div>
+      <span class="dl-pri {{ d.level }}">{{ d.level }}</span>
+      <svg class="go" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg>
+    </a>
+    {% endfor %}
+  </div>
+  {% endfor %}
+  {% else %}
+  <div class="dlp-empty"><b>You're all caught up &#127881;</b>No open deadlines. New Classroom work will show up here.</div>
+  {% endif %}
+</div>
+
+<script>
+(function () {
+  var btns = document.querySelectorAll('.dlp-filter button'), groups = document.querySelectorAll('.dlp-group');
+  btns.forEach(function (b) {
+    b.addEventListener('click', function () {
+      btns.forEach(function (x) { x.classList.toggle('on', x === b); });
+      groups.forEach(function (g) { g.style.display = (b.dataset.f === 'all' || g.dataset.g === b.dataset.f) ? '' : 'none'; });
+    });
+  });
+})();
+</script>
+</body>
+</html>

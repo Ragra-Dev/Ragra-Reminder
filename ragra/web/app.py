@@ -164,6 +164,40 @@ MISSED_SECTION_PREVIEW_LIMIT = 5
 ANNOUNCEMENT_PREVIEW_LIMIT = 5
 
 
+
+def _deadline_card(task, now: datetime) -> dict:
+    """One task as a deadline card: campus-time date parts, a friendly
+    relative day ("Today", "Tomorrow", a weekday) and a priority worked out
+    from how soon it is due (tasks have no priority field of their own)."""
+    from ragra.tz import parse_instant, to_local
+
+    when_local = to_local(parse_instant(str(task["actual_deadline"])))
+    days = (when_local.date() - to_local(now).date()).days
+    if days < 0:
+        level, rel, group = "High", "Overdue", "overdue"
+    elif days == 0:
+        level, rel, group = "High", "Today", "today"
+    elif days == 1:
+        level, rel, group = "Medium", "Tomorrow", "tomorrow"
+    else:
+        level = "Medium" if days <= 3 else "Low"
+        rel = when_local.strftime("%A") if days < 7 else when_local.strftime("%a %d %b").replace(" 0", " ")
+        group = "week" if days < 7 else "later"
+    hour = when_local.strftime("%I").lstrip("0") or "12"
+    return {
+        "id": task["id"],
+        "title": task["title"],
+        "course": task["course_code"] or task["course_name"],
+        "month": when_local.strftime("%b"),
+        "day": when_local.day,
+        "weekday": when_local.strftime("%a"),
+        "rel": rel,
+        "time": f"{hour}:{when_local.strftime('%M %p')}",
+        "level": level,
+        "group": group,
+        "days": days,
+    }
+
 def create_app(
     db_path: Path,
     *,
@@ -653,30 +687,7 @@ def create_app(
         pick = next(iter(sorted([*due_today, *due_soon], key=lambda t: t["actual_deadline"] or "9999")), None)
         pick = pick or (overdue[0] if overdue else None)
         if is_home and pick is not None and pick["actual_deadline"]:
-            from ragra.tz import parse_instant, to_local
-
-            when_local = to_local(parse_instant(str(pick["actual_deadline"])))
-            days = (when_local.date() - to_local(now).date()).days
-            if days < 0:
-                level, rel = "High", "Overdue"
-            elif days == 0:
-                level, rel = "High", "Today"
-            elif days == 1:
-                level, rel = "Medium", "Tomorrow"
-            else:
-                level, rel = ("Medium" if days <= 3 else "Low"), when_local.strftime("%A")
-            hour = when_local.strftime("%I").lstrip("0") or "12"
-            nearest = {
-                "id": pick["id"],
-                "title": pick["title"],
-                "course": pick["course_code"] or pick["course_name"],
-                "month": when_local.strftime("%b"),
-                "day": when_local.day,
-                "weekday": when_local.strftime("%a"),
-                "rel": rel,
-                "time": f"{hour}:{when_local.strftime('%M %p')}",
-                "level": level,
-            }
+            nearest = _deadline_card(pick, now)
 
         return templates.TemplateResponse(
             request,
@@ -703,6 +714,32 @@ def create_app(
                 "announcements": announcements,
                 "personal_tasks": personal_tasks,
             },
+        )
+
+    # --- Deadlines: every open task with a due date, soonest first ---------
+    @app.get("/deadlines")
+    def deadlines_page(request: Request):
+        now = datetime.now(timezone.utc)
+        now_iso = utc_iso(now)
+        with connect_closing(db_path) as conn:
+            user_id = _acting_user(conn, request)
+            overdue = repo.overdue_tasks(conn, user_id=user_id, now=now_iso)
+            upcoming = repo.tasks_due_between(
+                conn, user_id=user_id, start_iso=now_iso, end_iso="9999-12-31T23:59:59+00:00"
+            )
+        cards = [_deadline_card(t, now) for t in [*overdue, *upcoming] if t["actual_deadline"]]
+        order = [
+            ("overdue", "Overdue"), ("today", "Today"), ("tomorrow", "Tomorrow"),
+            ("week", "This week"), ("later", "Later"),
+        ]
+        groups = [
+            {"key": key, "label": label, "items": [c for c in cards if c["group"] == key]}
+            for key, label in order
+        ]
+        return templates.TemplateResponse(
+            request, "deadlines.html",
+            {"groups": [g for g in groups if g["items"]], "total": len(cards),
+             "counts": {g["key"]: len(g["items"]) for g in groups}},
         )
 
     @app.get("/missed")

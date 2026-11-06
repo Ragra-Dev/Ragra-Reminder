@@ -2,15 +2,15 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Ragra - Notification deliveries</title>
+<title>Ragra - Notifications</title>
 {% include "_theme.html" %}
 </head>
 <body class="pg-deliveries">
 {% include "_nav.html" %}
-<a class="back" href="/account">&larr; Back to account</a>
+<a class="back" href="/account">&larr; Back to profile</a>
 <div class="page-head">
-  <div><h1>Notification deliveries</h1>
-    <p class="sub">One row per provider per attempt. Credentials are never recorded here.</p></div>
+  <div><h1>Notifications</h1>
+    <p class="sub">Every reminder Ragra has sent you, and where it went.</p></div>
   {% if deliveries %}
     {% set ns = namespace(ok=0, bad=0) %}
     {% for row in deliveries %}{% if row.ok %}{% set ns.ok = ns.ok + 1 %}{% else %}{% set ns.bad = ns.bad + 1 %}{% endif %}{% endfor %}

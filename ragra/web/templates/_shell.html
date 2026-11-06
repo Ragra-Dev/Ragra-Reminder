@@ -44,8 +44,8 @@
   .page-head h1, h1 { color: #0F1B4D; }
 
   /* ---- phone / tablet chrome, measured from the mockup (390px-wide phone) ---- */
-  .hm-top, .hm-nav { display: none; }
-  .hm-top { align-items: center; gap: 0; height: 52px; }
+  .hm-top, .hm-nav, .dk-top { display: none; }
+  .hm-top { align-items: center; gap: 0; height: 52px; position: sticky; top: 0; z-index: 45; }
   .hm-top .brand-t { flex: 1; display: flex; align-items: center; gap: 11px; font: 800 19px/20px "Plus Jakarta Sans", "Inter", system-ui, sans-serif; letter-spacing: -.01em; color: #070B45; text-decoration: none; }
   .hm-top .brand-t img { width: 54px; height: auto; display: block; margin-left: 7px; }
   .hm-bell { position: relative; width: 36px; height: 36px; margin-right: 12px; display: grid; place-items: center; color: #070B45; text-decoration: none; }
@@ -63,11 +63,12 @@
   @media (max-width: 980px) {
     .appbar, .dock { display: none !important; }
     body:has(> .hm-top) { padding: 20px 14px 110px; }
-    .hm-top { display: flex; }
+    .hm-top { display: flex; margin: -20px -14px 4px; padding: 20px 14px 10px; height: auto; background: rgba(236,240,254,.88); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); }
     .hm-nav { display: flex; }
   }
   @media (max-width: 360px) {
     body:has(> .hm-top) { padding: 14px 10px 104px; }
+    .hm-top { margin: -14px -10px 4px; padding: 14px 10px 10px; }
     .hm-top .brand-t { font-size: 17px; line-height: 17px; } .hm-top .brand-t img { width: 46px; }
     .hm-nav a { font-size: 12.5px; }
   }
@@ -95,6 +96,50 @@
     .tabs a.on svg { color: inherit; }
     .tabs a .nb { margin-left: auto; margin-right: calc(16 * var(--u)); }
     .nav-user { display: none; }
+    /* desktop top bar: greeting + date, notification bell, profile menu. Pinned while the page scrolls. */
+    body > .dk-top { display: flex; max-width: none !important; margin: 0 0 calc(22 * var(--u)) !important; }
+    body.pg-home > .dk-top { margin: calc(24 * var(--u)) calc(24 * var(--u)) 0 0 !important; }
+    .dk-top { position: sticky; top: calc(14 * var(--u)); z-index: 40; align-items: center; gap: calc(14 * var(--u)); height: calc(78 * var(--u));
+      padding: 0 calc(12 * var(--u)) 0 calc(14 * var(--u)); border-radius: calc(26 * var(--u));
+      background: linear-gradient(120deg, #3474F5 0%, #2558E1 50%, #1F4BD0 100%); box-shadow: 0 18px 36px -20px rgba(30,70,200,.65), inset 0 1px 0 rgba(255,255,255,.2);
+      font-family: "Plus Jakarta Sans", system-ui, sans-serif; color: #fff; }
+    .dk-top::before { content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+      background: radial-gradient(calc(320 * var(--u)) calc(120 * var(--u)) at 0% 0%, rgba(255,255,255,.18), transparent 70%); }
+    .dk-hi { position: relative; display: flex; align-items: center; gap: calc(14 * var(--u)); margin-right: auto; min-width: 0; }
+    .dk-hi .tile { width: calc(52 * var(--u)); height: calc(52 * var(--u)); border-radius: calc(16 * var(--u)); display: grid; place-items: center; background: rgba(255,255,255,.16); box-shadow: inset 0 1px 0 rgba(255,255,255,.25); flex: none; }
+    .dk-hi .tile svg { width: calc(26 * var(--u)); height: calc(26 * var(--u)); }
+    .dk-hi .txt { display: flex; flex-direction: column; line-height: 1.25; min-width: 0; }
+    .dk-hi .txt b { font-size: calc(19 * var(--u)); font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .dk-hi .txt > span { font-size: calc(14 * var(--u)); color: #D6E4FF; }
+    .dk-sep { width: 1px; height: calc(38 * var(--u)); background: rgba(255,255,255,.22); }
+    .dk-bell { position: relative; width: calc(52 * var(--u)); height: calc(52 * var(--u)); border-radius: 50%; display: grid; place-items: center; background: rgba(255,255,255,.16); color: #fff; text-decoration: none;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.25); transition: background .15s; }
+    .dk-bell:hover { background: rgba(255,255,255,.28); }
+    .dk-bell svg { width: calc(25 * var(--u)); height: calc(25 * var(--u)); }
+    .dk-bell .nb { position: absolute; top: calc(-3 * var(--u)); right: calc(-3 * var(--u)); border: 2px solid #2558E1; }
+    .dk-menu { position: relative; }
+    .dk-menu > summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: calc(12 * var(--u)); height: calc(56 * var(--u)); padding: 0 calc(16 * var(--u)) 0 calc(5 * var(--u));
+      border-radius: 999px; background: rgba(255,255,255,.16); box-shadow: inset 0 1px 0 rgba(255,255,255,.25); transition: background .15s; }
+    .dk-menu > summary::-webkit-details-marker { display: none; }
+    .dk-menu > summary:hover, .dk-menu[open] > summary { background: rgba(255,255,255,.28); }
+    .dk-menu .av { width: calc(46 * var(--u)); height: calc(46 * var(--u)); border-radius: 50%; overflow: hidden; display: grid; place-items: center; background: #fff; color: #1D4ED8; font-weight: 700; font-size: calc(20 * var(--u)); flex: none; box-shadow: 0 0 0 2px rgba(255,255,255,.6); }
+    .dk-menu .av img { width: 100%; height: 100%; object-fit: cover; }
+    .dk-menu .who { display: flex; flex-direction: column; line-height: 1.2; max-width: calc(220 * var(--u)); }
+    .dk-menu .who b { font-size: calc(16.5 * var(--u)); font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .dk-menu .who span { font-size: calc(13 * var(--u)); color: #D6E4FF; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .dk-menu .chev { width: calc(16 * var(--u)); height: calc(16 * var(--u)); color: #D6E4FF; transition: transform .2s; }
+    .dk-menu[open] .chev { transform: rotate(180deg); }
+    .dk-pop { position: absolute; right: 0; top: calc(100% + 10px); width: 250px; padding: 8px; border-radius: 18px; background: #fff; color: #0F1B4D;
+      box-shadow: 0 24px 48px -16px rgba(15,30,90,.35), 0 0 0 1px rgba(37,99,235,.08); }
+    .dk-pop .hd { padding: 10px 12px 12px; border-bottom: 1px solid #EEF2FD; margin-bottom: 6px; }
+    .dk-pop .hd b { display: block; font-size: .95rem; }
+    .dk-pop .hd span { font-size: .8rem; color: #5A6BA8; overflow-wrap: anywhere; }
+    .dk-pop a, .dk-pop button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 12px; margin: 0; border-radius: 12px; border: 0; background: none; box-shadow: none;
+      color: #0F1B4D; font: 600 .88rem/1.2 inherit; text-decoration: none; text-align: left; }
+    .dk-pop a:hover, .dk-pop button:hover { background: #F1F5FF; transform: none; }
+    .dk-pop svg { width: 18px; height: 18px; color: #2563EB; flex: none; }
+    .dk-pop form { margin: 6px 0 0; padding-top: 6px; border-top: 1px solid #EEF2FD; }
+    .dk-pop form button, .dk-pop form svg { color: #D62F3A; }
   }
 </style>
 {% set _bell_dot = has_open_alert is defined and has_open_alert %}
@@ -108,6 +153,44 @@
     {% if _u and _u.picture %}<img src="{{ _u.picture }}" alt="" referrerpolicy="no-referrer">{% else %}{{ _u.initial if _u else 'R' }}{% endif %}
   </a>
 </header>
+<header class="dk-top" aria-label="Account bar">
+  <div class="dk-hi">
+    <span class="tile"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M8 3v4M16 3v4M3 10h18"/></svg></span>
+    <span class="txt"><b><span id="dk-greet">Hello</span>{% if _u %}, {{ _u.name.split(' ')[0] }}{% endif %}</b><span id="dk-day">Never miss what&rsquo;s next</span></span>
+  </div>
+  <a class="dk-bell" href="/chat" aria-label="Notifications" title="Notifications">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9a6 6 0 0 1 12 0c0 6 2 7 2 7H4s2-1 2-7"/><path d="M10 20a2 2 0 0 0 4 0"/></svg>
+    <span class="nb" hidden></span>
+  </a>
+  <span class="dk-sep" aria-hidden="true"></span>
+  <details class="dk-menu">
+    <summary aria-label="Account menu">
+      <span class="av">{% if _u and _u.picture %}<img src="{{ _u.picture }}" alt="" referrerpolicy="no-referrer">{% else %}{{ _u.initial if _u else 'R' }}{% endif %}</span>
+      <span class="who"><b>{{ _u.name if _u else 'Profile' }}</b><span>{{ _u.email if _u and _u.email else 'View profile' }}</span></span>
+      <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+    </summary>
+    <div class="dk-pop">
+      <div class="hd"><b>{{ _u.name if _u else 'Your account' }}</b>{% if _u and _u.email %}<span>{{ _u.email }}</span>{% endif %}</div>
+      <a href="/account"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>My profile</a>
+      <a href="/account#notifications"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9a6 6 0 0 1 12 0c0 6 2 7 2 7H4s2-1 2-7"/><path d="M10 20a2 2 0 0 0 4 0"/></svg>Alert settings</a>
+      <a href="/deliveries"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4z"/></svg>Sent notifications</a>
+      {% if _u %}<form method="post" action="/logout"><input type="hidden" name="csrf_token" value="{{ csrf_token_for(request) }}">
+        <button type="submit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>Sign out</button></form>{% endif %}
+    </div>
+  </details>
+</header>
+<script>
+(function () {
+  var h = new Date().getHours(), g = document.getElementById('dk-greet'), d = document.getElementById('dk-day');
+  if (g) g.textContent = h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening';
+  if (d) d.textContent = new Date().toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long' });
+  var m = document.querySelector('.dk-menu');
+  if (m) {
+    document.addEventListener('click', function (e) { if (m.open && !m.contains(e.target)) m.open = false; });
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape') m.open = false; });
+  }
+})();
+</script>
 <nav class="hm-nav" aria-label="Main">
   <a href="/" {% if _p == '/' or _p.startswith('/chat') %}class="on"{% endif %}><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1v-9.5z"/></svg>Home</a>
   <a href="/tasks" {% if _p.startswith('/tasks') %}class="on"{% endif %}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="4"/><path d="M8.5 12.5l2.5 2.5 4.5-5"/></svg>Tasks</a>
