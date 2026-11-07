@@ -6,8 +6,8 @@
 {% include "_theme.html" %}
 {# The two people shown on this page. Change a name, role or tagline here. #}
 {% set team = [
-  {"name": "Aoun Abbas", "role": "Ragra Reminder team", "tag": "Builds and looks after Ragra.", "initials": "AA", "tone": "a"},
-  {"name": "Hashim Amjid", "role": "Ragra Reminder team", "tag": "Builds and looks after Ragra.", "initials": "HA", "tone": "b"},
+  {"name": "Aoun Abbas", "role": "Ragra Reminder team", "tag": "Builds and looks after Ragra.", "initials": "AA", "tone": "a", "email": "aounabbassadhana@gmail.com", "photo": "/static/icons/aoun-abbas.jpg", "bg": "#FFCD38"},
+  {"name": "Hashim Amjid", "role": "Ragra Reminder team", "tag": "Builds and looks after Ragra.", "initials": "HA", "tone": "b", "email": "hashimamjad047@gmail.com", "photo": "/static/icons/hashim-amjid.jpg", "bg": "#2563EB"},
 ] %}
 <style>
   .ct { --ink: #0F1B4D; --ink-2: #5A6BA8; --blue: #0B58FD; display: flex; flex-direction: column; gap: 20px; width: 100%; box-sizing: border-box; font-family: "Plus Jakarta Sans", "Inter", system-ui, sans-serif; }
@@ -24,10 +24,18 @@
   .ct-card::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 78px; background: linear-gradient(135deg, #2F6DF3, #1D4ED8); }
   .ct-av { position: relative; width: 92px; height: 92px; margin: 0 auto 12px; border-radius: 50%; display: grid; place-items: center; font-size: 1.9rem; font-weight: 800; color: #fff;
     border: 4px solid #fff; box-shadow: 0 12px 24px -10px rgba(37,99,235,.6); background: linear-gradient(135deg, #5B8DEF, #2563EB); }
+  /* a photo is shown whole (never cropped) in a 4:5 frame; the frame takes the photo's own background colour */
+  .ct-card.has-photo { padding-top: 22px; } .ct-card.has-photo::before { display: none; }
+  .ct-ph { width: min(230px, 100%); aspect-ratio: 4 / 5; margin: 0 auto 16px; border-radius: 26px; overflow: hidden; box-shadow: 0 16px 30px -14px rgba(15,30,69,.45); }
+  .ct-ph img { width: 100%; height: 100%; object-fit: contain; object-position: center bottom; display: block; }
   .ct-av.b { background: linear-gradient(135deg, #7C5CFA, #5B3FD6); }
   .ct-card h2 { position: relative; margin: 0; font-size: 1.2rem; color: var(--ink); }
   .ct-card .role { display: inline-block; margin: 8px 0 10px; padding: 4px 12px; border-radius: 999px; background: #EEF2FD; color: #3B4C93; font-size: .76rem; font-weight: 800; }
   .ct-card p { margin: 0; color: var(--ink-2); font-size: .88rem; line-height: 1.5; }
+
+  .ct-card .mail { display: inline-flex; align-items: center; gap: 8px; max-width: 100%; margin-top: 14px; padding: 8px 14px; border-radius: 999px; background: #EEF3FF; color: #1D4ED8; font-size: .82rem; font-weight: 700; text-decoration: none; overflow-wrap: anywhere; }
+  .ct-card .mail svg { width: 16px; height: 16px; flex: none; }
+  .ct-card .mail:hover { background: #DCE8FD; }
 
   .ct-form { background: #fff; border-radius: 28px; padding: 24px 22px; box-shadow: 0 14px 30px -18px rgba(37,99,235,.38), 0 2px 6px rgba(15,30,69,.05); }
   .ct-form h2 { margin: 0 0 4px; font-size: 1.2rem; color: var(--ink); }
@@ -67,11 +75,13 @@
 
   <div class="ct-team">
     {% for m in team %}
-    <div class="ct-card">
-      <div class="ct-av {{ m.tone }}" aria-hidden="true">{{ m.initials }}</div>
+    <div class="ct-card{{ ' has-photo' if m.photo }}">
+      {% if m.photo %}<div class="ct-ph" style="background: {{ m.bg }}"><img src="{{ m.photo }}" alt="{{ m.name }}" loading="lazy"></div>
+      {% else %}<div class="ct-av {{ m.tone }}" aria-hidden="true">{{ m.initials }}</div>{% endif %}
       <h2>{{ m.name }}</h2>
       <span class="role">{{ m.role }}</span>
       <p>{{ m.tag }}</p>
+      {% if m.email %}<a class="mail" href="mailto:{{ m.email }}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M3 8l9 6 9-6"/></svg>{{ m.email }}</a>{% endif %}
     </div>
     {% endfor %}
   </div>

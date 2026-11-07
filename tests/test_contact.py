@@ -40,6 +40,12 @@ def client(tmp_path: Path):
 def test_contact_page_shows_both_people_and_the_feedback_box(client):
     html = client.get("/contact").text
     assert "Aoun Abbas" in html and "Hashim Amjid" in html
+    assert 'href="mailto:aounabbassadhana@gmail.com"' in html      # Aoun's email is a tap-to-write link
+    assert 'href="mailto:hashimamjad047@gmail.com"' in html
+    assert 'src="/static/icons/hashim-amjid.jpg"' in html          # Hashim's photo
+    assert 'src="/static/icons/aoun-abbas.jpg"' in html            # Aoun's photo
+    assert client.get("/static/icons/hashim-amjid.jpg").status_code == 200
+    assert client.get("/static/icons/aoun-abbas.jpg").status_code == 200
     assert 'action="/contact/feedback"' in html and "<textarea" in html
     assert 'href="/contact" class="on"' in html                    # the sidebar highlights Contact us
 
