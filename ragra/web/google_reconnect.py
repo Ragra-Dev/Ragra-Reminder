@@ -134,7 +134,7 @@ class GoogleDataAuthProvider(Protocol):
     state/PKCE/ownership logic below is testable without a network round
     trip, same reasoning as ragra.web.auth.IdentityProvider."""
 
-    def authorization_url(self, *, service: str, state: str, code_challenge: str, scope: str | None = None) -> str: ...
+    def authorization_url(self, *, service: str, state: str, code_challenge: str) -> str: ...
 
     def exchange_code(self, *, service: str, code: str, code_verifier: str): ...
 
@@ -146,7 +146,6 @@ def begin_reconnect(
     user_id: int,
     service: str,
     now: datetime,
-    only_scope: str | None = None,
 ) -> str:
     """Start a reconnect attempt for one already-signed-in user's one
     service, and return the URL to send the browser to.
@@ -159,9 +158,6 @@ def begin_reconnect(
     by an explicit click, never automatically."""
     if service not in SERVICES:
         raise ValueError(f"unknown service {service!r}")
-    if only_scope and only_scope not in required_scopes(service):
-        # Only a permission Ragra itself asks for may be requested on its own.
-        raise ValueError("unknown permission for this service")
 
     state = secrets.token_urlsafe(32)
     verifier = make_code_verifier()
@@ -170,9 +166,8 @@ def begin_reconnect(
     # here (a missing client registration, a redirect target this client
     # type may not use), and a row written first would then be an attempt
     # nobody can ever complete - harmless but permanent until it expires.
-    extra = {"scope": only_scope} if only_scope else {}
     url = provider.authorization_url(
-        service=service, state=state, code_challenge=code_challenge_for(verifier), **extra
+        service=service, state=state, code_challenge=code_challenge_for(verifier)
     )
 
     repo.begin_google_reconnect(
@@ -296,25 +291,24 @@ class GoogleOAuthDataProvider:
         assert_redirect_uri_allowed(client_type=client_type, redirect_uri=self._redirect_uri)
         return client_id, client_secret, client_type
 
-    def authorization_url(self, *, service: str, state: str, code_challenge: str, scope: str | None = None) -> str:
+    def authorization_url(self, *, service: str, state: str, code_challenge: str) -> str:
         from urllib.parse import urlencode
 
         client_id, _, _ = self._client()
-        # With `scope`, ask Google for just that one permission and keep what was already
-        # granted (incremental authorization), so the person sees one box to tick.
+        # Exactly this service's own permissions and nothing else. `include_granted_scopes` is
+        # deliberately NOT sent: it would pull in every permission this Google client was ever
+        # granted for the account (other apps sharing it), which is not Ragra's business.
         params = {
             "client_id": client_id,
             "redirect_uri": self._redirect_uri,
             "response_type": "code",
-            "scope": scope if scope else " ".join(self._scopes_by_service[service]),
+            "scope": " ".join(self._scopes_by_service[service]),
             "state": state,
             "code_challenge": code_challenge,
             "code_challenge_method": "S256",
             "access_type": "offline",
             "prompt": "consent",
         }
-        if scope:
-            params["include_granted_scopes"] = "true"
         return f"{self.AUTH_ENDPOINT}?{urlencode(params)}"
 
     def exchange_code(self, *, service: str, code: str, code_verifier: str):
@@ -390,7 +384,7 @@ def permission_rows(conn, *, user_id: int) -> list[dict]:
     worked = bool(sync and sync["last_success_at"]) and not refused
 
     rows: list[dict] = []
-    for service in SERVICES:
+    for service in (CLASSROOM,):          # Classroom only: read-only access to your classes
         stored = repo.google_credential_scopes(conn, user_id=user_id, service=service)
         if stored is None:
             continue  # not connected: the Connect button above covers it

@@ -464,7 +464,7 @@ def test_profile_lists_each_permission_and_offers_allow_only_for_the_missing_one
     perm = html.split('id="perm-list"')[1].split("</ul>")[0]
     assert perm.count('class="allow"') == 1
     assert "Announcements" in perm.split('class="miss"')[1]          # the missing one is the red row
-    assert 'value="https://www.googleapis.com/auth/classroom.announcements.readonly"' in perm
+    assert 'name="scope"' not in perm                                  # Allow asks for Ragra's own full read-only set
     assert "Your classes" in perm and "Allowed" in perm              # the others are shown as allowed
 
 
@@ -481,7 +481,7 @@ def test_the_failed_check_step_names_the_exact_permission_to_allow(client, monke
 
     result = _check(client, monkeypatch, _FakeClassroom(coursework_error=ClassroomGoogleError("HttpError 403 insufficient scopes")))
     by = {s["name"]: s for s in result["steps"]}
-    assert by["coursework"]["allow"] == {"service": "classroom", "scope": CLASSROOM_SCOPES[1]}
+    assert by["coursework"]["allow"] == {"service": "classroom"}
     assert "allow" not in by["announcements"]
 
 

@@ -85,9 +85,9 @@
 {# ---- Google connections ---- #}
 <div class="pf-card" id="google">
   <h2>Google connections</h2>
-  <p class="sub">Ragra reads your Classroom and Calendar through these.</p>
+  <p class="sub">Ragra only <b>reads</b> your Google Classroom. It can't change anything there.</p>
   {% if sync_problem %}<div class="flash warn-flash" id="cc-warn"><b>{{ sync_problem.text }}</b><br>{{ sync_problem.fix }}</div>{% endif %}
-  {% for service, status in google_status.items() %}
+  {% for service, status in google_status.items() if service == 'classroom' %}
   <div class="pf-row">
     <div>
       <span class="nm">{{ service | capitalize }}</span>
@@ -101,6 +101,9 @@
     </form>
   </div>
   {% endfor %}
+  <div class="pf-row soon">
+    <div><span class="nm" style="color:#8A98C6">Calendar</span> <span class="state dev badge" style="background:#FFF1CF;color:#9A5B00">Under development</span></div>
+  </div>
 
   {% if permissions %}
   <h3 class="pf-sub">Permissions</h3>
@@ -113,7 +116,6 @@
       {% else %}
       <form method="post" action="/account/google/reconnect/{{ p.service }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token_for(request) }}">
-        <input type="hidden" name="scope" value="{{ p.scope }}">
         <button type="submit" class="allow">Allow</button>
       </form>
       {% endif %}
@@ -121,7 +123,7 @@
     {% endfor %}
   </ul>
   {% endif %}
-  <p class="hint">Anything marked with <b>!</b> is a permission you haven't allowed. Press <b>Allow</b> and Google asks for just that one.</p>
+  <p class="hint">Anything marked with <b>!</b> is a permission you haven't allowed. Press <b>Allow</b> and tick it on Google's screen. Every permission here is read-only.</p>
   <div class="pf-check">
     <button type="button" id="cc-btn">Check Classroom now</button>
     <ul id="cc-out" aria-live="polite"></ul>
@@ -146,7 +148,7 @@
           grow.appendChild(b); grow.appendChild(sp); row.appendChild(grow);
           if (s.allow) {                                   // a refused permission gets its own Allow button
             var f = document.createElement('form'); f.method = 'post'; f.action = '/account/google/reconnect/' + s.allow.service;
-            [['csrf_token', '{{ csrf_token_for(request) }}'], ['scope', s.allow.scope]].forEach(function (kv) {
+            [['csrf_token', '{{ csrf_token_for(request) }}']].forEach(function (kv) {
               var i = document.createElement('input'); i.type = 'hidden'; i.name = kv[0]; i.value = kv[1]; f.appendChild(i);
             });
             var ab = document.createElement('button'); ab.type = 'submit'; ab.className = 'allow'; ab.textContent = 'Allow';

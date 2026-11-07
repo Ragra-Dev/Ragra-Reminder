@@ -547,15 +547,14 @@ def create_app(
     _RECONNECT_FAILED = "Reconnect could not be completed. Nothing was changed - your existing Google connection is untouched."
 
     @app.post("/account/google/reconnect/{service}")
-    def google_reconnect_begin(request: Request, service: str, scope: str = Form("")):  # CSRF-checked by the middleware above
+    def google_reconnect_begin(request: Request, service: str):  # CSRF-checked by the middleware above
         if service not in google_reconnect.SERVICES:
             raise HTTPException(status_code=404)
         with connect_closing(db_path) as conn:
             user_id = _acting_user(conn, request)
             try:
                 url = google_reconnect.begin_reconnect(
-                    conn, _data_provider(), user_id=user_id, service=service, now=datetime.now(timezone.utc),
-                    only_scope=scope or None,
+                    conn, _data_provider(), user_id=user_id, service=service, now=datetime.now(timezone.utc)
                 )
             except google_reconnect.ReconnectNotConfigured as exc:
                 # The reason goes to the server log only, never to the browser.
@@ -657,7 +656,7 @@ def create_app(
             row = {"name": name, "label": label, "status": status, "detail": detail}
             scope = classroom_adapter.SCOPE_FOR_READ.get(name)
             if status == "fail" and scope:
-                row["allow"] = {"service": "classroom", "scope": scope}   # lets the page offer an Allow button
+                row["allow"] = {"service": "classroom"}   # lets the page offer an Allow button
             return row
 
         def refused(exc) -> bool:
