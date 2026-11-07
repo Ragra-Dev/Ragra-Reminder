@@ -991,6 +991,11 @@ def create_app(
              "urgent": within(3), "sync_problem": sync_problem},
         )
 
+    def _is_owner(conn, user_id: int) -> bool:
+        owner = getattr(settings, "owner_email", None)
+        row = repo.get_user(conn, user_id=user_id)
+        return bool(owner and row is not None and (row["email"] or "").strip().lower() == owner)
+
     # --- One assignment: the same clean page from Deadlines, Tasks, chat links and reminders ----
     _REMINDER_LABELS = {
         "NEW_ASSIGNMENT": "New assignment alert", "T_MINUS_7D": "1 week before", "T_MINUS_5D": "5 days before",
@@ -1042,6 +1047,50 @@ def create_app(
     @app.get("/deadlines/{task_id}")
     def deadline_detail(request: Request, task_id: int):
         return _task_page(request, task_id, back=("/deadlines", "Back to Deadlines"))
+
+    # --- Contact us: the team, and a box for feedback and suggestions ----------
+    @app.get("/contact")
+    def contact_page(request: Request, sent: int = 0, error: str = ""):
+        with connect_closing(db_path) as conn:
+            user_id = _acting_user(conn, request)
+            is_owner = _is_owner(conn, user_id)
+        return templates.TemplateResponse(
+            request, "contact.html",
+            {"sent": bool(sent), "error": error[:120], "is_owner": is_owner, "kinds": repo.FEEDBACK_KINDS},
+        )
+
+    @app.post("/contact/feedback")
+    def contact_feedback(
+        request: Request, kind: str = Form("suggestion"), rating: str = Form(""), message: str = Form(""),
+    ):
+        message = message.strip()[:2000]
+        if kind not in repo.FEEDBACK_KINDS:
+            kind = "suggestion"
+        stars = int(rating) if rating.isdigit() and 1 <= int(rating) <= 5 else None
+        if len(message) < 5:
+            return RedirectResponse("/contact?error=Please+write+a+few+words+first.", status_code=303)
+        since = utc_iso(datetime.now(timezone.utc) - timedelta(hours=1))
+        with connect_closing(db_path) as conn:
+            user_id = _acting_user(conn, request)
+            if repo.recent_feedback_count(conn, user_id=user_id, since_iso=since) >= repo.FEEDBACK_MAX_PER_HOUR:
+                return RedirectResponse("/contact?error=That+is+a+lot+of+messages+in+an+hour.+Please+try+again+later.", status_code=303)
+            repo.add_feedback(conn, user_id=user_id, kind=kind, rating=stars, message=message)
+        return RedirectResponse("/contact?sent=1", status_code=303)
+
+    @app.get("/contact/inbox")
+    def contact_inbox(request: Request):
+        """Everything people have sent. Only the owner account may open it; for
+        anyone else it is indistinguishable from a page that does not exist."""
+        with connect_closing(db_path) as conn:
+            user_id = _acting_user(conn, request)
+            if not _is_owner(conn, user_id):
+                raise HTTPException(status_code=404, detail="Not found")
+            rows = repo.all_feedback(conn)
+        items = [{
+            "kind": r["kind"], "rating": r["rating"], "message": r["message"], "when": _friendly_when(r["created_at"]),
+            "who": r["display_name"] or r["email"] or "Someone", "email": r["email"],
+        } for r in rows]
+        return templates.TemplateResponse(request, "contact_inbox.html", {"items": items})
 
     @app.get("/missed")
     def missed_full(request: Request):

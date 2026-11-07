@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Ragra - Contact us</title>
+{% include "_theme.html" %}
+{# The two people shown on this page. Change a name, role or tagline here. #}
+{% set team = [
+  {"name": "Aoun Abbas", "role": "Ragra Reminder team", "tag": "Builds and looks after Ragra.", "initials": "AA", "tone": "a"},
+  {"name": "Hashim Amjid", "role": "Ragra Reminder team", "tag": "Builds and looks after Ragra.", "initials": "HA", "tone": "b"},
+] %}
+<style>
+  .ct { --ink: #0F1B4D; --ink-2: #5A6BA8; --blue: #0B58FD; display: flex; flex-direction: column; gap: 20px; width: 100%; box-sizing: border-box; font-family: "Plus Jakarta Sans", "Inter", system-ui, sans-serif; }
+  body.pg-contact > .ct { max-width: none !important; margin: 0 !important; }
+  .ct > * { max-width: 900px; min-width: 0; box-sizing: border-box; }
+  .ct-head { display: flex; align-items: center; gap: 14px; }
+  .ct-head .ic { width: 52px; height: 52px; border-radius: 16px; background: #fff; display: grid; place-items: center; box-shadow: 0 10px 24px -14px rgba(37,99,235,.55); flex: none; }
+  .ct-head .ic svg { width: 28px; height: 28px; }
+  .ct-head h1 { margin: 0; font-size: clamp(1.5rem, 3vw, 2rem); color: var(--ink); }
+  .ct-head p { margin: 2px 0 0; color: var(--ink-2); font-size: .9rem; }
+
+  .ct-team { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr)); gap: 16px; }
+  .ct-card { position: relative; overflow: hidden; background: #fff; border-radius: 28px; padding: 26px 22px 22px; text-align: center; box-shadow: 0 14px 30px -18px rgba(37,99,235,.38), 0 2px 6px rgba(15,30,69,.05); }
+  .ct-card::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 78px; background: linear-gradient(135deg, #2F6DF3, #1D4ED8); }
+  .ct-av { position: relative; width: 92px; height: 92px; margin: 0 auto 12px; border-radius: 50%; display: grid; place-items: center; font-size: 1.9rem; font-weight: 800; color: #fff;
+    border: 4px solid #fff; box-shadow: 0 12px 24px -10px rgba(37,99,235,.6); background: linear-gradient(135deg, #5B8DEF, #2563EB); }
+  .ct-av.b { background: linear-gradient(135deg, #7C5CFA, #5B3FD6); }
+  .ct-card h2 { position: relative; margin: 0; font-size: 1.2rem; color: var(--ink); }
+  .ct-card .role { display: inline-block; margin: 8px 0 10px; padding: 4px 12px; border-radius: 999px; background: #EEF2FD; color: #3B4C93; font-size: .76rem; font-weight: 800; }
+  .ct-card p { margin: 0; color: var(--ink-2); font-size: .88rem; line-height: 1.5; }
+
+  .ct-form { background: #fff; border-radius: 28px; padding: 24px 22px; box-shadow: 0 14px 30px -18px rgba(37,99,235,.38), 0 2px 6px rgba(15,30,69,.05); }
+  .ct-form h2 { margin: 0 0 4px; font-size: 1.2rem; color: var(--ink); }
+  .ct-form .sub { margin: 0 0 16px; color: var(--ink-2); font-size: .88rem; }
+  .ct-form .lbl { display: block; margin: 16px 0 8px; font-size: .74rem; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-2); }
+  .ct-kinds { display: flex; flex-wrap: wrap; gap: 8px; }
+  .ct-kinds input, .ct-stars input { position: absolute; opacity: 0; pointer-events: none; }
+  .ct-kinds label { padding: 9px 16px; border-radius: 999px; border: 1px solid #DCE4FB; background: #fff; color: var(--ink-2); font-weight: 700; font-size: .85rem; cursor: pointer; transition: all .15s; }
+  .ct-kinds input:checked + label { background: #2563EB; border-color: #2563EB; color: #fff; box-shadow: 0 8px 16px -8px rgba(37,99,235,.7); }
+  .ct-kinds input:focus-visible + label, .ct-stars input:focus-visible + label { outline: 2px solid #2563EB; outline-offset: 2px; }
+  .ct-stars { display: inline-flex; flex-direction: row-reverse; gap: 2px; }
+  .ct-stars label { font-size: 2rem; line-height: 1; color: #D5DDF5; cursor: pointer; transition: color .12s, transform .12s; }
+  .ct-stars label:hover, .ct-stars label:hover ~ label, .ct-stars input:checked ~ label { color: #F5A524; }
+  .ct-stars label:hover { transform: scale(1.12); }
+  .ct-form textarea { width: 100%; box-sizing: border-box; min-height: 150px; padding: 14px 16px; border-radius: 18px; border: 1px solid #DCE4FB; background: #F7F9FF; color: var(--ink); font: inherit; font-size: 1rem; resize: vertical; }
+  .ct-form textarea:focus { outline: 0; border-color: #2563EB; box-shadow: 0 0 0 3px rgba(37,99,235,.18); background: #fff; }
+  .ct-count { margin-top: 6px; text-align: right; font-size: .76rem; color: var(--ink-2); }
+  .ct-send { margin: 14px 0 0; padding: 14px 28px; border: 0; border-radius: 999px; background: #2563EB; color: #fff; font-weight: 800; font-size: .98rem; cursor: pointer; box-shadow: 0 12px 22px -10px rgba(37,99,235,.8); }
+  .ct-send:hover { transform: translateY(-1px); }
+  .ct-ok, .ct-err { padding: 14px 18px; border-radius: 18px; font-weight: 700; font-size: .92rem; }
+  .ct-ok { background: #E9F8F1; border: 1px solid #CDEFE0; color: #0F6B47; }
+  .ct-err { background: #FFF1F2; border: 1px solid #FFD5D9; color: #C2273B; }
+  .ct-owner { font-size: .85rem; } .ct-owner a { font-weight: 700; color: #1D4ED8; }
+
+  @media (max-width: 980px) { .ct { margin-top: 10px; } }
+  @media (max-width: 520px) { .ct-form { padding: 20px 16px; } .ct-kinds label { padding: 8px 13px; } }
+</style>
+</head>
+<body class="pg-contact">
+{% include "_nav.html" %}
+
+<div class="ct">
+  <div class="ct-head">
+    <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="#0B58FD" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M3 8l9 6 9-6"/></svg></span>
+    <div><h1>Contact us</h1><p>Meet the team behind Ragra, and tell us what you think.</p></div>
+  </div>
+
+  <div class="ct-team">
+    {% for m in team %}
+    <div class="ct-card">
+      <div class="ct-av {{ m.tone }}" aria-hidden="true">{{ m.initials }}</div>
+      <h2>{{ m.name }}</h2>
+      <span class="role">{{ m.role }}</span>
+      <p>{{ m.tag }}</p>
+    </div>
+    {% endfor %}
+  </div>
+
+  {% if sent %}<div class="ct-ok" role="status">Thank you! Your message was sent. We read every one.</div>{% endif %}
+  {% if error %}<div class="ct-err" role="alert">{{ error }}</div>{% endif %}
+
+  <form class="ct-form" method="post" action="/contact/feedback">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token_for(request) }}">
+    <h2>Send feedback</h2>
+    <p class="sub">Found a problem, or have an idea to make Ragra better? Tell us here.</p>
+
+    <span class="lbl">What is it about?</span>
+    <div class="ct-kinds">
+      <input type="radio" name="kind" id="k-suggestion" value="suggestion" checked><label for="k-suggestion">Suggestion</label>
+      <input type="radio" name="kind" id="k-bug" value="bug"><label for="k-bug">Problem</label>
+      <input type="radio" name="kind" id="k-praise" value="praise"><label for="k-praise">Something I like</label>
+      <input type="radio" name="kind" id="k-question" value="question"><label for="k-question">Question</label>
+    </div>
+
+    <span class="lbl">How is Ragra for you? (optional)</span>
+    <div class="ct-stars" role="radiogroup" aria-label="Rating">
+      {% for n in [5, 4, 3, 2, 1] %}<input type="radio" name="rating" id="r{{ n }}" value="{{ n }}"><label for="r{{ n }}" title="{{ n }} star{{ '' if n == 1 else 's' }}">&#9733;</label>{% endfor %}
+    </div>
+
+    <label class="lbl" for="msg">Your message</label>
+    <textarea id="msg" name="message" maxlength="2000" required minlength="5" placeholder="Write your feedback or suggestion here..."></textarea>
+    <div class="ct-count"><span id="n">0</span> / 2000</div>
+
+    <button type="submit" class="ct-send">Send feedback</button>
+  </form>
+
+  {% if is_owner %}<p class="ct-owner">You are the owner: <a href="/contact/inbox">read all feedback</a></p>{% endif %}
+</div>
+
+<script>
+(function () {
+  var t = document.getElementById('msg'), n = document.getElementById('n');
+  if (t && n) t.addEventListener('input', function () { n.textContent = t.value.length; });
+  if (history.replaceState && /[?&](sent|error)=/.test(location.search)) history.replaceState(null, '', '/contact');
+})();
+</script>
+</body>
+</html>

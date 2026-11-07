@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Ragra - Feedback inbox</title>
+{% include "_theme.html" %}
+<style>
+  .ib { --ink: #0F1B4D; --ink-2: #5A6BA8; display: flex; flex-direction: column; gap: 14px; width: 100%; box-sizing: border-box; font-family: "Plus Jakarta Sans", "Inter", system-ui, sans-serif; }
+  body.pg-contact > .ib { max-width: none !important; margin: 0 !important; }
+  .ib > * { max-width: 900px; min-width: 0; box-sizing: border-box; }
+  .ib h1 { margin: 0; font-size: clamp(1.4rem, 3vw, 1.9rem); color: var(--ink); }
+  .ib a.back { font-weight: 700; font-size: .88rem; color: #1D4ED8; text-decoration: none; }
+  .ib-item { background: #fff; border-radius: 22px; padding: 16px 20px; box-shadow: 0 14px 30px -18px rgba(37,99,235,.3), 0 2px 6px rgba(15,30,69,.04); }
+  .ib-top { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .ib-top .k { padding: 3px 11px; border-radius: 999px; background: #EEF2FD; color: #3B4C93; font-size: .74rem; font-weight: 800; text-transform: capitalize; }
+  .ib-top .k.bug { background: #FFE0E3; color: #C2273B; } .ib-top .k.praise { background: #DDF6EA; color: #0F8F6E; }
+  .ib-top .st { color: #F5A524; letter-spacing: 1px; }
+  .ib-top .when { margin-left: auto; font-size: .78rem; color: var(--ink-2); }
+  .ib-msg { white-space: pre-wrap; overflow-wrap: anywhere; font-size: .95rem; line-height: 1.55; color: #2A3566; }
+  .ib-who { margin-top: 8px; font-size: .8rem; color: var(--ink-2); }
+  .ib-none { background: #fff; border-radius: 22px; padding: 30px; text-align: center; color: var(--ink-2); }
+</style>
+</head>
+<body class="pg-contact">
+{% include "_nav.html" %}
+<div class="ib">
+  <a class="back" href="/contact">&larr; Back to Contact us</a>
+  <h1>Feedback inbox <small style="font-size:.5em;color:#5A6BA8">({{ items|length }})</small></h1>
+  {% for i in items %}
+  <div class="ib-item">
+    <div class="ib-top">
+      <span class="k {{ i.kind }}">{{ 'problem' if i.kind == 'bug' else i.kind }}</span>
+      {% if i.rating %}<span class="st" aria-label="{{ i.rating }} of 5">{{ '★' * i.rating }}{{ '☆' * (5 - i.rating) }}</span>{% endif %}
+      <span class="when">{{ i.when }}</span>
+    </div>
+    <div class="ib-msg">{{ i.message }}</div>
+    <div class="ib-who">{{ i.who }}{% if i.email %} &middot; {{ i.email }}{% endif %}</div>
+  </div>
+  {% else %}
+  <div class="ib-none">No feedback yet.</div>
+  {% endfor %}
+</div>
+</body>
+</html>

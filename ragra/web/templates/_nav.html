@@ -15,6 +15,7 @@
       <a href="/missed" {% if _p.startswith('/missed') %}class="on"{% endif %}>{{ icon('missed') }}Missed</a>
       <a href="/deliveries" {% if _p.startswith('/deliveries') %}class="on"{% endif %}>{{ icon('sent') }}Notifications</a>
       <a href="/account" {% if _p.startswith('/account') %}class="on"{% endif %}>{{ icon('user') }}Profile</a>
+      <a href="/contact" {% if _p.startswith('/contact') %}class="on"{% endif %}>{{ icon('contact') }}Contact us</a>
     </nav>
     {% if _u %}
     <a class="nav-user" href="/account" title="{{ _u.email or _u.name }}">

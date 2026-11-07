@@ -1942,3 +1942,43 @@ def bump_nag(conn: sqlite3.Connection, *, user_id: int, message_id: int, next_at
         (next_at, message_id, user_id),
     )
     conn.commit()
+
+
+# ---------------------------------------------------------------------------
+# Feedback from the Contact us page (migration 0034)
+# ---------------------------------------------------------------------------
+
+FEEDBACK_KINDS = ("suggestion", "bug", "praise", "question")
+FEEDBACK_MAX_PER_HOUR = 5
+
+
+def recent_feedback_count(conn: sqlite3.Connection, *, user_id: int, since_iso: str) -> int:
+    row = conn.execute(
+        "SELECT COUNT(*) AS n FROM feedback WHERE user_id = ? AND created_at >= ?", (user_id, since_iso)
+    ).fetchone()
+    return int(row["n"])
+
+
+def add_feedback(
+    conn: sqlite3.Connection, *, user_id: int, kind: str, rating: int | None, message: str
+) -> int:
+    cursor = conn.execute(
+        "INSERT INTO feedback (user_id, kind, rating, message, created_at) VALUES (?, ?, ?, ?, ?)",
+        (user_id, kind, rating, message, now_iso()),
+    )
+    conn.commit()
+    return int(cursor.lastrowid)
+
+
+def all_feedback(conn: sqlite3.Connection, *, limit: int = 200) -> list[sqlite3.Row]:
+    """Every account's feedback, newest first.
+
+    ragra:cross-user - deliberately not scoped to one user: this feeds the
+    owner-only feedback inbox (the route returns 404 for everyone else).
+    """
+    return conn.execute(
+        """SELECT feedback.*, users.display_name, users.email
+           FROM feedback JOIN users ON users.id = feedback.user_id
+           ORDER BY feedback.id DESC LIMIT ?""",
+        (limit,),
+    ).fetchall()

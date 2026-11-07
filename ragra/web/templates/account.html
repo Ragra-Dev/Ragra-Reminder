@@ -79,6 +79,11 @@
   .pf-save .hint { margin: 0; font-size: .78rem; }
   .pf .fold { margin: 0; }
   .pf .flash { margin-bottom: 8px; }
+  .pf-contact { display: flex; align-items: center; gap: 14px; padding: 14px 18px; margin: 14px 0; border-radius: 20px; background: #fff; color: #0F1B4D; text-decoration: none; box-shadow: 0 14px 30px -18px rgba(37,99,235,.38), 0 2px 6px rgba(15,30,69,.05); }
+  .pf-contact .ci { width: 42px; height: 42px; flex: none; border-radius: 14px; display: grid; place-items: center; background: #E7F8F1; color: #0F8F6E; font-size: 1.2rem; }
+  .pf-contact span:nth-child(2) { flex: 1; display: flex; flex-direction: column; line-height: 1.3; }
+  .pf-contact b { font-size: .98rem; } .pf-contact small { font-size: .8rem; color: #5A6BA8; }
+  .pf-contact .go { font-size: 1.6rem; color: #A3B1DC; }
 </style>
 </head>
 <body class="pg-account">
@@ -302,6 +307,8 @@
 </div>
 
 {# ---- rarely needed ---- #}
+<a class="pf-contact" href="/contact"><span class="ci">&#9993;</span><span><b>Contact us</b><small>Meet the team and send feedback or a suggestion</small></span><span class="go">&rsaquo;</span></a>
+
 <details class="fold tone-violet">
   <summary><span>Academic details</span></summary>
   <form method="post" action="/account/profile">

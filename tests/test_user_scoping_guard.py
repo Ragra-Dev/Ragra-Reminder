@@ -62,6 +62,7 @@ USER_OWNED_TABLES = (
     "google_reconnect_states",
     "telegram_link_codes",
     "chat_messages",
+    "feedback",
 )
 
 _TABLE_REFERENCE = re.compile(
@@ -170,6 +171,7 @@ def test_the_exemption_markers_are_used_sparingly():
             if any(marker in docstring for marker in EXEMPTION_MARKERS):
                 exempted.append(f"{path.name}:{node.name}")
     assert sorted(exempted) == [
+        "repo.py:all_feedback",          # the owner-only feedback inbox (the route 404s for everyone else)
         "repo.py:consume_google_reconnect",
         "repo.py:consume_telegram_link_code",
         "repo.py:purge_expired_google_reconnect_states",

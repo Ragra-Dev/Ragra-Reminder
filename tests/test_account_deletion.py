@@ -105,6 +105,7 @@ def _populate(conn, user_id: int, key: bytes, *, label: str) -> dict:
     )
     repo.create_telegram_link_code(conn, user_id=user_id)
     repo.add_chat_message(conn, user_id=user_id, role="bot", text="hello")
+    repo.add_feedback(conn, user_id=user_id, kind="suggestion", rating=5, message="Please add dark mode.")
     save_profile(
         conn, user_id=user_id, program="CS", batch_year="2025",
         enrollment_start_year=2025, enrollment_start_term="FALL",
