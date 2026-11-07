@@ -55,27 +55,24 @@
   .tile.green { background: #E9F8F1; } .tile.green b { color: #0F6B47; }
   .tile.red { background: #FFEEF0; } .tile.red b { color: #C2273B; }
   .pf-sub { margin: 16px 0 8px; font-size: .8rem; letter-spacing: .04em; text-transform: uppercase; color: #5A6BA8; }
+  .pf-sub-row { margin-top: 16px; } .pf-sub-row .pf-sub { margin: 0; } .pf-sub-row button { margin: 0; padding: 6px 14px; font-size: .78rem; }
+  .perm-notes:empty { display: none; }
+  .perm-notes { margin: 8px 0; padding: 10px 14px; border-radius: 14px; background: #EEF3FF; color: #3B4C93; font-size: .84rem; font-weight: 600; }
   .perm { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
   .perm li { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-radius: 16px; }
   .perm li.ok { background: #F3F8FF; }
   .perm li.miss { background: #FFF1F2; box-shadow: inset 0 0 0 1px #FFD5D9; }
-  .perm .ic { width: 26px; height: 26px; flex: none; border-radius: 50%; display: grid; place-items: center; font-weight: 800; font-size: .8rem; color: #fff; }
-  .perm li.ok .ic { background: #22A06B; } .perm li.miss .ic { background: #E5484D; }
+  .perm li.none { background: #F3F8FF; color: #5A6BA8; font-size: .85rem; }
+  .pi { width: 28px; height: 28px; flex: none; border-radius: 50%; display: grid; place-items: center; font-weight: 800; font-size: .85rem; color: #fff; border: 0; padding: 0; margin: 0; }
+  .pi.ok { background: #22A06B; }
+  .pi.bad { background: #E5484D; cursor: pointer; box-shadow: 0 6px 12px -6px rgba(229,72,77,.8); transition: transform .12s; }
+  .pi.bad:hover { transform: scale(1.12); }
   .perm .tx { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.3; }
   .perm .tx b { font-size: .92rem; color: #0F1B4D; } .perm .tx span { font-size: .78rem; color: #5A6BA8; }
-  .perm .st { font-size: .76rem; font-weight: 700; color: #0F8F6E; }
-  .perm form { margin: 0; }
-  .allow, #cc-out .allow { margin: 0; padding: 8px 20px; background: #2563EB; color: #fff; box-shadow: 0 6px 14px -6px rgba(37,99,235,.7); }
-  #cc-out li .row { display: flex; align-items: center; gap: 12px; }
-  #cc-out li .row .grow { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-  #cc-out li form { margin: 0; }
-  .pf-check { margin-top: 12px; }
-  .pf-check button { margin: 0; }
-  #cc-out { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
-  #cc-out li { display: flex; flex-direction: column; gap: 2px; padding: 10px 14px; border-radius: 14px; font-size: .86rem; }
-  #cc-out li.ok { background: #E9F8F1; color: #3E7F65; } #cc-out li.ok b { color: #0F6B47; }
-  #cc-out li.info { background: #EEF3FF; color: #3B4C93; } #cc-out li.info b { color: #1D4ED8; }
-  #cc-out li.fail { background: #FFECEE; color: #9A3B3B; } #cc-out li.fail b { color: #C2273B; }
+  .perm li.miss .tx span.why { color: #9A3B3B; }
+  .perm .st { font-size: .76rem; font-weight: 800; white-space: nowrap; }
+  .perm .st.ok { color: #0F8F6E; } .perm .st.bad { color: #C2273B; }
+  .perm form { margin: 0; line-height: 0; }
   .pf-save { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 12px; }
   .pf-save button { margin: 0; padding: 11px 28px; background: #2563EB; color: #fff; box-shadow: 0 8px 16px -6px rgba(37,99,235,.55); }
   .pf h1 { margin-top: 8px; }
@@ -128,29 +125,21 @@
   </div>
   {% endfor %}
 
-  {% if permissions %}
-  <h3 class="pf-sub">Permissions</h3>
+  <div class="pf-title pf-sub-row"><h3 class="pf-sub">Permissions</h3><button type="button" class="btn-ghost" id="cc-btn">Check now</button></div>
+  <div id="perm-notes" class="perm-notes" aria-live="polite"></div>
   <ul class="perm" id="perm-list">
     {% for p in permissions %}
     <li class="{{ 'ok' if p.granted else 'miss' }}">
-      <span class="ic">{{ '✓' if p.granted else '!' }}</span>
-      <span class="tx"><b>{{ p.label }}</b>{% if p.hint %}<span>{{ p.hint }}</span>{% endif %}</span>
-      {% if p.granted %}<span class="st">Allowed</span>
-      {% else %}
-      <form method="post" action="/account/google/reconnect/{{ p.service }}">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token_for(request) }}">
-        <button type="submit" class="allow">Allow</button>
-      </form>
-      {% endif %}
+      {% if p.granted %}<span class="pi ok" title="Allowed">&#10003;</span>
+      {% else %}<form method="post" action="/account/google/reconnect/{{ p.service }}"><input type="hidden" name="csrf_token" value="{{ csrf_token_for(request) }}"><button type="submit" class="pi bad" title="Not allowed. Tap to allow it" aria-label="Not allowed. Tap to allow {{ p.label }}">&#10007;</button></form>{% endif %}
+      <span class="tx"><b>{{ p.label }}</b><span>{{ p.hint }}</span></span>
+      <span class="st {{ 'ok' if p.granted else 'bad' }}">{{ 'Allowed' if p.granted else 'Not allowed' }}</span>
     </li>
+    {% else %}
+    <li class="none"><span class="tx"><span>Connect a Google service above to see its permissions.</span></span></li>
     {% endfor %}
   </ul>
-  {% endif %}
-  <p class="hint">Anything marked with <b>!</b> is a permission you haven't allowed. Press <b>Allow</b> and tick it on Google's screen.</p>
-  <div class="pf-check">
-    <button type="button" id="cc-btn">Permissions</button>
-    <ul id="cc-out" aria-live="polite"></ul>
-  </div>
+  <p class="hint"><b>&#10003;</b> allowed &nbsp;&middot;&nbsp; <b>&#10007;</b> not allowed yet. Tap the red &#10007; to open Google's permission page and allow it.</p>
 </div>
 
 {# ---- Classroom information ---- #}
@@ -200,34 +189,41 @@
 {% endif %}
 <script>
 (function () {
-  var btn = document.getElementById('cc-btn'), out = document.getElementById('cc-out');
-  if (!btn) return;
+  var btn = document.getElementById('cc-btn'), list = document.getElementById('perm-list'), notes = document.getElementById('perm-notes');
+  if (!btn || !list) return;
+  var TOKEN = '{{ csrf_token_for(request) }}';
+  function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+  function draw(rows) {
+    list.textContent = '';
+    rows.forEach(function (p) {
+      var li = el('li', p.granted ? 'ok' : 'miss');
+      if (p.granted) { var ok = el('span', 'pi ok', '\u2713'); ok.title = 'Allowed'; li.appendChild(ok); }
+      else {                                              // the red cross opens Google's permission page
+        var f = document.createElement('form'); f.method = 'post'; f.action = '/account/google/reconnect/' + p.service;
+        var i = document.createElement('input'); i.type = 'hidden'; i.name = 'csrf_token'; i.value = TOKEN; f.appendChild(i);
+        var b = el('button', 'pi bad', '\u2717'); b.type = 'submit'; b.title = 'Not allowed. Tap to allow it'; b.setAttribute('aria-label', 'Not allowed. Tap to allow ' + p.label);
+        f.appendChild(b); li.appendChild(f);
+      }
+      var tx = el('span', 'tx'); tx.appendChild(el('b', null, p.label));
+      tx.appendChild(el('span', p.granted ? '' : 'why', p.detail || p.hint)); li.appendChild(tx);
+      li.appendChild(el('span', 'st ' + (p.granted ? 'ok' : 'bad'), p.granted ? 'Allowed' : 'Not allowed'));
+      list.appendChild(li);
+    });
+  }
   btn.addEventListener('click', function () {
-    btn.disabled = true; btn.textContent = 'Checking...'; out.textContent = '';
-    fetch('/account/classroom/check', { method: 'POST', headers: { 'Accept': 'application/json', 'X-CSRF-Token': '{{ csrf_token_for(request) }}' } })
+    btn.disabled = true; btn.textContent = 'Checking...'; notes.textContent = '';
+    fetch('/account/classroom/check', { method: 'POST', headers: { 'Accept': 'application/json', 'X-CSRF-Token': TOKEN } })
       .then(function (r) { return r.json(); })
       .then(function (d) {
         if (d.ok) { var w = document.getElementById('cc-warn'); if (w) w.remove(); }
-        d.steps.forEach(function (s) {
-          var li = document.createElement('li'); li.className = s.status;
-          var row = document.createElement('div'); row.className = 'row';
-          var grow = document.createElement('div'); grow.className = 'grow';
-          var b = document.createElement('b'); b.textContent = (s.status === 'ok' ? '✓ ' : s.status === 'info' ? 'ℹ ' : '✗ ') + s.label;
-          var sp = document.createElement('span'); sp.textContent = s.detail;
-          grow.appendChild(b); grow.appendChild(sp); row.appendChild(grow);
-          if (s.allow) {                                   // a refused permission gets its own Allow button
-            var f = document.createElement('form'); f.method = 'post'; f.action = '/account/google/reconnect/' + s.allow.service;
-            [['csrf_token', '{{ csrf_token_for(request) }}']].forEach(function (kv) {
-              var i = document.createElement('input'); i.type = 'hidden'; i.name = kv[0]; i.value = kv[1]; f.appendChild(i);
-            });
-            var ab = document.createElement('button'); ab.type = 'submit'; ab.className = 'allow'; ab.textContent = 'Allow';
-            f.appendChild(ab); row.appendChild(f);
-          }
-          li.appendChild(row); out.appendChild(li);
-        });
+        if (d.permissions && d.permissions.length) draw(d.permissions);
+        else if (d.steps && d.steps.length) notes.textContent = d.steps[0].detail;      // e.g. Classroom is not connected
+        (d.notes || []).forEach(function (n) { var p = el('div', null, n); notes.appendChild(p); });
+        var sync = (d.steps || []).filter(function (s) { return s.name === 'sync'; })[0];
+        if (sync) notes.appendChild(el('div', null, sync.detail));
       })
-      .catch(function () { var li = document.createElement('li'); li.className = 'fail'; li.textContent = 'Could not run the check. Try again.'; out.appendChild(li); })
-      .finally(function () { btn.disabled = false; btn.textContent = 'Permissions'; });
+      .catch(function () { notes.textContent = 'Could not run the check. Try again.'; })
+      .finally(function () { btn.disabled = false; btn.textContent = 'Check now'; });
   });
 })();
 </script>

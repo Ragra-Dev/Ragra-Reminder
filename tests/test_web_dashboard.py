@@ -360,8 +360,8 @@ def test_no_sync_notice_when_classroom_synced_fine(client):
     _set_classroom_sync(client, "OK")
     assert "read your assignments from Classroom" not in client.get("/deadlines").text
     assert "read your assignments from Classroom" not in client.get("/account").text
-    # the Profile page always explains the Allow button for any permission that is not allowed
-    assert "Press <b>Allow</b>" in client.get("/account").text
+    # the Profile page always explains the red cross for any permission that is not allowed yet
+    assert "Tap the red" in client.get("/account").text
 
 
 class _FakeClassroom:
@@ -467,7 +467,7 @@ def test_profile_lists_each_permission_and_offers_allow_only_for_the_missing_one
     _store_scopes(client, granted)
     html = client.get("/account").text
     perm = html.split('id="perm-list"')[1].split("</ul>")[0]
-    assert perm.count('class="allow"') == 1
+    assert perm.count('class="pi bad"') == 1
     assert "Announcements" in perm.split('class="miss"')[1]          # the missing one is the red row
     assert 'name="scope"' not in perm                                  # Allow asks for Ragra's own full read-only set
     assert "Your classes" in perm and "Allowed" in perm              # the others are shown as allowed
@@ -478,7 +478,7 @@ def test_profile_shows_no_allow_button_when_every_permission_is_granted(client):
 
     _store_scopes(client, list(CLASSROOM_SCOPES))
     perm = client.get("/account").text.split('id="perm-list"')[1].split("</ul>")[0]
-    assert 'class="allow"' not in perm
+    assert 'class="pi bad"' not in perm
 
 
 def test_the_failed_check_step_names_the_exact_permission_to_allow(client, monkeypatch):
@@ -502,14 +502,14 @@ def test_assignments_permission_counts_as_allowed_only_after_a_good_sync(client)
         perm = client.get("/account").text.split('id="perm-list"')[1].split("</ul>")[0]
         return [li for li in perm.split("<li")[1:] if "Assignments and deadlines" in li][0]
 
-    assert 'class="miss"' in row() and 'class="allow"' in row()           # never synced: ask to allow
+    assert 'class="miss"' in row() and 'class="pi bad"' in row()           # never synced: ask to allow
     _set_classroom_sync(client, "OK")
     conn = connect(client.db_path)
     conn.execute("UPDATE sync_state SET last_success_at = ? WHERE source = 'classroom'", (repo.now_iso(),))
     conn.commit(); conn.close()
-    assert 'class="ok"' in row() and 'class="allow"' not in row()          # a sync worked: allowed
+    assert 'class="ok"' in row() and 'class="pi bad"' not in row()          # a sync worked: allowed
     _set_classroom_sync(client, "ERROR", "coursework sync failed for 'OOP': HttpError 403")
-    assert 'class="miss"' in row() and 'class="allow"' in row()            # refused again: allow button back
+    assert 'class="miss"' in row() and 'class="pi bad"' in row()            # refused again: allow button back
 
 
 def test_profile_shows_green_connected_when_both_google_services_are_healthy(client):
@@ -552,3 +552,28 @@ def test_classroom_information_counts_classes_by_role_and_what_ragra_found(clien
     assert info["ok"] is True
     assert info["classes"] == {"active": 1, "archived": 1, "teacher": 1, "student": 1, "other": 0}
     assert info["work"]["assignments"] >= 1 and info["work"]["overdue"] >= 1      # the fixture's overdue assignment
+
+
+def test_the_check_returns_one_merged_permission_list_with_a_teacher_note(client, monkeypatch):
+    from ragra.adapters.classroom import CLASSROOM_SCOPES, ClassroomGoogleError
+
+    _store_scopes(client, list(CLASSROOM_SCOPES))                       # every box was ticked
+    fake = _FakeClassroom(coursework_error=ClassroomGoogleError("HttpError 403: The caller does not have permission"))
+    fake.taught = frozenset({"c1"})
+    result = _check(client, monkeypatch, fake)
+
+    rows = {r["scope"]: r for r in result["permissions"]}
+    work = rows[CLASSROOM_SCOPES[1]]
+    assert work["granted"] is False and work["label"] == "Assignments and deadlines"
+    assert work["detail"].startswith("As a teacher, Assignments and deadlines is not allowed.")   # the note names the permission
+    assert rows[CLASSROOM_SCOPES[2]]["granted"] is True                  # announcements read fine
+    assert any("TEACHER" in n for n in result["notes"])
+
+
+def test_the_not_allowed_cross_is_a_button_that_opens_the_permission_page(client):
+    from ragra.adapters.classroom import CLASSROOM_SCOPES
+
+    _store_scopes(client, [s for s in CLASSROOM_SCOPES if "announcements" not in s])
+    perm = client.get("/account").text.split('id="perm-list"')[1].split("</ul>")[0]
+    assert 'action="/account/google/reconnect/classroom"' in perm
+    assert 'class="pi bad"' in perm and 'type="submit"' in perm

@@ -666,6 +666,7 @@ def create_app(
         steps: list[dict] = []
         with connect_closing(db_path) as conn:
             user_id = _acting_user(conn, request)
+            base_rows = google_reconnect.permission_rows(conn, user_id=user_id)
             try:
                 client = user_clients.classroom_client_for(conn, load_config(), user_id=user_id)
             except user_clients.UserCredentialsUnavailable:
@@ -712,8 +713,8 @@ def create_app(
                 dated += sum(1 for i in items if i.get("dueDate"))
             if failure is not None:
                 if refused(failure) and taught and name == "coursework":
-                    msg = ("Google refused, because you are the teacher of this class. Ragra's permission covers a "
-                           "student's own assignments. Check with a student account that has joined the class.")
+                    msg = (f"As a teacher, {label} is not allowed. Google refused, because you are the teacher of this class. "
+                           "Ragra's permission covers a student's own assignments. Check with a student account that has joined the class.")
                 else:
                     msg = missing_hint if refused(failure) else f"Couldn't read: {str(failure)[:160]}"
                 # Google's own reason, so the real cause is visible (no keys or tokens are ever in it).
@@ -755,7 +756,24 @@ def create_app(
                 steps.append(step("sync", "Update your deadlines", "fail", f"Couldn't update: {str(exc)[:160]}"))
                 ok = False
 
-        return JSONResponse({"ok": ok, "steps": steps})
+        # One merged list: each permission Ragra needs, allowed or not, with what the check found.
+        by_scope = {}
+        for st in steps:
+            scope = classroom_adapter.SCOPE_FOR_READ.get(st["name"])
+            if scope:
+                by_scope[scope] = st
+        merged = []
+        for row in base_rows:
+            probe = by_scope.get(row["scope"])
+            granted, detail = row["granted"], ""
+            if probe is not None and probe["name"] != "sync":
+                granted, detail = probe["status"] == "ok", probe["detail"]
+            merged.append({**row, "granted": granted, "detail": detail})
+        notes = []
+        if taught:
+            n = len(taught)
+            notes.append(f"You are the TEACHER of {n} of your classes. Ragra reads a class as a student.")
+        return JSONResponse({"ok": ok, "steps": steps, "permissions": merged, "notes": notes})
 
     @app.post("/account/classroom/info")
     def classroom_info(request: Request):
