@@ -987,6 +987,22 @@ def create_app(
              "urgent": within(3), "sync_problem": sync_problem},
         )
 
+    # --- One assignment, opened from the Deadlines list --------------------
+    @app.get("/deadlines/{task_id}")
+    def deadline_detail(request: Request, task_id: int):
+        now = datetime.now(timezone.utc)
+        with connect_closing(db_path) as conn:
+            user_id = _acting_user(conn, request)
+            # Scoped lookup: someone else's task id is a plain 404.
+            task = repo.get_task_by_id(conn, user_id=user_id, task_id=task_id)
+            if task is None:
+                raise HTTPException(status_code=404, detail="Task not found")
+            reminders = repo.reminders_for_task(conn, user_id=user_id, task_id=task_id)
+        card = _deadline_card(task, now) if task["actual_deadline"] else None
+        return templates.TemplateResponse(
+            request, "deadline_detail.html", {"task": task, "card": card, "reminders": reminders},
+        )
+
     @app.get("/missed")
     def missed_full(request: Request):
         with connect_closing(db_path) as conn:

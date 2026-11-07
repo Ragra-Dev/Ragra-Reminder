@@ -210,7 +210,7 @@
       <a href="/deadlines">View All <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h15M13 6l6 6-6 6"/></svg></a>
     </div>
     {% if nearest %}
-    <a class="hm-dl" href="/tasks/{{ nearest.id }}">
+    <a class="hm-dl" href="/deadlines/{{ nearest.id }}">
       <div class="hm-date"><small>{{ nearest.month }}</small><b>{{ nearest.day }}</b><small>{{ nearest.weekday }}</small></div>
       <span class="hm-bar"></span>
       <div class="tx"><b>{{ nearest.title }}</b>

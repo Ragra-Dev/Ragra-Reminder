@@ -112,5 +112,7 @@ def test_dashboard_task_titles_link_to_detail_view(client):
     )
     conn.close()
 
+    # the home page's upcoming-deadline card opens the detail page in the Deadlines section
     resp = client.get("/")
-    assert f'href="/tasks/{result.task_id}"' in resp.text
+    assert f'href="/deadlines/{result.task_id}"' in resp.text
+    assert client.get(f"/tasks/{result.task_id}").status_code == 200       # the full technical view still works

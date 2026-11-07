@@ -118,7 +118,7 @@
       <h2>Warning: {{ urgent|length }} deadline{{ '' if urgent|length == 1 else 's' }} due within 3 hours</h2>
       <p>Finish or submit {{ 'it' if urgent|length == 1 else 'these' }} now.</p>
       <ul>
-        {% for d in urgent %}<li><a href="/tasks/{{ d.id }}"><span class="t">{{ d.title }}{% if d.course %} &middot; {{ d.course }}{% endif %}</span><span class="lf">{{ d.left }}</span></a></li>{% endfor %}
+        {% for d in urgent %}<li><a href="/deadlines/{{ d.id }}"><span class="t">{{ d.title }}{% if d.course %} &middot; {{ d.course }}{% endif %}</span><span class="lf">{{ d.left }}</span></a></li>{% endfor %}
       </ul>
     </div>
   </div>
@@ -143,7 +143,7 @@
   <div class="dlp-group g-{{ g.key }}" data-g="{{ g.key }}">
     <h2><span class="dot"></span>{{ g.label }}<span class="n">{{ g['items']|length }}</span></h2>
     {% for d in g['items'] %}
-    <a class="dl {{ d.group }}" href="/tasks/{{ d.id }}" data-h="{{ d.hours_left }}">
+    <a class="dl {{ d.group }}" href="/deadlines/{{ d.id }}" data-h="{{ d.hours_left }}">
       <div class="dl-date"><small>{{ d.month }}</small><b>{{ d.day }}</b><small>{{ d.weekday }}</small></div>
       <span class="dl-bar"></span>
       <div class="dl-tx"><b>{{ d.title }}</b>

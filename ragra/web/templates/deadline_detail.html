@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Ragra - {{ task.title }}</title>
+{% include "_theme.html" %}
+<style>
+  .dd { --ink: #0F1B4D; --ink-2: #5A6BA8; --blue: #0B58FD; display: flex; flex-direction: column; gap: 16px; width: 100%; box-sizing: border-box; font-family: "Plus Jakarta Sans", "Inter", system-ui, sans-serif; }
+  body.pg-deadlines > .dd { max-width: none !important; margin: 0 !important; }
+  .dd > * { max-width: 860px; min-width: 0; box-sizing: border-box; }
+  .dd-back { display: inline-flex; align-items: center; gap: 8px; align-self: flex-start; padding: 8px 14px 8px 10px; border-radius: 999px; background: #fff; color: var(--ink-2); font-weight: 700; font-size: .88rem; text-decoration: none; box-shadow: 0 6px 16px -10px rgba(37,99,235,.5); }
+  .dd-back svg { width: 18px; height: 18px; }
+  .dd-back:hover { color: var(--blue); }
+
+  .dd-hero { background: #fff; border-radius: 26px; padding: 22px; box-shadow: 0 14px 30px -18px rgba(37,99,235,.38), 0 2px 6px rgba(15,30,69,.05); display: flex; gap: 18px; align-items: flex-start; }
+  .dd-date { width: 70px; height: 76px; flex: none; display: flex; flex-direction: column; align-items: center; justify-content: center; border-radius: 16px; background: #DCE8FD; color: #000048; line-height: 1.1; }
+  .dd-date small { font-size: .74rem; font-weight: 600; } .dd-date b { font-size: 1.8rem; font-weight: 800; }
+  .dd-date.overdue { background: #FFE4E6; color: #9F1239; }
+  .dd-hero h1 { margin: 0 0 8px; font-size: clamp(1.2rem, 3.6vw, 1.7rem); line-height: 1.25; color: #00003B; overflow-wrap: anywhere; }
+  .dd-tags { display: flex; flex-wrap: wrap; gap: 8px; }
+  .dd-tags span { padding: 4px 12px; border-radius: 999px; background: #EEF2FD; color: #3B4C93; font-size: .78rem; font-weight: 700; }
+  .dd-tags .High { background: #FFE0E3; color: #C2273B; } .dd-tags .Low { background: #DDF6EA; color: #0F8F6E; } .dd-tags .Medium { background: #E1E0FE; color: #291DEE; }
+  .dd-tags .st-done { background: #DDF6EA; color: #0F8F6E; }
+
+  .dd-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(230px, 100%), 1fr)); gap: 14px; }
+  .dd-card { background: #fff; border-radius: 22px; padding: 16px 20px; box-shadow: 0 14px 30px -18px rgba(37,99,235,.3), 0 2px 6px rgba(15,30,69,.04); }
+  .dd-card .k { margin: 0 0 4px; font-size: .74rem; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-2); }
+  .dd-card .v { font-size: 1.05rem; font-weight: 700; color: var(--ink); overflow-wrap: anywhere; }
+  .dd-card .v small { display: block; margin-top: 2px; font-weight: 600; font-size: .82rem; color: var(--ink-2); }
+  .dd-card.hot .v { color: #C2273B; }
+  .dd-card.wide { grid-column: 1 / -1; }
+  .dd-desc { white-space: pre-wrap; font-size: .95rem; line-height: 1.55; color: #2A3566; overflow-wrap: anywhere; }
+
+  .dd-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+  .dd-actions form { margin: 0; }
+  .dd-actions .btn, .dd-actions button { margin: 0; padding: 12px 20px; border-radius: 999px; font-weight: 800; font-size: .92rem; text-decoration: none; cursor: pointer; border: 0; }
+  .dd-actions .go { background: #2563EB; color: #fff; box-shadow: 0 10px 20px -10px rgba(37,99,235,.8); }
+  .dd-actions .done { background: #22A06B; color: #fff; box-shadow: 0 10px 20px -10px rgba(34,160,107,.8); }
+  .dd-foot { margin: 0; font-size: .8rem; color: var(--ink-2); }
+
+  @media (max-width: 980px) { .dd { margin-top: 10px; } }
+  @media (max-width: 520px) { .dd-hero { padding: 16px; gap: 12px; } .dd-date { width: 58px; height: 64px; } .dd-date b { font-size: 1.5rem; } }
+</style>
+</head>
+<body class="pg-deadlines">
+{% include "_nav.html" %}
+
+<div class="dd">
+  <a class="dd-back" href="/deadlines"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>Back to Deadlines</a>
+
+  <div class="dd-hero">
+    {% if card %}<div class="dd-date {{ card.group }}"><small>{{ card.month }}</small><b>{{ card.day }}</b><small>{{ card.weekday }}</small></div>{% endif %}
+    <div>
+      <h1>{{ task.title }}</h1>
+      <div class="dd-tags">
+        {% if task.course_code or task.course_name %}<span>{{ task.course_code or task.course_name }}</span>{% endif %}
+        {% if card %}<span class="{{ card.level }}">{{ card.level }} priority</span>{% endif %}
+        {% if task.status == 'COMPLETED' %}<span class="st-done">Done</span>{% elif task.status == 'MISSED' %}<span class="High">Missed</span>{% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="dd-grid">
+    <div class="dd-card {{ 'hot' if card and card.hours_left <= 3 }}">
+      <p class="k">Due</p>
+      <div class="v">{% if task.actual_deadline %}{{ task.actual_deadline|when }}{% if card %}<small>{{ card.rel }}{% if card.left %} &bull; {{ card.left }}{% endif %}</small>{% endif %}{% else %}No due date{% endif %}</div>
+    </div>
+    <div class="dd-card">
+      <p class="k">Class</p>
+      <div class="v">{{ task.course_name }}{% if task.course_code %}<small>{{ task.course_code }}</small>{% endif %}</div>
+    </div>
+    <div class="dd-card">
+      <p class="k">Status</p>
+      <div class="v">{% if task.status == 'COMPLETED' %}Done{% elif task.status == 'MISSED' %}Missed{% elif task.status == 'CANCELLED' %}Cancelled{% else %}Not done yet{% endif %}</div>
+    </div>
+    {% if task.personal_deadline %}
+    <div class="dd-card">
+      <p class="k">Your own target</p>
+      <div class="v">{{ task.personal_deadline|when }}</div>
+    </div>
+    {% endif %}
+    {% if task.description %}
+    <div class="dd-card wide">
+      <p class="k">Details</p>
+      <div class="dd-desc">{{ task.description }}</div>
+    </div>
+    {% endif %}
+    <div class="dd-card wide">
+      <p class="k">Reminders</p>
+      <div class="v" style="font-weight:600;font-size:.92rem">
+        {% if reminders %}{% for r in reminders %}<div>{{ r.reminder_type|replace('_', ' ')|capitalize }} &middot; {{ r.status|lower }} &middot; {{ r.scheduled_for|when }}</div>{% endfor %}
+        {% else %}No reminders set for this one.{% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="dd-actions">
+    {% if task.link %}<a class="btn go" href="{{ task.link }}" target="_blank" rel="noopener">Open in Classroom</a>{% endif %}
+    {% if task.status not in ('COMPLETED', 'MISSED', 'CANCELLED') %}
+    <form method="post" action="/tasks/{{ task.id }}/complete">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token_for(request) }}">
+      <button type="submit" class="done">Mark as done</button>
+    </form>
+    {% endif %}
+  </div>
+  <p class="dd-foot"><a href="/tasks/{{ task.id }}">Full technical details</a></p>
+</div>
+</body>
+</html>

@@ -591,3 +591,32 @@ def test_the_not_allowed_cross_is_a_button_that_opens_the_permission_page(client
     perm = client.get("/account").text.split('id="perm-list"')[1].split("</ul>")[0]
     assert 'action="/account/google/reconnect/classroom"' in perm
     assert 'class="pi bad"' in perm and 'type="submit"' in perm
+
+
+def test_tapping_a_deadline_opens_its_detail_page_inside_the_deadlines_section(client):
+    now = datetime.now(timezone.utc)
+    conn = connect(client.db_path)
+    course_id = conn.execute("SELECT id FROM courses LIMIT 1").fetchone()["id"]
+    repo.upsert_task_from_source(
+        conn, course_id=course_id, source_type="coursework", external_id="dd1",
+        title="Lab 4 Report", description="Submit the PDF with your results.", link="https://classroom.google.com/c/x/a/y",
+        kind="ACTIONABLE", actual_deadline=(now + timedelta(days=2)).isoformat(),
+        source_published_at=repo.now_iso(), source_updated_at=repo.now_iso(), user_id=owner_id(conn),
+    )
+    task_id = conn.execute("SELECT id FROM tasks WHERE external_id = 'dd1'").fetchone()["id"]
+    conn.close()
+
+    # The list and the home card both point at the detail page, not at Tasks.
+    assert f'href="/deadlines/{task_id}"' in client.get("/deadlines").text
+
+    page = client.get(f"/deadlines/{task_id}")
+    assert page.status_code == 200
+    html = page.text
+    assert "Lab 4 Report" in html and "Submit the PDF with your results." in html
+    assert "Back to Deadlines" in html and "Open in Classroom" in html and "Mark as done" in html
+    # the sidebar keeps Deadlines highlighted while the detail is open
+    assert 'href="/deadlines" class="on"' in html
+
+
+def test_deadline_detail_of_a_missing_task_is_a_404(client):
+    assert client.get("/deadlines/999999").status_code == 404
