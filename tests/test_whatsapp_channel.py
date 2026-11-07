@@ -432,8 +432,11 @@ def test_a_whatsapp_number_is_saved_as_digits_and_shown_as_saved(account, db_pat
         row = conn.execute("SELECT * FROM notification_preferences WHERE user_id = ?", (uid,)).fetchone()
     assert (row["whatsapp_enabled"], row["whatsapp_to"]) == (1, "923001234567")
     page = client.get("/account").text
-    assert "+923001234567" in page
-    assert "Change WhatsApp number" in page
+    # WhatsApp is switched off in the profile page for now: it shows its name and
+    # "Under development", and carries the saved number along without editing it.
+    assert "WhatsApp" in page and "Under development" in page
+    assert 'id="whatsapp_enabled_ui" disabled' in page
+    assert 'name="whatsapp_to" value="923001234567"' in page
 
 
 def test_a_bad_number_is_refused_and_the_old_one_kept(account, db_path):

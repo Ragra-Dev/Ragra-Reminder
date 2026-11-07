@@ -15,12 +15,39 @@
   /* filter pills */
   .dlp-filter { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; }
   .dlp-filter::-webkit-scrollbar { display: none; }
+  @media (min-width: 641px) { .dlp-filter { flex-wrap: wrap; overflow: visible; } }
   .dlp-filter button { flex: none; margin: 0; display: inline-flex; align-items: center; gap: 8px; padding: 9px 16px; border-radius: 999px; border: 1px solid #DCE4FB; background: #fff; color: var(--ink-2);
     font: 600 .85rem/1 inherit; box-shadow: none; }
   .dlp-filter button b { min-width: 22px; height: 22px; padding: 0 7px; border-radius: 999px; display: inline-grid; place-items: center; background: #EEF2FD; color: var(--ink-2); font-size: .72rem; }
   .dlp-filter button.on { background: #2563EB; border-color: #2563EB; color: #fff; box-shadow: 0 8px 16px -8px rgba(37,99,235,.7); }
   .dlp-filter button.on b { background: rgba(255,255,255,.22); color: #fff; }
   .dlp-filter button:hover { transform: none; }
+
+  .dlp-filter .sep { flex: none; width: 1px; margin: 4px 4px; background: #DCE4FB; }
+  .dlp-filter button.tl { border-style: dashed; }
+  .dlp-filter button.tl.on { border-style: solid; }
+
+  /* warning: due within 3 hours */
+  .dlp-warn { display: flex; gap: 14px; padding: 16px 20px; border-radius: 22px; background: linear-gradient(135deg, #FFF4E0, #FFE6E0); border: 1px solid #FFD2C2;
+    box-shadow: 0 14px 30px -20px rgba(229,72,77,.6); }
+  .dlp-warn .wi { width: 44px; height: 44px; flex: none; border-radius: 14px; display: grid; place-items: center; background: #E5484D; color: #fff; animation: dlp-pulse 1.8s ease-in-out infinite; }
+  .dlp-warn .wi svg { width: 24px; height: 24px; }
+  @keyframes dlp-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(229,72,77,.45); } 50% { box-shadow: 0 0 0 10px rgba(229,72,77,0); } }
+  .dlp-warn h2 { margin: 0 0 2px; font-size: 1rem; color: #9F1239; }
+  .dlp-warn p { margin: 0 0 8px; font-size: .85rem; color: #9A3B3B; }
+  .dlp-warn ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+  .dlp-warn li a { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-radius: 12px; background: rgba(255,255,255,.75); color: #5A1A1A; text-decoration: none; font-weight: 600; font-size: .9rem; }
+  .dlp-warn li a:hover { background: #fff; }
+  .dlp-warn li .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dlp-warn li .lf { flex: none; padding: 3px 10px; border-radius: 999px; background: #E5484D; color: #fff; font-size: .74rem; font-weight: 800; }
+  .dl-left { display: inline-block; margin-left: 8px; padding: 2px 9px; border-radius: 999px; background: #FFE9D0; color: #B45309; font-size: .72rem; font-weight: 800; }
+  .dl-left.hot { background: #FFE0E3; color: #C2273B; }
+
+  .dlp-ok { display: flex; align-items: center; gap: 14px; padding: 12px 18px; border-radius: 20px; background: #E9F8F1; border: 1px solid #CDEFE0; }
+  .dlp-ok .wi { width: 36px; height: 36px; flex: none; border-radius: 12px; display: grid; place-items: center; background: #22A06B; color: #fff; }
+  .dlp-ok .wi svg { width: 20px; height: 20px; }
+  .dlp-ok b { display: block; font-size: .92rem; color: #0F6B47; }
+  .dlp-ok span { font-size: .82rem; color: #3E7F65; }
 
   /* groups */
   .dlp-group { background: #fff; border-radius: 26px; padding: 6px 22px 10px; box-shadow: 0 14px 30px -18px rgba(37,99,235,.38), 0 2px 6px rgba(15,30,69,.05); }
@@ -77,25 +104,45 @@
       <p>{% if total %}{{ total }} open deadline{{ '' if total == 1 else 's' }}, soonest first.{% else %}Nothing due right now.{% endif %}</p></div>
   </div>
 
-  {% if total %}
+  {% if urgent %}
+  <div class="dlp-warn" role="alert">
+    <span class="wi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3L2 20h20z"/><path d="M12 10v4M12 17.5v.1"/></svg></span>
+    <div>
+      <h2>Warning: {{ urgent|length }} deadline{{ '' if urgent|length == 1 else 's' }} due within 3 hours</h2>
+      <p>Finish or submit {{ 'it' if urgent|length == 1 else 'these' }} now.</p>
+      <ul>
+        {% for d in urgent %}<li><a href="/tasks/{{ d.id }}"><span class="t">{{ d.title }}{% if d.course %} &middot; {{ d.course }}{% endif %}</span><span class="lf">{{ d.left }}</span></a></li>{% endfor %}
+      </ul>
+    </div>
+  </div>
+  {% else %}
+  <div class="dlp-ok"><span class="wi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>
+    <div><b>No warnings</b><span>Nothing is due in the next 3 hours.</span></div></div>
+  {% endif %}
+
   <div class="dlp-filter" role="tablist" aria-label="Filter deadlines">
     <button type="button" class="on" data-f="all">All <b>{{ total }}</b></button>
     {% for key, label in [('overdue', 'Overdue'), ('today', 'Today'), ('tomorrow', 'Tomorrow'), ('week', 'This week'), ('later', 'Later')] %}
       {% if counts[key] %}<button type="button" data-f="{{ key }}">{{ label }} <b>{{ counts[key] }}</b></button>{% endif %}
     {% endfor %}
+    <span class="sep" aria-hidden="true"></span>
+    <button type="button" class="tl" data-h="24">Within 24 hours <b>{{ within.h24 }}</b></button>
+    <button type="button" class="tl" data-h="168">Within 7 days <b>{{ within.d7 }}</b></button>
+    <button type="button" class="tl" data-h="168">Within 1 week <b>{{ within.w1 }}</b></button>
   </div>
 
+  {% if total %}
   {% for g in groups %}
   <div class="dlp-group g-{{ g.key }}" data-g="{{ g.key }}">
     <h2><span class="dot"></span>{{ g.label }}<span class="n">{{ g['items']|length }}</span></h2>
     {% for d in g['items'] %}
-    <a class="dl {{ d.group }}" href="/tasks/{{ d.id }}">
+    <a class="dl {{ d.group }}" href="/tasks/{{ d.id }}" data-h="{{ d.hours_left }}">
       <div class="dl-date"><small>{{ d.month }}</small><b>{{ d.day }}</b><small>{{ d.weekday }}</small></div>
       <span class="dl-bar"></span>
       <div class="dl-tx"><b>{{ d.title }}</b>
         <div class="meta2">
           {% if d.course %}<span class="crs">{{ d.course }}</span>{% endif %}
-          <span style="display:inline-flex;align-items:center;gap:6px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>{{ d.rel }} &bull; {{ d.time }}</span>
+          <span style="display:inline-flex;align-items:center;gap:6px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>{{ d.rel }} &bull; {{ d.time }}</span>{% if d.left and d.hours_left <= 24 %}<span class="dl-left{{ ' hot' if d.hours_left <= 3 }}">{{ d.left }}</span>{% endif %}
         </div></div>
       <span class="dl-pri {{ d.level }}">{{ d.level }}</span>
       <svg class="go" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg>
@@ -110,13 +157,22 @@
 
 <script>
 (function () {
-  var btns = document.querySelectorAll('.dlp-filter button'), groups = document.querySelectorAll('.dlp-group');
-  btns.forEach(function (b) {
-    b.addEventListener('click', function () {
-      btns.forEach(function (x) { x.classList.toggle('on', x === b); });
-      groups.forEach(function (g) { g.style.display = (b.dataset.f === 'all' || g.dataset.g === b.dataset.f) ? '' : 'none'; });
+  var btns = document.querySelectorAll('.dlp-filter button'), groups = document.querySelectorAll('.dlp-group'), rows = document.querySelectorAll('.dl');
+  function apply(b) {
+    btns.forEach(function (x) { x.classList.toggle('on', x === b); });
+    var hrs = b.dataset.h ? parseFloat(b.dataset.h) : null, grp = b.dataset.f;
+    rows.forEach(function (r) {
+      var left = parseFloat(r.dataset.h), show = true;
+      if (hrs !== null) show = left >= 0 && left <= hrs;                       // time-left filter
+      else if (grp && grp !== 'all') show = r.closest('.dlp-group').dataset.g === grp;
+      r.style.display = show ? '' : 'none';
     });
-  });
+    groups.forEach(function (g) {
+      var any = Array.prototype.some.call(g.querySelectorAll('.dl'), function (r) { return r.style.display !== 'none'; });
+      g.style.display = any ? '' : 'none';
+    });
+  }
+  btns.forEach(function (b) { b.addEventListener('click', function () { apply(b); }); });
 })();
 </script>
 </body>

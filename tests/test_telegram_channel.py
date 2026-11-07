@@ -321,7 +321,10 @@ def test_a_connected_account_shows_as_connected(account, db_path):
     client, uid = account
     with connect_closing(db_path) as conn:
         repo.connect_telegram_chat(conn, user_id=uid, chat_id="42")
-    assert "Connected" in client.get("/account").text
+    page = client.get("/account").text
+    # Telegram is shown as "Under development" and disabled in the profile page for now.
+    assert "Telegram" in page and "Under development" in page
+    assert 'id="telegram_enabled_ui" disabled' in page
 
 
 def test_alerts_go_to_telegram_once_linked(db_path, monkeypatch):

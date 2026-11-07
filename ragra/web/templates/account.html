@@ -32,6 +32,9 @@
   .ch > label { display: block; font-size: .8rem; font-weight: 700; color: #5A6BA8; margin-top: 8px; }
   .ch > label input { width: 100%; margin-top: 6px; }
   .ch .hint { font-size: .78rem; margin-top: 6px; }
+  .ch.soon .ch-top label { color: #8A98C6; cursor: not-allowed; }
+  .ch.soon input[type=checkbox] { cursor: not-allowed; }
+  .ch-top .state.dev { background: #FFF1CF; color: #9A5B00; }
   .pf-save { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 12px; }
   .pf-save button { margin: 0; padding: 11px 28px; background: #2563EB; color: #fff; box-shadow: 0 8px 16px -6px rgba(37,99,235,.55); }
   .pf h1 { margin-top: 8px; }
@@ -107,37 +110,24 @@
       {% endif %}
     </div>
 
-    <div class="ch">
+    <div class="ch soon" aria-disabled="true">
       <div class="ch-top">
-        <input type="checkbox" id="whatsapp_enabled" name="whatsapp_enabled" value="1" {% if preferences.whatsapp_enabled %}checked{% endif %}>
-        <label for="whatsapp_enabled">WhatsApp</label>
-        <span class="state {{ 'on' if preferences.whatsapp_enabled }}">{{ 'On' if preferences.whatsapp_enabled else 'Off' }}</span>
+        <input type="checkbox" id="whatsapp_enabled_ui" disabled>
+        <label for="whatsapp_enabled_ui">WhatsApp</label>
+        <span class="state dev">Under development</span>
       </div>
-      {% if preferences.whatsapp_to %}
-      <div class="saved-row"><span class="chip">Saved</span> <b>+{{ preferences.whatsapp_to }}</b>
-        <input type="hidden" name="whatsapp_to" value="{{ preferences.whatsapp_to }}"></div>
-      <details class="mini"><summary>Change WhatsApp number</summary>
-        <input type="text" name="whatsapp_change" placeholder="+92 300 1234567" autocomplete="tel">
-      </details>
-      {% else %}
-      <label>WhatsApp number <input type="text" name="whatsapp_to" placeholder="+92 300 1234567" autocomplete="tel"></label>
-      {% endif %}
-      {% if whatsapp_ready %}
-      <p class="hint">Then send <b>hi</b> to {% if whatsapp_bot_number %}<b>{{ whatsapp_bot_number }}</b>{% else %}the Ragra number{% endif %} on WhatsApp.</p>
-      {% else %}
-      <p class="hint">Not set up on this server yet.</p>
-      {% endif %}
+      {# Any WhatsApp setting saved earlier is carried along untouched; this form just can't change it for now. #}
+      {% if preferences.whatsapp_enabled %}<input type="hidden" name="whatsapp_enabled" value="1">{% endif %}
+      {% if preferences.whatsapp_to %}<input type="hidden" name="whatsapp_to" value="{{ preferences.whatsapp_to }}">{% endif %}
     </div>
 
-    <div class="ch">
+    <div class="ch soon" aria-disabled="true">
       <div class="ch-top">
-        <input type="checkbox" id="telegram_enabled" name="telegram_enabled" value="1" {% if preferences.telegram_enabled %}checked{% endif %} {% if not preferences.telegram_chat_id %}disabled{% endif %}>
-        <label for="telegram_enabled">Telegram</label>
-        <span class="state {{ 'on' if preferences.telegram_chat_id }}">{{ 'Connected' if preferences.telegram_chat_id else 'Off' }}</span>
+        <input type="checkbox" id="telegram_enabled_ui" disabled>
+        <label for="telegram_enabled_ui">Telegram</label>
+        <span class="state dev">Under development</span>
       </div>
-      {% if not preferences.telegram_chat_id %}
-      <p class="hint">{% if telegram_ready %}Press Connect Telegram below, then Start.{% else %}Not set up on this server yet.{% endif %}</p>
-      {% endif %}
+      {% if preferences.telegram_enabled %}<input type="hidden" name="telegram_enabled" value="1">{% endif %}
     </div>
 
     <details class="ch mini" style="margin-left:0">
@@ -162,22 +152,6 @@
       <span class="hint">A welcome message is sent when you turn a channel on.</span>
     </div>
   </form>
-  {% if telegram_ready or preferences.telegram_chat_id %}
-  <div class="actions">
-    {% if telegram_ready %}
-    <form class="inline" method="post" action="/account/telegram/link">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token_for(request) }}">
-      <button type="submit" class="btn-secondary">{{ 'Reconnect Telegram' if preferences.telegram_chat_id else 'Connect Telegram' }}</button>
-    </form>
-    {% endif %}
-    {% if preferences.telegram_chat_id %}
-    <form class="inline" method="post" action="/account/telegram/disconnect">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token_for(request) }}">
-      <button type="submit" class="btn-ghost">Disconnect Telegram</button>
-    </form>
-    {% endif %}
-  </div>
-  {% endif %}
 </div>
 
 {# ---- rarely needed ---- #}

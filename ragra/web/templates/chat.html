@@ -61,6 +61,10 @@
   .typing .b i:nth-child(2) { animation-delay: .15s; } .typing .b i:nth-child(3) { animation-delay: .3s; }
   @keyframes cx-dot { 0%, 60%, 100% { transform: translateY(0); opacity: .5; } 30% { transform: translateY(-5px); opacity: 1; } }
 
+  /* live writing: a caret blinks at the end of the reply while it types out */
+  .msg .t.live::after { content: ""; display: inline-block; width: 2px; height: 1.05em; margin-left: 2px; vertical-align: -2px; background: #2563EB; animation: cx-caret .8s steps(1) infinite; }
+  @keyframes cx-caret { 50% { opacity: 0; } }
+
   /* composer */
   .cx-foot { padding: 12px 18px 16px; border-top: 1px solid var(--line); background: #fff; }
   .cx-chips { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; padding-bottom: 10px; }
@@ -190,13 +194,27 @@
       .then(function () { var box = button.closest('form') || button; box.replaceWith(received()); })
       .catch(function () { button.disabled = false; var f = button.closest('form'); if (f) f.submit(); });
   }
-  function add(m) {
+  var reduceMotion = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  // Write a reply out live, a few characters at a time, then run `done`.
+  function writeLive(node, text, done) {
+    if (reduceMotion) { node.textContent = text; done(); return; }
+    node.classList.add('live');
+    var i = 0, step = Math.max(1, Math.ceil(text.length / 130));   // long replies still finish in about 2-3 seconds
+    var timer = setInterval(function () {
+      i = Math.min(text.length, i + step);
+      node.textContent = text.slice(0, i);
+      bottom();
+      if (i >= text.length) { clearInterval(timer); node.classList.remove('live'); done(); }
+    }, 18);
+  }
+  // animate = true only for a reply the person just asked for; alerts and old messages appear at once
+  function add(m, animate) {
     if (m.id <= lastId) return;
     lastId = m.id;
     addDay(m.at);
     var row = el('div', 'msg ' + m.role); row.dataset.id = m.id;
     if (m.role !== 'user') { var who = el('img', 'who'); who.src = BOT; who.alt = ''; row.appendChild(who); }
-    var col = el('div', 'col'), b = el('div', 'b');
+    var col = el('div', 'col'), b = el('div', 'b'), stamp = el('time', null, when(m.at));
     if (m.role === 'alert') {
       var ic = el('span', 'ic'); ic.innerHTML = BELL; b.appendChild(ic);
       var body = el('div'); body.appendChild(el('span', 'tag', 'Classroom alert')); body.appendChild(el('div', 't', m.text));
@@ -205,9 +223,11 @@
       acts.appendChild(m.acked ? received() : ackButton(m.id));
       body.appendChild(acts); b.appendChild(body);
     } else {
-      b.appendChild(el('div', 't', m.text));
+      var t = el('div', 't', animate && m.role === 'bot' ? '' : m.text);
+      b.appendChild(t);
+      if (animate && m.role === 'bot') { stamp.style.visibility = 'hidden'; writeLive(t, m.text, function () { stamp.style.visibility = ''; }); }
     }
-    col.appendChild(b); col.appendChild(el('time', null, when(m.at)));
+    col.appendChild(b); col.appendChild(stamp);
     row.appendChild(col); thread.appendChild(row);
     bottom();
   }
@@ -218,15 +238,33 @@
     row.appendChild(who); row.appendChild(col); thread.appendChild(row); bottom();
     return row;
   }
-  var sendBtn = form.querySelector('.cx-send');
+  var sendBtn = form.querySelector('.cx-send'), busy = false;
+  function mine(text) {
+    var row = el('div', 'msg user'), col = el('div', 'col'), b = el('div', 'b');
+    b.appendChild(el('div', 't', text)); col.appendChild(b);
+    var stamp = el('time', null, when(new Date().toISOString())); col.appendChild(stamp);
+    row.appendChild(col); addDay(new Date().toISOString()); thread.appendChild(row); bottom();
+    return row;
+  }
   function send(text) {
-    if (!text.trim()) return;
-    input.value = ''; sendBtn.disabled = true;
-    var wait = typing();
+    if (!text.trim() || busy) return;
+    busy = true; input.value = ''; sendBtn.disabled = true;
+    var mineRow = mine(text), wait = typing(), started = Date.now();
+    var think = 900 + Math.random() * 600;                      // 0.9 - 1.5 s of "typing..." before the answer starts
     api('/chat/send', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ text: text }) })
-      .then(function (d) { wait.remove(); d.messages.forEach(add); })
-      .catch(function () { wait.remove(); form.submit(); })
-      .finally(function () { sendBtn.disabled = false; input.focus(); });
+      .then(function (d) {
+        var left = Math.max(0, think - (Date.now() - started));
+        return new Promise(function (r) { setTimeout(function () { r(d); }, left); });
+      })
+      .then(function (d) {
+        wait.remove();
+        d.messages.forEach(function (m) {
+          if (m.role === 'user') { mineRow.dataset.id = m.id; lastId = Math.max(lastId, m.id); }   // already on screen
+          else add(m, true);
+        });
+      })
+      .catch(function () { wait.remove(); mineRow.remove(); form.submit(); })
+      .finally(function () { busy = false; sendBtn.disabled = false; input.focus(); });
   }
   form.addEventListener('submit', function (e) { e.preventDefault(); send(input.value); });
   document.querySelectorAll('.ackf').forEach(function (f) {
@@ -234,8 +272,8 @@
   });
   document.querySelectorAll('[data-q]').forEach(function (b) { b.addEventListener('click', function () { send(b.dataset.q); }); });
   setInterval(function () {
-    if (document.hidden) return;
-    api('/chat/messages?after=' + lastId, { method: 'GET' }).then(function (d) { d.messages.forEach(add); }).catch(function () {});
+    if (document.hidden || busy) return;
+    api('/chat/messages?after=' + lastId, { method: 'GET' }).then(function (d) { d.messages.forEach(function (m) { add(m); }); }).catch(function () {});
   }, 15000);
 })();
 </script>

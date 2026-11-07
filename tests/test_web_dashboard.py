@@ -290,3 +290,44 @@ def test_deadlines_page_groups_open_deadlines_soonest_first(client):
     assert 'data-g="week"' in html and 'data-g="later"' in html
     # The home page's "View All" now opens this page.
     assert 'href="/deadlines"' in client.get("/").text
+
+
+def test_deadlines_page_warns_about_deadlines_due_within_three_hours(client):
+    now = datetime.now(timezone.utc)
+    conn = connect(client.db_path)
+    course_id = conn.execute("SELECT id FROM courses LIMIT 1").fetchone()["id"]
+    for ext, title, hours in [("u1", "Urgent Quiz", 2), ("u2", "Later Today Task", 10), ("u3", "Next Week Task", 24 * 6)]:
+        repo.upsert_task_from_source(
+            conn, course_id=course_id, source_type="coursework", external_id=ext,
+            title=title, description=None, link=None, kind="ACTIONABLE",
+            actual_deadline=(now + timedelta(hours=hours)).isoformat(),
+            source_published_at=repo.now_iso(), source_updated_at=repo.now_iso(), user_id=owner_id(conn),
+        )
+    conn.close()
+
+    html = client.get("/deadlines").text
+    warn = html.split('class="dlp-warn"')[1].split("</ul>")[0]
+    assert "within 3 hours" in warn and "Urgent Quiz" in warn
+    assert "Later Today Task" not in warn and "Next Week Task" not in warn
+    # the three time-left filters count what is due inside each window
+    assert 'data-h="24">Within 24 hours <b>2</b>' in html
+    assert 'data-h="168">Within 7 days <b>3</b>' in html
+    assert 'data-h="168">Within 1 week <b>3</b>' in html
+
+
+def test_deadlines_page_has_no_warning_when_nothing_is_urgent(client):
+    html = client.get("/deadlines").text
+    assert 'class="dlp-warn"' not in html
+    assert "Nothing is due in the next 3 hours" in html
+
+
+def test_deadlines_filters_show_even_when_there_are_no_deadlines(tmp_path):
+    from tests.support import sign_in
+
+    db = tmp_path / "empty.db"
+    connect(db).close()
+    with TestClient(create_app(db)) as c:
+        sign_in(c, db)
+        html = c.get("/deadlines").text
+    for label in ("Within 24 hours", "Within 7 days", "Within 1 week"):
+        assert label in html

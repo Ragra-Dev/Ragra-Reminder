@@ -184,7 +184,19 @@ def _deadline_card(task, now: datetime) -> dict:
         rel = when_local.strftime("%A") if days < 7 else when_local.strftime("%a %d %b").replace(" 0", " ")
         group = "week" if days < 7 else "later"
     hour = when_local.strftime("%I").lstrip("0") or "12"
+    hours_left = (parse_instant(str(task["actual_deadline"])) - now).total_seconds() / 3600
+    if hours_left < 0:
+        left = ""
+    elif hours_left < 1:
+        left = f"{max(1, int(hours_left * 60))} min left"
+    elif hours_left < 24:
+        h, m = int(hours_left), int((hours_left % 1) * 60)
+        left = f"{h}h {m}m left" if m else f"{h}h left"
+    else:
+        left = f"{int(hours_left // 24)}d left"
     return {
+        "hours_left": round(hours_left, 3),
+        "left": left,
         "id": task["id"],
         "title": task["title"],
         "course": task["course_code"] or task["course_name"],
@@ -736,10 +748,16 @@ def create_app(
             {"key": key, "label": label, "items": [c for c in cards if c["group"] == key]}
             for key, label in order
         ]
+        # Time-left filters (cumulative) and the "due within 3 hours" warning.
+        def within(hours):
+            return [c for c in cards if 0 <= c["hours_left"] <= hours]
+
         return templates.TemplateResponse(
             request, "deadlines.html",
             {"groups": [g for g in groups if g["items"]], "total": len(cards),
-             "counts": {g["key"]: len(g["items"]) for g in groups}},
+             "counts": {g["key"]: len(g["items"]) for g in groups},
+             "within": {"h24": len(within(24)), "d7": len(within(24 * 7)), "w1": len(within(24 * 7))},
+             "urgent": within(3)},
         )
 
     @app.get("/missed")
