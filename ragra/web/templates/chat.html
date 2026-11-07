@@ -59,6 +59,7 @@
   .typing .b { display: inline-flex; gap: 5px; padding: 14px 16px; }
   .typing .b i { width: 7px; height: 7px; border-radius: 50%; background: #A3B4E6; animation: cx-dot 1.2s infinite ease-in-out; }
   .typing .b i:nth-child(2) { animation-delay: .15s; } .typing .b i:nth-child(3) { animation-delay: .3s; }
+  @keyframes cx-in { from { opacity: 0; transform: translateX(28px); } to { opacity: 1; transform: none; } }
   @keyframes cx-dot { 0%, 60%, 100% { transform: translateY(0); opacity: .5; } 30% { transform: translateY(-5px); opacity: 1; } }
 
   /* live writing: a caret blinks at the end of the reply while it types out */
@@ -80,16 +81,46 @@
   .cx-send svg { width: 19px; height: 19px; }
 
   /* phones and tablets: full-bleed card between the header and the bottom bar */
+  /* ---- phones and tablets: a full-screen chat, like WhatsApp ----
+     The page header and bottom bar are hidden, the chat fills the whole screen (and shrinks above the
+     keyboard), with a blue top bar, the messages in the middle and the message box pinned at the bottom. */
   @media (max-width: 980px) {
-    .cx { height: calc(100dvh - 200px); border-radius: 22px; }
-    .cx-back { display: grid; }
-    .cx-head { padding: 12px 14px; gap: 10px; }
+    html body.pg-chat, html body.pg-chat:has(> .hm-top) { padding: 0 !important; overflow: hidden; background: #E9EEFB; }
+    body.pg-chat > .hm-top, body.pg-chat > .hm-nav, body.pg-chat > .dk-top { display: none !important; }
+    body.pg-chat > .cx { position: fixed; inset: 0 auto auto 0; top: 0; left: 0; width: 100%; max-width: none !important; margin: 0 !important;
+      height: var(--vvh, 100dvh); min-height: 0; border-radius: 0; box-shadow: none; z-index: 60; background: #E9EEFB; }
+
+    body.pg-chat > .cx { animation: cx-in .22s ease-out; }          /* slides in, like opening a WhatsApp chat */
+    .cx-head { padding: calc(10px + env(safe-area-inset-top)) 10px 10px 6px; gap: 8px; border-bottom: 0; color: #fff;
+      background: linear-gradient(135deg, #2F6DF3, #1D4ED8); box-shadow: 0 4px 14px -6px rgba(29,78,216,.6); z-index: 2; }
+    .cx-back { display: grid; width: 40px; height: 40px; background: transparent; color: #fff; }
+    .cx-back svg { width: 24px; height: 24px; }
     .cx-av { width: 42px; height: 42px; }
+    .cx-av::after { border-color: #2558E1; }
+    .cx-title b { color: #fff; font-size: 1.05rem; }
+    .cx-title span { color: #CFE3FF; } .cx-title span i { color: #CFE3FF; }
+    .cx-clear { background: rgba(255,255,255,.16); border: 0; color: #fff; padding: 10px; }
     .cx-clear span { display: none; }
-    .cx-clear { padding: 9px; }
-    .cx-thread { padding: 16px 12px 8px; }
-    .msg, .msg.alert { max-width: 90%; }
-    .cx-foot { padding: 10px 10px 12px; }
+    .cx-clear:hover { background: rgba(255,255,255,.28); color: #fff; border: 0; }
+
+    .cx-thread { padding: 14px 10px 8px; gap: 8px; background:
+      radial-gradient(circle at 20% 15%, rgba(37,99,235,.06) 0 2px, transparent 3px) 0 0 / 38px 38px,
+      radial-gradient(circle at 70% 60%, rgba(37,99,235,.05) 0 2px, transparent 3px) 0 0 / 52px 52px, #E9EEFB;
+      -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
+    .msg, .msg.alert { max-width: 86%; }
+    .msg .who { display: none; }
+    .msg .b { font-size: .97rem; padding: 9px 12px; }
+    .msg.bot .b, .msg.alert .b { border-bottom-left-radius: 4px; border-top-left-radius: 14px; }
+    .msg.user .b { border-bottom-right-radius: 4px; }
+    .msg time { font-size: .66rem; margin-top: 3px; }
+
+    .cx-foot { padding: 6px 8px calc(8px + env(safe-area-inset-bottom)); border-top: 0; background: transparent; }
+    .cx-chips { padding-bottom: 8px; }
+    .cx-chips button { background: #fff; box-shadow: 0 1px 3px rgba(15,30,69,.12); border: 0; }
+    .cx-form { padding: 4px 4px 4px 16px; border: 0; background: #fff; box-shadow: 0 1px 4px rgba(15,30,69,.14); }
+    .cx-form:focus-within { box-shadow: 0 0 0 2px rgba(37,99,235,.35); }
+    .cx-form input[type=text] { font-size: 16px; }            /* 16px stops phones zooming in when you tap the box */
+    .cx-send { width: 46px; height: 46px; }
   }
   @media (min-width: 981px) {
     .cx { height: calc(100vh - calc(190 * var(--u)) - 48px); }
@@ -173,8 +204,22 @@
   }
   // day separators for the messages the server rendered
   thread.querySelectorAll('.msg').forEach(function (n) { lastId = Math.max(lastId, +n.dataset.id || 0); addDay(n.dataset.at, n); });
+  // Fit the chat to the part of the screen that is really visible: when the phone keyboard opens, the
+  // message box moves up with it instead of hiding behind it.
+  var box = document.querySelector('.cx');
+  function fit() {
+    var vv = window.visualViewport;
+    if (!vv || window.innerWidth > 980) { box.style.removeProperty('--vvh'); box.style.transform = ''; return; }
+    box.style.setProperty('--vvh', vv.height + 'px');
+    box.style.transform = vv.offsetTop ? 'translateY(' + vv.offsetTop + 'px)' : '';
+    bottom();
+  }
+  if (window.visualViewport) { visualViewport.addEventListener('resize', fit); visualViewport.addEventListener('scroll', fit); }
+  window.addEventListener('orientationchange', function () { setTimeout(fit, 250); });
+  input.addEventListener('focus', function () { setTimeout(function () { fit(); bottom(); }, 300); });
+
   function bottom() { thread.scrollTop = thread.scrollHeight; }
-  bottom();
+  bottom(); fit();
   window.addEventListener('load', bottom);
   thread.querySelectorAll('img').forEach(function (i) { if (!i.complete) i.addEventListener('load', bottom); });
 
