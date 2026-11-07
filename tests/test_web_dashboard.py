@@ -360,8 +360,8 @@ def test_no_sync_notice_when_classroom_synced_fine(client):
     _set_classroom_sync(client, "OK")
     assert "read your assignments from Classroom" not in client.get("/deadlines").text
     assert "read your assignments from Classroom" not in client.get("/account").text
-    # the Profile page always reminds people to tick every box on Google's screen
-    assert "tick <b>every</b> box" in client.get("/account").text
+    # the Profile page always explains the Allow button for any permission that is not allowed
+    assert "Press <b>Allow</b>" in client.get("/account").text
 
 
 class _FakeClassroom:
@@ -370,8 +370,13 @@ class _FakeClassroom:
     def __init__(self, *, coursework_error=None):
         self.coursework_error = coursework_error
 
+    taught = frozenset()
+
     def list_courses(self):
         return [{"id": "c1", "courseState": "ACTIVE"}, {"id": "c2", "courseState": "ARCHIVED"}]
+
+    def list_taught_course_ids(self):
+        return set(self.taught)
 
     def list_course_work(self, course_id):
         if self.coursework_error:
@@ -410,3 +415,93 @@ def test_classroom_check_names_the_refused_assignments_permission(client, monkey
     assert result["ok"] is False
     assert by["coursework"]["status"] == "fail" and "course work" in by["coursework"]["detail"]
     assert by["announcements"]["status"] == "ok"   # the other parts still read fine
+
+
+def test_classroom_check_explains_a_teacher_cannot_read_assignments_with_the_student_permission(client, monkeypatch):
+    from ragra.adapters.classroom import ClassroomGoogleError
+
+    fake = _FakeClassroom(coursework_error=ClassroomGoogleError("HttpError 403: The caller does not have permission"))
+    fake.taught = frozenset({"c1"})
+    result = _check(client, monkeypatch, fake)
+    by = {s["name"]: s for s in result["steps"]}
+    assert "TEACHER" in by["role"]["detail"]
+    assert "you are the teacher" in by["coursework"]["detail"]
+    assert "Google said" in by["coursework"]["detail"]
+
+
+def test_a_good_classroom_check_updates_deadlines_and_clears_the_old_notice(client, monkeypatch):
+    _set_classroom_sync(client, "ERROR", "coursework sync failed for 'OOP': <HttpError 403 insufficient authentication scopes>")
+    assert "read your assignments from Classroom" in client.get("/deadlines").text
+
+    result = _check(client, monkeypatch, _FakeClassroom())
+
+    by = {s["name"]: s for s in result["steps"]}
+    assert result["ok"] is True and by["sync"]["status"] == "ok"
+    # the check ran the sync, which recorded success, so the stale notice is gone
+    assert "read your assignments from Classroom" not in client.get("/deadlines").text
+    assert "read your assignments from Classroom" not in client.get("/account").text
+
+
+def _store_scopes(client, scopes):
+    conn = connect(client.db_path)
+    uid = owner_id(conn)
+    conn.execute(
+        "INSERT INTO google_credentials (user_id, service, ciphertext, scopes, created_at, updated_at) VALUES (?, 'classroom', x'00', ?, ?, ?) "
+        "ON CONFLICT(user_id, service) DO UPDATE SET scopes = excluded.scopes",
+        (uid, " ".join(scopes), repo.now_iso(), repo.now_iso()),
+    )
+    conn.commit()
+    conn.close()
+
+
+def test_profile_lists_each_permission_and_offers_allow_only_for_the_missing_ones(client):
+    from ragra.adapters.classroom import CLASSROOM_SCOPES
+
+    # everything granted except announcements
+    granted = [s for s in CLASSROOM_SCOPES if "announcements" not in s]
+    _store_scopes(client, granted)
+    html = client.get("/account").text
+    perm = html.split('id="perm-list"')[1].split("</ul>")[0]
+    assert perm.count('class="allow"') == 1
+    assert "Announcements" in perm.split('class="miss"')[1]          # the missing one is the red row
+    assert 'value="https://www.googleapis.com/auth/classroom.announcements.readonly"' in perm
+    assert "Your classes" in perm and "Allowed" in perm              # the others are shown as allowed
+
+
+def test_profile_shows_no_allow_button_when_every_permission_is_granted(client):
+    from ragra.adapters.classroom import CLASSROOM_SCOPES
+
+    _store_scopes(client, list(CLASSROOM_SCOPES))
+    perm = client.get("/account").text.split('id="perm-list"')[1].split("</ul>")[0]
+    assert 'class="allow"' not in perm
+
+
+def test_the_failed_check_step_names_the_exact_permission_to_allow(client, monkeypatch):
+    from ragra.adapters.classroom import CLASSROOM_SCOPES, ClassroomGoogleError
+
+    result = _check(client, monkeypatch, _FakeClassroom(coursework_error=ClassroomGoogleError("HttpError 403 insufficient scopes")))
+    by = {s["name"]: s for s in result["steps"]}
+    assert by["coursework"]["allow"] == {"service": "classroom", "scope": CLASSROOM_SCOPES[1]}
+    assert "allow" not in by["announcements"]
+
+
+def test_assignments_permission_counts_as_allowed_only_after_a_good_sync(client):
+    from ragra.adapters.classroom import CLASSROOM_SCOPES
+
+    # Google may not list the assignments permission in its reply even when it works, so it
+    # is judged by what happened: not allowed until a sync succeeds, and not if one was refused.
+    no_coursework = [s for s in CLASSROOM_SCOPES if "coursework.me" not in s]
+    _store_scopes(client, no_coursework)
+
+    def row():
+        perm = client.get("/account").text.split('id="perm-list"')[1].split("</ul>")[0]
+        return [li for li in perm.split("<li")[1:] if "Assignments and deadlines" in li][0]
+
+    assert 'class="miss"' in row() and 'class="allow"' in row()           # never synced: ask to allow
+    _set_classroom_sync(client, "OK")
+    conn = connect(client.db_path)
+    conn.execute("UPDATE sync_state SET last_success_at = ? WHERE source = 'classroom'", (repo.now_iso(),))
+    conn.commit(); conn.close()
+    assert 'class="ok"' in row() and 'class="allow"' not in row()          # a sync worked: allowed
+    _set_classroom_sync(client, "ERROR", "coursework sync failed for 'OOP': HttpError 403")
+    assert 'class="miss"' in row() and 'class="allow"' in row()            # refused again: allow button back

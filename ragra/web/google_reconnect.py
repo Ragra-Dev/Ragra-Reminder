@@ -134,7 +134,7 @@ class GoogleDataAuthProvider(Protocol):
     state/PKCE/ownership logic below is testable without a network round
     trip, same reasoning as ragra.web.auth.IdentityProvider."""
 
-    def authorization_url(self, *, service: str, state: str, code_challenge: str) -> str: ...
+    def authorization_url(self, *, service: str, state: str, code_challenge: str, scope: str | None = None) -> str: ...
 
     def exchange_code(self, *, service: str, code: str, code_verifier: str): ...
 
@@ -146,6 +146,7 @@ def begin_reconnect(
     user_id: int,
     service: str,
     now: datetime,
+    only_scope: str | None = None,
 ) -> str:
     """Start a reconnect attempt for one already-signed-in user's one
     service, and return the URL to send the browser to.
@@ -158,6 +159,9 @@ def begin_reconnect(
     by an explicit click, never automatically."""
     if service not in SERVICES:
         raise ValueError(f"unknown service {service!r}")
+    if only_scope and only_scope not in required_scopes(service):
+        # Only a permission Ragra itself asks for may be requested on its own.
+        raise ValueError("unknown permission for this service")
 
     state = secrets.token_urlsafe(32)
     verifier = make_code_verifier()
@@ -166,8 +170,9 @@ def begin_reconnect(
     # here (a missing client registration, a redirect target this client
     # type may not use), and a row written first would then be an attempt
     # nobody can ever complete - harmless but permanent until it expires.
+    extra = {"scope": only_scope} if only_scope else {}
     url = provider.authorization_url(
-        service=service, state=state, code_challenge=code_challenge_for(verifier)
+        service=service, state=state, code_challenge=code_challenge_for(verifier), **extra
     )
 
     repo.begin_google_reconnect(
@@ -291,21 +296,25 @@ class GoogleOAuthDataProvider:
         assert_redirect_uri_allowed(client_type=client_type, redirect_uri=self._redirect_uri)
         return client_id, client_secret, client_type
 
-    def authorization_url(self, *, service: str, state: str, code_challenge: str) -> str:
+    def authorization_url(self, *, service: str, state: str, code_challenge: str, scope: str | None = None) -> str:
         from urllib.parse import urlencode
 
         client_id, _, _ = self._client()
+        # With `scope`, ask Google for just that one permission and keep what was already
+        # granted (incremental authorization), so the person sees one box to tick.
         params = {
             "client_id": client_id,
             "redirect_uri": self._redirect_uri,
             "response_type": "code",
-            "scope": " ".join(self._scopes_by_service[service]),
+            "scope": scope if scope else " ".join(self._scopes_by_service[service]),
             "state": state,
             "code_challenge": code_challenge,
             "code_challenge_method": "S256",
             "access_type": "offline",
             "prompt": "consent",
         }
+        if scope:
+            params["include_granted_scopes"] = "true"
         return f"{self.AUTH_ENDPOINT}?{urlencode(params)}"
 
     def exchange_code(self, *, service: str, code: str, code_verifier: str):
@@ -347,3 +356,47 @@ class GoogleOAuthDataProvider:
             client_secret=client_secret,
             scopes=payload.get("scope", "").split(),
         )
+
+
+# Plain-language names for the permissions Ragra asks Google for. A permission with no entry
+# here still shows up, named from its own scope text, so a newly added scope is never hidden.
+PERMISSION_LABELS = {
+    "https://www.googleapis.com/auth/classroom.courses.readonly": ("Your classes", "See which classes you are in"),
+    "https://www.googleapis.com/auth/classroom.coursework.me.readonly": ("Assignments and deadlines", "See your assignments and their due dates"),
+    "https://www.googleapis.com/auth/classroom.announcements.readonly": ("Announcements", "See your class announcements"),
+    "https://www.googleapis.com/auth/classroom.student-submissions.me.readonly": ("Your submissions", "See what you have handed in"),
+    "https://www.googleapis.com/auth/classroom.courseworkmaterials.readonly": ("Class materials", "See the materials your teachers post"),
+    "https://www.googleapis.com/auth/calendar.events": ("Calendar events", "Add your deadlines to your calendar"),
+}
+
+
+def describe_scope(scope: str) -> tuple[str, str]:
+    if scope in PERMISSION_LABELS:
+        return PERMISSION_LABELS[scope]
+    tail = scope.rsplit("/", 1)[-1].replace(".readonly", "").replace(".", " ").replace("-", " ").strip()
+    return (tail.capitalize() or scope, "")
+
+
+def permission_rows(conn, *, user_id: int) -> list[dict]:
+    """One row per permission Ragra needs, for every Google service this account has
+    connected: granted or missing. Built from what is actually stored for the account, so
+    whichever permission someone did not give is the one that shows as missing.
+
+    Google does not always list the assignments permission in its token reply even when it
+    is granted (see _NOT_ALWAYS_ECHOED), so that one is judged by what really happened: it
+    counts as allowed only after a Classroom sync has succeeded and assignments were not refused."""
+    sync = repo.get_sync_state(conn, user_id=user_id, source="classroom")
+    refused = bool(sync and sync["status"] == "ERROR" and "coursework sync failed" in str(sync["last_error"] or "").lower())
+    worked = bool(sync and sync["last_success_at"]) and not refused
+
+    rows: list[dict] = []
+    for service in SERVICES:
+        stored = repo.google_credential_scopes(conn, user_id=user_id, service=service)
+        if stored is None:
+            continue  # not connected: the Connect button above covers it
+        have = set(stored.split())
+        for scope in required_scopes(service):
+            label, hint = describe_scope(scope)
+            granted = scope in have or (scope in _NOT_ALWAYS_ECHOED and worked)
+            rows.append({"service": service, "scope": scope, "label": label, "hint": hint, "granted": granted})
+    return rows

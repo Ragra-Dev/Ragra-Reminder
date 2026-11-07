@@ -35,11 +35,27 @@
   .ch.soon .ch-top label { color: #8A98C6; cursor: not-allowed; }
   .ch.soon input[type=checkbox] { cursor: not-allowed; }
   .ch-top .state.dev { background: #FFF1CF; color: #9A5B00; }
+  .pf-sub { margin: 16px 0 8px; font-size: .8rem; letter-spacing: .04em; text-transform: uppercase; color: #5A6BA8; }
+  .perm { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+  .perm li { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-radius: 16px; }
+  .perm li.ok { background: #F3F8FF; }
+  .perm li.miss { background: #FFF1F2; box-shadow: inset 0 0 0 1px #FFD5D9; }
+  .perm .ic { width: 26px; height: 26px; flex: none; border-radius: 50%; display: grid; place-items: center; font-weight: 800; font-size: .8rem; color: #fff; }
+  .perm li.ok .ic { background: #22A06B; } .perm li.miss .ic { background: #E5484D; }
+  .perm .tx { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.3; }
+  .perm .tx b { font-size: .92rem; color: #0F1B4D; } .perm .tx span { font-size: .78rem; color: #5A6BA8; }
+  .perm .st { font-size: .76rem; font-weight: 700; color: #0F8F6E; }
+  .perm form { margin: 0; }
+  .allow, #cc-out .allow { margin: 0; padding: 8px 20px; background: #2563EB; color: #fff; box-shadow: 0 6px 14px -6px rgba(37,99,235,.7); }
+  #cc-out li .row { display: flex; align-items: center; gap: 12px; }
+  #cc-out li .row .grow { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  #cc-out li form { margin: 0; }
   .pf-check { margin-top: 12px; }
   .pf-check button { margin: 0; }
   #cc-out { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
   #cc-out li { display: flex; flex-direction: column; gap: 2px; padding: 10px 14px; border-radius: 14px; font-size: .86rem; }
   #cc-out li.ok { background: #E9F8F1; color: #3E7F65; } #cc-out li.ok b { color: #0F6B47; }
+  #cc-out li.info { background: #EEF3FF; color: #3B4C93; } #cc-out li.info b { color: #1D4ED8; }
   #cc-out li.fail { background: #FFECEE; color: #9A3B3B; } #cc-out li.fail b { color: #C2273B; }
   .pf-save { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 12px; }
   .pf-save button { margin: 0; padding: 11px 28px; background: #2563EB; color: #fff; box-shadow: 0 8px 16px -6px rgba(37,99,235,.55); }
@@ -70,7 +86,7 @@
 <div class="pf-card" id="google">
   <h2>Google connections</h2>
   <p class="sub">Ragra reads your Classroom and Calendar through these.</p>
-  {% if sync_problem %}<div class="flash warn-flash"><b>{{ sync_problem.text }}</b><br>{{ sync_problem.fix }}</div>{% endif %}
+  {% if sync_problem %}<div class="flash warn-flash" id="cc-warn"><b>{{ sync_problem.text }}</b><br>{{ sync_problem.fix }}</div>{% endif %}
   {% for service, status in google_status.items() %}
   <div class="pf-row">
     <div>
@@ -85,7 +101,27 @@
     </form>
   </div>
   {% endfor %}
-  <p class="hint">On Google's screen, tick <b>every</b> box, or assignments and deadlines can't be read.</p>
+
+  {% if permissions %}
+  <h3 class="pf-sub">Permissions</h3>
+  <ul class="perm" id="perm-list">
+    {% for p in permissions %}
+    <li class="{{ 'ok' if p.granted else 'miss' }}">
+      <span class="ic">{{ '✓' if p.granted else '!' }}</span>
+      <span class="tx"><b>{{ p.label }}</b>{% if p.hint %}<span>{{ p.hint }}</span>{% endif %}</span>
+      {% if p.granted %}<span class="st">Allowed</span>
+      {% else %}
+      <form method="post" action="/account/google/reconnect/{{ p.service }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token_for(request) }}">
+        <input type="hidden" name="scope" value="{{ p.scope }}">
+        <button type="submit" class="allow">Allow</button>
+      </form>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  <p class="hint">Anything marked with <b>!</b> is a permission you haven't allowed. Press <b>Allow</b> and Google asks for just that one.</p>
   <div class="pf-check">
     <button type="button" id="cc-btn">Check Classroom now</button>
     <ul id="cc-out" aria-live="polite"></ul>
@@ -100,11 +136,23 @@
     fetch('/account/classroom/check', { method: 'POST', headers: { 'Accept': 'application/json', 'X-CSRF-Token': '{{ csrf_token_for(request) }}' } })
       .then(function (r) { return r.json(); })
       .then(function (d) {
+        if (d.ok) { var w = document.getElementById('cc-warn'); if (w) w.remove(); }
         d.steps.forEach(function (s) {
           var li = document.createElement('li'); li.className = s.status;
-          var b = document.createElement('b'); b.textContent = (s.status === 'ok' ? '✓ ' : '✗ ') + s.label;
+          var row = document.createElement('div'); row.className = 'row';
+          var grow = document.createElement('div'); grow.className = 'grow';
+          var b = document.createElement('b'); b.textContent = (s.status === 'ok' ? '✓ ' : s.status === 'info' ? 'ℹ ' : '✗ ') + s.label;
           var sp = document.createElement('span'); sp.textContent = s.detail;
-          li.appendChild(b); li.appendChild(sp); out.appendChild(li);
+          grow.appendChild(b); grow.appendChild(sp); row.appendChild(grow);
+          if (s.allow) {                                   // a refused permission gets its own Allow button
+            var f = document.createElement('form'); f.method = 'post'; f.action = '/account/google/reconnect/' + s.allow.service;
+            [['csrf_token', '{{ csrf_token_for(request) }}'], ['scope', s.allow.scope]].forEach(function (kv) {
+              var i = document.createElement('input'); i.type = 'hidden'; i.name = kv[0]; i.value = kv[1]; f.appendChild(i);
+            });
+            var ab = document.createElement('button'); ab.type = 'submit'; ab.className = 'allow'; ab.textContent = 'Allow';
+            f.appendChild(ab); row.appendChild(f);
+          }
+          li.appendChild(row); out.appendChild(li);
         });
       })
       .catch(function () { var li = document.createElement('li'); li.className = 'fail'; li.textContent = 'Could not run the check. Try again.'; out.appendChild(li); })

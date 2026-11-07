@@ -36,7 +36,7 @@ class FakeDataProvider:
         self.omit_refresh_token = False
         self.granted_scopes: tuple[str, ...] | None = None  # None = grant exactly what was asked for
 
-    def authorization_url(self, *, service: str, state: str, code_challenge: str) -> str:
+    def authorization_url(self, *, service: str, state: str, code_challenge: str, scope: str | None = None) -> str:
         if self.authorization_fails_with is not None:
             raise self.authorization_fails_with
         self.authorization_calls.append({"service": service, "state": state, "code_challenge": code_challenge})
@@ -461,3 +461,35 @@ def test_a_grant_not_echoing_coursework_me_readonly_is_accepted():
     assert google_reconnect.missing_scopes(service="classroom", granted=echoed) == ()
     # Any other missing scope is still refused.
     assert google_reconnect.missing_scopes(service="classroom", granted=echoed[:-1]) == (echoed[-1],)
+
+
+def test_allow_asks_google_for_just_that_one_permission(tmp_path):
+    from urllib.parse import parse_qs, urlparse
+    import json
+
+    from ragra.adapters.classroom import CLASSROOM_SCOPES
+
+    secrets_file = tmp_path / "client.json"
+    secrets_file.write_text(json.dumps({"web": {"client_id": "cid", "client_secret": "sec"}}))
+    provider = google_reconnect.GoogleOAuthDataProvider(
+        client_secrets_file=secrets_file, redirect_uri="https://ragra.example/account/google/callback",
+        classroom_scopes=CLASSROOM_SCOPES, calendar_scopes=(),
+    )
+    one = parse_qs(urlparse(provider.authorization_url(
+        service="classroom", state="s", code_challenge="c", scope=CLASSROOM_SCOPES[1])).query)
+    assert one["scope"] == [CLASSROOM_SCOPES[1]]
+    assert one["include_granted_scopes"] == ["true"]          # keeps what was already allowed
+    everything = parse_qs(urlparse(provider.authorization_url(
+        service="classroom", state="s", code_challenge="c")).query)
+    assert everything["scope"] == [" ".join(CLASSROOM_SCOPES)]
+    assert "include_granted_scopes" not in everything
+
+
+def test_allow_refuses_a_permission_ragra_does_not_ask_for(client, db_path, provider):
+    token = client.get("/account").text.split('name="csrf_token" value="')[1].split('"')[0]
+    bad = client.post("/account/google/reconnect/classroom",
+                      data={"csrf_token": token, "scope": "https://www.googleapis.com/auth/drive"}, follow_redirects=False)
+    assert bad.status_code == 400
+    ok = client.post("/account/google/reconnect/classroom",
+                     data={"csrf_token": token, "scope": google_reconnect.required_scopes("classroom")[1]}, follow_redirects=False)
+    assert ok.status_code == 303

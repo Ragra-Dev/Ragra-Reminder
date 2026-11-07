@@ -547,14 +547,15 @@ def create_app(
     _RECONNECT_FAILED = "Reconnect could not be completed. Nothing was changed - your existing Google connection is untouched."
 
     @app.post("/account/google/reconnect/{service}")
-    def google_reconnect_begin(request: Request, service: str):  # CSRF-checked by the middleware above
+    def google_reconnect_begin(request: Request, service: str, scope: str = Form("")):  # CSRF-checked by the middleware above
         if service not in google_reconnect.SERVICES:
             raise HTTPException(status_code=404)
         with connect_closing(db_path) as conn:
             user_id = _acting_user(conn, request)
             try:
                 url = google_reconnect.begin_reconnect(
-                    conn, _data_provider(), user_id=user_id, service=service, now=datetime.now(timezone.utc)
+                    conn, _data_provider(), user_id=user_id, service=service, now=datetime.now(timezone.utc),
+                    only_scope=scope or None,
                 )
             except google_reconnect.ReconnectNotConfigured as exc:
                 # The reason goes to the server log only, never to the browser.
@@ -653,7 +654,11 @@ def create_app(
         from ragra.config import load_config
 
         def step(name, label, status, detail):
-            return {"name": name, "label": label, "status": status, "detail": detail}
+            row = {"name": name, "label": label, "status": status, "detail": detail}
+            scope = classroom_adapter.SCOPE_FOR_READ.get(name)
+            if status == "fail" and scope:
+                row["allow"] = {"service": "classroom", "scope": scope}   # lets the page offer an Allow button
+            return row
 
         def refused(exc) -> bool:
             low = str(exc).lower()
@@ -684,6 +689,16 @@ def create_app(
                           f"{len(active)} active class{'' if len(active) == 1 else 'es'} found"
                           + (f" ({len(courses) - len(active)} archived or inactive)" if len(courses) != len(active) else "") + "."))
 
+        # Is this account a teacher in any active class? A teacher's assignments are not
+        # readable with the student permission Ragra asks for, whatever boxes are ticked.
+        try:
+            taught = client.list_taught_course_ids() & {c["id"] for c in active}
+        except Exception:  # noqa: BLE001 - only used to explain a failure
+            taught = set()
+        if taught:
+            steps.append(step("role", "Your role", "info",
+                              f"You are the TEACHER of {len(taught)} of these classes. Ragra reads a class as a student."))
+
         # 2-4. assignments, announcements, materials across the active classes
         def scan(label, name, fetch, describe, missing_hint):
             total = dated = 0
@@ -697,7 +712,13 @@ def create_app(
                 total += len(items)
                 dated += sum(1 for i in items if i.get("dueDate"))
             if failure is not None:
-                msg = missing_hint if refused(failure) else f"Couldn't read: {str(failure)[:160]}"
+                if refused(failure) and taught and name == "coursework":
+                    msg = ("Google refused, because you are the teacher of this class. Ragra's permission covers a "
+                           "student's own assignments. Check with a student account that has joined the class.")
+                else:
+                    msg = missing_hint if refused(failure) else f"Couldn't read: {str(failure)[:160]}"
+                # Google's own reason, so the real cause is visible (no keys or tokens are ever in it).
+                msg += f" [Google said: {str(failure)[:200]}]"
                 steps.append(step(name, label, "fail", msg))
             else:
                 steps.append(step(name, label, "ok", describe(total, dated)))
@@ -712,7 +733,30 @@ def create_app(
         scan("Class materials", "materials", client.list_course_materials,
              lambda t, d: f"{t} material{'' if t == 1 else 's'} found.",
              "Google refused: the 'view class materials' permission is missing.")
-        return JSONResponse({"ok": all(x["status"] == "ok" for x in steps), "steps": steps})
+        ok = all(x["status"] in ("ok", "info") for x in steps)
+
+        # Everything reads fine: bring this account up to date right now, the same
+        # sync the background loop runs. This also clears an old "can't read your
+        # assignments" notice instead of leaving it until the next scheduled check.
+        if ok:
+            from ragra.sync.classroom_sync import sync_classroom
+
+            try:
+                with connect_closing(db_path) as conn:
+                    summary = sync_classroom(conn, client, user_id=_acting_user(conn, request))
+                if summary.errors:
+                    steps.append(step("sync", "Update your deadlines", "fail",
+                                      f"Couldn't finish updating: {summary.errors[0][:160]}"))
+                    ok = False
+                else:
+                    steps.append(step("sync", "Update your deadlines", "ok",
+                                      f"Done. {summary.tasks_created} new and {summary.tasks_updated} updated. "
+                                      "They now show on the Deadlines page."))
+            except Exception as exc:  # noqa: BLE001 - report, never crash the page
+                steps.append(step("sync", "Update your deadlines", "fail", f"Couldn't update: {str(exc)[:160]}"))
+                ok = False
+
+        return JSONResponse({"ok": ok, "steps": steps})
 
     @app.post("/logout")
     def logout(request: Request):  # CSRF-checked by the middleware above
@@ -1226,6 +1270,7 @@ def create_app(
                 for service in google_reconnect.SERVICES
             }
             sync_problem = _classroom_sync_problem(conn, user_id)
+            permissions = google_reconnect.permission_rows(conn, user_id=user_id)
 
         return templates.TemplateResponse(
             request,
@@ -1239,6 +1284,7 @@ def create_app(
                 "preferences": preferences,
                 "google_status": google_status,
                 "sync_problem": sync_problem,
+                "permissions": permissions,
                 "telegram_ready": bool(_wa_config.telegram_bot_token and _wa_config.telegram_bot_username),
                 "whatsapp_ready": bool(_wa_config.whatsapp_token and _wa_config.whatsapp_phone_number_id),
                 "whatsapp_bot_number": _wa_config.whatsapp_display_number,

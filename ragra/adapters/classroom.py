@@ -91,6 +91,15 @@ CLASSROOM_SCOPES: tuple[str, ...] = (
 )
 
 
+# The permission each kind of Classroom read needs, so a refused call can point at the exact box.
+SCOPE_FOR_READ: dict[str, str] = {
+    "courses": CLASSROOM_SCOPES[0],
+    "coursework": CLASSROOM_SCOPES[1],
+    "announcements": CLASSROOM_SCOPES[2],
+    "materials": CLASSROOM_SCOPES[4],
+}
+
+
 class ClassroomAdapterError(RuntimeError):
     """Raised when the existing Classroom credential cannot be used without
     an interactive browser step."""
@@ -309,6 +318,15 @@ class ClassroomGoogleClient:
             lambda page_token: self._service.courses().list(pageSize=100, pageToken=page_token),
             "courses",
         )
+
+    def list_taught_course_ids(self) -> set[str]:
+        """Ids of the classes this account is a TEACHER in (read-only; needs only
+        the classes permission). Used to explain why assignments can't be read."""
+        courses = self._list_all(
+            lambda page_token: self._service.courses().list(pageSize=100, pageToken=page_token, teacherId="me"),
+            "courses",
+        )
+        return {c["id"] for c in courses}
 
     def list_course_work(self, course_id: str) -> list[dict[str, Any]]:
         return self._list_all(
