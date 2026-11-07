@@ -35,6 +35,12 @@
   .ch.soon .ch-top label { color: #8A98C6; cursor: not-allowed; }
   .ch.soon input[type=checkbox] { cursor: not-allowed; }
   .ch-top .state.dev { background: #FFF1CF; color: #9A5B00; }
+  .pf-check { margin-top: 12px; }
+  .pf-check button { margin: 0; }
+  #cc-out { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+  #cc-out li { display: flex; flex-direction: column; gap: 2px; padding: 10px 14px; border-radius: 14px; font-size: .86rem; }
+  #cc-out li.ok { background: #E9F8F1; color: #3E7F65; } #cc-out li.ok b { color: #0F6B47; }
+  #cc-out li.fail { background: #FFECEE; color: #9A3B3B; } #cc-out li.fail b { color: #C2273B; }
   .pf-save { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 12px; }
   .pf-save button { margin: 0; padding: 11px 28px; background: #2563EB; color: #fff; box-shadow: 0 8px 16px -6px rgba(37,99,235,.55); }
   .pf h1 { margin-top: 8px; }
@@ -80,7 +86,32 @@
   </div>
   {% endfor %}
   <p class="hint">On Google's screen, tick <b>every</b> box, or assignments and deadlines can't be read.</p>
+  <div class="pf-check">
+    <button type="button" id="cc-btn">Check Classroom now</button>
+    <ul id="cc-out" aria-live="polite"></ul>
+  </div>
 </div>
+<script>
+(function () {
+  var btn = document.getElementById('cc-btn'), out = document.getElementById('cc-out');
+  if (!btn) return;
+  btn.addEventListener('click', function () {
+    btn.disabled = true; btn.textContent = 'Checking...'; out.textContent = '';
+    fetch('/account/classroom/check', { method: 'POST', headers: { 'Accept': 'application/json', 'X-CSRF-Token': '{{ csrf_token_for(request) }}' } })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        d.steps.forEach(function (s) {
+          var li = document.createElement('li'); li.className = s.status;
+          var b = document.createElement('b'); b.textContent = (s.status === 'ok' ? '✓ ' : '✗ ') + s.label;
+          var sp = document.createElement('span'); sp.textContent = s.detail;
+          li.appendChild(b); li.appendChild(sp); out.appendChild(li);
+        });
+      })
+      .catch(function () { var li = document.createElement('li'); li.className = 'fail'; li.textContent = 'Could not run the check. Try again.'; out.appendChild(li); })
+      .finally(function () { btn.disabled = false; btn.textContent = 'Check Classroom now'; });
+  });
+})();
+</script>
 
 {# ---- where alerts go ---- #}
 <div class="pf-card" id="notifications">

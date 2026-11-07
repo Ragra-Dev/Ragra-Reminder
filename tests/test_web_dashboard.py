@@ -362,3 +362,51 @@ def test_no_sync_notice_when_classroom_synced_fine(client):
     assert "read your assignments from Classroom" not in client.get("/account").text
     # the Profile page always reminds people to tick every box on Google's screen
     assert "tick <b>every</b> box" in client.get("/account").text
+
+
+class _FakeClassroom:
+    """Stands in for the real Classroom client: no network."""
+
+    def __init__(self, *, coursework_error=None):
+        self.coursework_error = coursework_error
+
+    def list_courses(self):
+        return [{"id": "c1", "courseState": "ACTIVE"}, {"id": "c2", "courseState": "ARCHIVED"}]
+
+    def list_course_work(self, course_id):
+        if self.coursework_error:
+            raise self.coursework_error
+        return [{"id": "w1", "dueDate": {"year": 2030, "month": 1, "day": 2}}, {"id": "w2"}]
+
+    def list_announcements(self, course_id):
+        return [{"id": "a1"}]
+
+    def list_course_materials(self, course_id):
+        return []
+
+
+def _check(client, monkeypatch, fake):
+    from ragra.adapters import user_clients
+
+    monkeypatch.setattr(user_clients, "classroom_client_for", lambda conn, config, user_id: fake)
+    token = client.get("/account").text.split('name="csrf_token" value="')[1].split('"')[0]
+    return client.post("/account/classroom/check", headers={"X-CSRF-Token": token}).json()
+
+
+def test_classroom_check_reports_what_each_permission_can_read(client, monkeypatch):
+    result = _check(client, monkeypatch, _FakeClassroom())
+    by = {s["name"]: s for s in result["steps"]}
+    assert result["ok"] is True
+    assert "1 active class" in by["courses"]["detail"]
+    assert "2 assignments found, 1 with a due date" in by["coursework"]["detail"]
+    assert "1 announcement found" in by["announcements"]["detail"]
+
+
+def test_classroom_check_names_the_refused_assignments_permission(client, monkeypatch):
+    from ragra.adapters.classroom import ClassroomGoogleError
+
+    result = _check(client, monkeypatch, _FakeClassroom(coursework_error=ClassroomGoogleError("HttpError 403 insufficient authentication scopes")))
+    by = {s["name"]: s for s in result["steps"]}
+    assert result["ok"] is False
+    assert by["coursework"]["status"] == "fail" and "course work" in by["coursework"]["detail"]
+    assert by["announcements"]["status"] == "ok"   # the other parts still read fine

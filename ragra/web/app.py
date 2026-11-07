@@ -641,6 +641,79 @@ def create_app(
 
         return RedirectResponse("/account", status_code=303)
 
+    @app.post("/account/classroom/check")
+    def classroom_check(request: Request):
+        """Test each Classroom permission with a real call and say, in plain
+        words, which part works and which is refused. CSRF-checked by the
+        middleware. Reads only this account's Classroom; nothing is stored."""
+        from fastapi.responses import JSONResponse
+
+        from ragra.adapters import classroom as classroom_adapter
+        from ragra.adapters import user_clients
+        from ragra.config import load_config
+
+        def step(name, label, status, detail):
+            return {"name": name, "label": label, "status": status, "detail": detail}
+
+        def refused(exc) -> bool:
+            low = str(exc).lower()
+            return any(w in low for w in ("403", "insufficient", "permission", "scope", "forbidden"))
+
+        steps: list[dict] = []
+        with connect_closing(db_path) as conn:
+            user_id = _acting_user(conn, request)
+            try:
+                client = user_clients.classroom_client_for(conn, load_config(), user_id=user_id)
+            except user_clients.UserCredentialsUnavailable:
+                return JSONResponse({"ok": False, "steps": [step(
+                    "connect", "Classroom connection", "fail",
+                    "Classroom isn't connected. Press Connect Classroom above.")]})
+            except Exception as exc:  # noqa: BLE001 - report, never crash the page
+                return JSONResponse({"ok": False, "steps": [step(
+                    "connect", "Classroom connection", "fail", f"Couldn't start: {str(exc)[:160]}")]})
+
+        # 1. classes
+        try:
+            courses = client.list_courses()
+        except Exception as exc:  # noqa: BLE001
+            msg = ("Google refused: the 'view your classes' permission is missing." if refused(exc)
+                   else f"Couldn't read classes: {str(exc)[:160]}")
+            return JSONResponse({"ok": False, "steps": [step("courses", "Your classes", "fail", msg)]})
+        active = [c for c in courses if (c.get("courseState") or "ACTIVE") == "ACTIVE"]
+        steps.append(step("courses", "Your classes", "ok",
+                          f"{len(active)} active class{'' if len(active) == 1 else 'es'} found"
+                          + (f" ({len(courses) - len(active)} archived or inactive)" if len(courses) != len(active) else "") + "."))
+
+        # 2-4. assignments, announcements, materials across the active classes
+        def scan(label, name, fetch, describe, missing_hint):
+            total = dated = 0
+            failure = None
+            for course in active[:15]:
+                try:
+                    items = fetch(course["id"])
+                except Exception as exc:  # noqa: BLE001
+                    failure = exc
+                    break
+                total += len(items)
+                dated += sum(1 for i in items if i.get("dueDate"))
+            if failure is not None:
+                msg = missing_hint if refused(failure) else f"Couldn't read: {str(failure)[:160]}"
+                steps.append(step(name, label, "fail", msg))
+            else:
+                steps.append(step(name, label, "ok", describe(total, dated)))
+
+        scan("Assignments and deadlines", "coursework", client.list_course_work,
+             lambda t, d: (f"{t} assignment{'' if t == 1 else 's'} found, {d} with a due date."
+                           + ("" if t == 0 else (" Only assignments with a due date appear on Deadlines." if d < t else ""))),
+             "Google refused: the 'view your course work' permission is missing. Reconnect Classroom and tick it.")
+        scan("Announcements", "announcements", client.list_announcements,
+             lambda t, d: f"{t} announcement{'' if t == 1 else 's'} found.",
+             "Google refused: the 'view announcements' permission is missing.")
+        scan("Class materials", "materials", client.list_course_materials,
+             lambda t, d: f"{t} material{'' if t == 1 else 's'} found.",
+             "Google refused: the 'view class materials' permission is missing.")
+        return JSONResponse({"ok": all(x["status"] == "ok" for x in steps), "steps": steps})
+
     @app.post("/logout")
     def logout(request: Request):  # CSRF-checked by the middleware above
         """POST only. A GET sign-out is a link an attacker can put in an
