@@ -165,6 +165,29 @@ ANNOUNCEMENT_PREVIEW_LIMIT = 5
 
 
 
+
+def _classroom_sync_problem(conn, user_id: int) -> dict | None:
+    """A plain-language note when the last Classroom sync failed, so a silent
+    failure (for example assignments refused because that permission box was
+    not ticked, while announcements still load) is visible to the person."""
+    row = repo.get_sync_state(conn, user_id=user_id, source="classroom")
+    if row is None or row["status"] != "ERROR" or not row["last_error"]:
+        return None
+    err = str(row["last_error"])
+    low = err.lower()
+    assignments = "coursework sync failed" in low
+    denied = any(w in low for w in ("403", "insufficient", "permission", "scope", "forbidden", "not authorized"))
+    if assignments and denied:
+        text = "Ragra can't read your assignments from Classroom, so new deadlines won't appear. Announcements still work."
+        fix = "Reconnect Classroom on the Profile page and tick every permission box on Google's screen."
+    elif assignments:
+        text = "Ragra couldn't read your assignments from Classroom on the last check, so new deadlines may be missing."
+        fix = "It will retry automatically. If this stays, reconnect Classroom on the Profile page."
+    else:
+        text = "The last Classroom check had a problem, so some items may be missing."
+        fix = "It will retry automatically. If this stays, reconnect Classroom on the Profile page."
+    return {"text": text, "fix": fix, "detail": err[:300], "when": row["last_synced_at"]}
+
 def _deadline_card(task, now: datetime) -> dict:
     """One task as a deadline card: campus-time date parts, a friendly
     relative day ("Today", "Tomorrow", a weekday) and a priority worked out
@@ -739,6 +762,7 @@ def create_app(
             upcoming = repo.tasks_due_between(
                 conn, user_id=user_id, start_iso=now_iso, end_iso="9999-12-31T23:59:59+00:00"
             )
+            sync_problem = _classroom_sync_problem(conn, user_id)
         cards = [_deadline_card(t, now) for t in [*overdue, *upcoming] if t["actual_deadline"]]
         order = [
             ("overdue", "Overdue"), ("today", "Today"), ("tomorrow", "Tomorrow"),
@@ -757,7 +781,7 @@ def create_app(
             {"groups": [g for g in groups if g["items"]], "total": len(cards),
              "counts": {g["key"]: len(g["items"]) for g in groups},
              "within": {"h24": len(within(24)), "d7": len(within(24 * 7)), "w1": len(within(24 * 7))},
-             "urgent": within(3)},
+             "urgent": within(3), "sync_problem": sync_problem},
         )
 
     @app.get("/missed")
@@ -1128,6 +1152,7 @@ def create_app(
                 }
                 for service in google_reconnect.SERVICES
             }
+            sync_problem = _classroom_sync_problem(conn, user_id)
 
         return templates.TemplateResponse(
             request,
@@ -1140,6 +1165,7 @@ def create_app(
                 "enrollment_text": _enrollment_to_text(profile.enrollment),
                 "preferences": preferences,
                 "google_status": google_status,
+                "sync_problem": sync_problem,
                 "telegram_ready": bool(_wa_config.telegram_bot_token and _wa_config.telegram_bot_username),
                 "whatsapp_ready": bool(_wa_config.whatsapp_token and _wa_config.whatsapp_phone_number_id),
                 "whatsapp_bot_number": _wa_config.whatsapp_display_number,

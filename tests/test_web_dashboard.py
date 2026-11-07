@@ -331,3 +331,34 @@ def test_deadlines_filters_show_even_when_there_are_no_deadlines(tmp_path):
         html = c.get("/deadlines").text
     for label in ("Within 24 hours", "Within 7 days", "Within 1 week"):
         assert label in html
+
+
+def _set_classroom_sync(client, status, error=None):
+    conn = connect(client.db_path)
+    uid = owner_id(conn)
+    conn.execute(
+        "INSERT INTO sync_state (user_id, source, last_synced_at, status, last_error) VALUES (?, 'classroom', ?, ?, ?) "
+        "ON CONFLICT(user_id, source) DO UPDATE SET status = excluded.status, last_error = excluded.last_error",
+        (uid, repo.now_iso(), status, error),
+    )
+    conn.commit()
+    conn.close()
+
+
+def test_a_refused_assignments_sync_is_explained_on_deadlines_and_profile(client):
+    _set_classroom_sync(
+        client, "ERROR",
+        "coursework sync failed for 'OOP': <HttpError 403 insufficient authentication scopes>",
+    )
+    for path in ("/deadlines", "/account"):
+        html = client.get(path).text
+        assert "read your assignments from Classroom" in html
+        assert "tick every permission box" in html
+
+
+def test_no_sync_notice_when_classroom_synced_fine(client):
+    _set_classroom_sync(client, "OK")
+    assert "read your assignments from Classroom" not in client.get("/deadlines").text
+    assert "read your assignments from Classroom" not in client.get("/account").text
+    # the Profile page always reminds people to tick every box on Google's screen
+    assert "tick <b>every</b> box" in client.get("/account").text

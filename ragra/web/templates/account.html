@@ -61,9 +61,10 @@
 </div>
 
 {# ---- Google connections ---- #}
-<div class="pf-card">
+<div class="pf-card" id="google">
   <h2>Google connections</h2>
   <p class="sub">Ragra reads your Classroom and Calendar through these.</p>
+  {% if sync_problem %}<div class="flash warn-flash"><b>{{ sync_problem.text }}</b><br>{{ sync_problem.fix }}</div>{% endif %}
   {% for service, status in google_status.items() %}
   <div class="pf-row">
     <div>
@@ -78,6 +79,7 @@
     </form>
   </div>
   {% endfor %}
+  <p class="hint">On Google's screen, tick <b>every</b> box, or assignments and deadlines can't be read.</p>
 </div>
 
 {# ---- where alerts go ---- #}

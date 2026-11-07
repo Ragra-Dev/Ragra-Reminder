@@ -1518,6 +1518,14 @@ def record_sync_success(conn: sqlite3.Connection, *, user_id: int, source: str) 
     conn.commit()
 
 
+def get_sync_state(conn: sqlite3.Connection, *, user_id: int, source: str):
+    """This account's last sync result for one source (classroom, calendar, ...)."""
+    return conn.execute(
+        "SELECT status, last_error, last_synced_at, last_success_at FROM sync_state WHERE user_id = ? AND source = ?",
+        (user_id, source),
+    ).fetchone()
+
+
 def record_sync_error(conn: sqlite3.Connection, *, user_id: int, source: str, error: str) -> None:
     conn.execute(
         "UPDATE sync_state SET status = 'ERROR', last_error = ? WHERE user_id = ? AND source = ?",
