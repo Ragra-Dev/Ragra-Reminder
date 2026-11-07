@@ -193,7 +193,7 @@
 </script>
 <nav class="hm-nav" aria-label="Main">
   <a href="/" {% if _p == '/' or _p.startswith('/chat') %}class="on"{% endif %}><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1v-9.5z"/></svg>Home</a>
-  <a href="/tasks" {% if _p.startswith('/tasks') %}class="on"{% endif %}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="4"/><path d="M8.5 12.5l2.5 2.5 4.5-5"/></svg>Tasks</a>
+  <a href="/tasks" {% if _p.rstrip('/') == '/tasks' %}class="on"{% endif %}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="4"/><path d="M8.5 12.5l2.5 2.5 4.5-5"/></svg>Tasks</a>
   <a href="/overview" {% if _p.startswith('/overview') or _p.startswith('/missed') or _p.startswith('/announcements') %}class="on"{% endif %}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="12" width="4" height="8" rx="1.5"/><rect x="10" y="4" width="4" height="16" rx="1.5"/><rect x="16" y="9" width="4" height="11" rx="1.5"/></svg>Stats</a>
   <a href="/account" {% if _p.startswith('/account') or _p.startswith('/deliveries') %}class="on"{% endif %}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>Profile</a>
 </nav>

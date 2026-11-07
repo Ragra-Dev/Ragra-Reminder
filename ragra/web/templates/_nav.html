@@ -9,7 +9,7 @@
     <nav class="tabs">
       <a href="/" {% if _p == '/' %}class="on"{% endif %}>{{ icon('today') }}Home</a>
       <a href="/chat" {% if _p.startswith('/chat') %}class="on"{% endif %}>{{ icon('chat') }}Chat<span class="nb" hidden></span></a>
-      <a href="/tasks" {% if _p.startswith('/tasks') %}class="on"{% endif %}>{{ icon('tasks') }}Tasks</a>
+      <a href="/tasks" {% if _p.rstrip('/') == '/tasks' %}class="on"{% endif %}>{{ icon('tasks') }}Tasks</a>
       <a href="/deadlines" {% if _p.startswith('/deadlines') %}class="on"{% endif %}>{{ icon('clock') }}Deadlines</a>
       <a href="/announcements" {% if _p.startswith('/announcements') %}class="on"{% endif %}>{{ icon('news') }}Announcements</a>
       <a href="/missed" {% if _p.startswith('/missed') %}class="on"{% endif %}>{{ icon('missed') }}Missed</a>
@@ -26,7 +26,7 @@
   </div>
 </header>
 <nav class="dock" aria-label="Main">
-  <a href="/tasks" {% if _p.startswith('/tasks') %}class="on"{% endif %}>{{ icon('tasks') }}Tasks</a>
+  <a href="/tasks" {% if _p.rstrip('/') == '/tasks' %}class="on"{% endif %}>{{ icon('tasks') }}Tasks</a>
   <a href="/announcements" {% if _p.startswith('/announcements') %}class="on"{% endif %}>{{ icon('news') }}News</a>
   <a href="/" class="center" aria-label="Today">{{ icon('today', flat=True) }}</a>
   <a href="/chat" {% if _p.startswith('/chat') %}class="on"{% endif %}>{{ icon('chat') }}Chat<span class="nb" hidden></span></a>

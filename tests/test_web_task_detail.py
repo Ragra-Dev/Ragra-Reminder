@@ -116,3 +116,10 @@ def test_dashboard_task_titles_link_to_detail_view(client):
     resp = client.get("/")
     assert f'href="/deadlines/{result.task_id}"' in resp.text
     assert client.get(f"/tasks/{result.task_id}").status_code == 200       # the full technical view still works
+
+
+def test_no_sidebar_tab_is_highlighted_on_a_single_task_page(client):
+    detail = client.get(f"/tasks/{client.task_id}").text
+    assert 'class="on"' not in detail          # not the sidebar, not the phone bottom bar
+    assert 'href="/tasks" class="on"' not in detail
+    assert 'href="/tasks" class="on"' in client.get("/tasks").text         # the Tasks list itself still highlights Tasks
