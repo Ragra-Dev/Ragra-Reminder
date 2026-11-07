@@ -35,6 +35,25 @@
   .ch.soon .ch-top label { color: #8A98C6; cursor: not-allowed; }
   .ch.soon input[type=checkbox] { cursor: not-allowed; }
   .ch-top .state.dev { background: #FFF1CF; color: #9A5B00; }
+  .pf-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .pf-title h2 { margin: 0; }
+  .pill { display: inline-flex; align-items: center; gap: 7px; padding: 5px 13px; border-radius: 999px; font-size: .78rem; font-weight: 800; }
+  .pill i { font-style: normal; width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; font-size: .7rem; color: #fff; }
+  .pill.ok { background: #E3F6EC; color: #0F6B47; } .pill.ok i { background: #22A06B; }
+  .pill.bad { background: #FFE9EA; color: #B4232F; } .pill.bad i { background: #E5484D; }
+  .svc { display: flex; align-items: flex-start; gap: 12px; }
+  .dot { width: 26px; height: 26px; flex: none; border-radius: 50%; display: grid; place-items: center; font-weight: 800; font-size: .8rem; color: #fff; margin-top: 1px; }
+  .dot.ok { background: #22A06B; } .dot.bad { background: #E5484D; }
+  .cstat { margin-left: 8px; font-size: .78rem; font-weight: 700; }
+  .cstat.ok { color: #0F8F6E; } .cstat.bad { color: #C2273B; }
+  .redbtn { background: #E5484D; color: #fff; box-shadow: 0 8px 16px -8px rgba(229,72,77,.7); }
+  .ci .grp { margin-top: 14px; } .ci h3 { margin: 0 0 8px; font-size: .78rem; letter-spacing: .04em; text-transform: uppercase; color: #5A6BA8; }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; }
+  .tile { padding: 12px 14px; border-radius: 16px; background: #F3F8FF; display: flex; flex-direction: column; gap: 2px; }
+  .tile b { font-size: 1.5rem; line-height: 1.1; color: #0F1B4D; } .tile span { font-size: .78rem; color: #5A6BA8; font-weight: 600; }
+  .tile.blue { background: #E4EEFF; } .tile.blue b { color: #1D4ED8; }
+  .tile.green { background: #E9F8F1; } .tile.green b { color: #0F6B47; }
+  .tile.red { background: #FFEEF0; } .tile.red b { color: #C2273B; }
   .pf-sub { margin: 16px 0 8px; font-size: .8rem; letter-spacing: .04em; text-transform: uppercase; color: #5A6BA8; }
   .perm { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
   .perm li { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-radius: 16px; }
@@ -83,27 +102,31 @@
 </div>
 
 {# ---- Google connections ---- #}
+{% set _all_ok = google_status.values()|selectattr('state', 'equalto', 'healthy')|list|length == google_status|length %}
 <div class="pf-card" id="google">
-  <h2>Google connections</h2>
-  <p class="sub">Ragra only <b>reads</b> your Google Classroom. It can't change anything there.</p>
+  <div class="pf-title"><h2>Google connections</h2>
+    {% if _all_ok %}<span class="pill ok"><i>&#10003;</i>Connected</span>{% else %}<span class="pill bad"><i>!</i>Action needed</span>{% endif %}</div>
+  <p class="sub">Ragra only <b>reads</b> your Google Classroom. Calendar lets it add your deadlines to your calendar.</p>
   {% if sync_problem %}<div class="flash warn-flash" id="cc-warn"><b>{{ sync_problem.text }}</b><br>{{ sync_problem.fix }}</div>{% endif %}
-  {% for service, status in google_status.items() if service == 'classroom' %}
+  {% for service, status in google_status.items() %}
+  {% set _good = status.state == 'healthy' %}
   <div class="pf-row">
-    <div>
-      <span class="nm">{{ service | capitalize }}</span>
-      <span class="badge badge-{{ status.state }}">{{ status.state | replace("_", " ") }}</span>
-      {% if status.detail %}<div class="hint">{{ status.detail }}</div>{% endif %}
-      {% if status.last_success_at %}<div class="hint">Last worked: {{ status.last_success_at }}</div>{% endif %}
+    <div class="svc">
+      <span class="dot {{ 'ok' if _good else 'bad' }}" aria-hidden="true">{{ '✓' if _good else '!' }}</span>
+      <div>
+        <span class="nm">{{ service | capitalize }}</span>
+        <span class="cstat {{ 'ok' if _good else 'bad' }}">{{ 'Connected' if _good else ('Not connected' if status.state == 'not_connected' else 'Needs reconnecting') }}</span>
+        {% if status.detail and not _good %}<div class="hint">{{ status.detail }}</div>{% endif %}
+        {% if status.last_success_at and _good %}<div class="hint">Last worked: {{ status.last_success_at }}</div>{% endif %}
+      </div>
     </div>
     <form class="inline" method="post" action="/account/google/reconnect/{{ service }}">
       <input type="hidden" name="csrf_token" value="{{ csrf_token_for(request) }}">
-      <button type="submit">{% if status.state == "not_connected" %}Connect{% else %}Reconnect{% endif %} {{ service | capitalize }}</button>
+      {% if _good %}<button type="submit" class="btn-ghost">Reconnect</button>
+      {% else %}<button type="submit" class="redbtn">{{ 'Connect' if status.state == 'not_connected' else 'Reconnect' }} {{ service | capitalize }} again</button>{% endif %}
     </form>
   </div>
   {% endfor %}
-  <div class="pf-row soon">
-    <div><span class="nm" style="color:#8A98C6">Calendar</span> <span class="state dev badge" style="background:#FFF1CF;color:#9A5B00">Under development</span></div>
-  </div>
 
   {% if permissions %}
   <h3 class="pf-sub">Permissions</h3>
@@ -123,12 +146,58 @@
     {% endfor %}
   </ul>
   {% endif %}
-  <p class="hint">Anything marked with <b>!</b> is a permission you haven't allowed. Press <b>Allow</b> and tick it on Google's screen. Every permission here is read-only.</p>
+  <p class="hint">Anything marked with <b>!</b> is a permission you haven't allowed. Press <b>Allow</b> and tick it on Google's screen.</p>
   <div class="pf-check">
-    <button type="button" id="cc-btn">Check Classroom now</button>
+    <button type="button" id="cc-btn">Permissions</button>
     <ul id="cc-out" aria-live="polite"></ul>
   </div>
 </div>
+
+{# ---- Classroom information ---- #}
+{% if google_status.classroom.state != 'not_connected' %}
+<div class="pf-card" id="classroom-info">
+  <div class="pf-title"><h2>Classroom information</h2><button type="button" class="btn-ghost" id="ci-refresh">Refresh</button></div>
+  <p class="sub">What Ragra can see in your Classroom right now.</p>
+  <div id="ci-body" class="ci"><p class="hint">Loading...</p></div>
+</div>
+<script>
+(function () {
+  var body = document.getElementById('ci-body'), refresh = document.getElementById('ci-refresh');
+  if (!body) return;
+  function tile(n, label, tone) {
+    var d = document.createElement('div'); d.className = 'tile ' + (tone || '');
+    var b = document.createElement('b'); b.textContent = (n === null || n === undefined) ? '-' : n;
+    var s = document.createElement('span'); s.textContent = label; d.appendChild(b); d.appendChild(s); return d;
+  }
+  function group(title, tiles) {
+    var g = document.createElement('div'); g.className = 'grp';
+    var h = document.createElement('h3'); h.textContent = title; g.appendChild(h);
+    var row = document.createElement('div'); row.className = 'tiles'; tiles.forEach(function (t) { row.appendChild(t); }); g.appendChild(row);
+    return g;
+  }
+  function load() {
+    body.textContent = ''; var p = document.createElement('p'); p.className = 'hint'; p.textContent = 'Loading...'; body.appendChild(p);
+    fetch('/account/classroom/info', { method: 'POST', headers: { 'Accept': 'application/json', 'X-CSRF-Token': '{{ csrf_token_for(request) }}' } })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        body.textContent = '';
+        if (!d.ok) { var e = document.createElement('p'); e.className = 'hint'; e.textContent = d.message; body.appendChild(e); return; }
+        var c = d.classes, w = d.work;
+        body.appendChild(group('Your classes', [
+          tile(c.active, 'Active classes', 'blue'), tile(c.teacher, 'As teacher'), tile(c.student, 'As student'),
+          tile(c.other, 'Other'), tile(c.archived, 'Archived')]));
+        body.appendChild(group('What Ragra found', [
+          tile(w.assignments, 'Assignments'), tile(w.with_deadline, 'With a due date'), tile(w.upcoming, 'Upcoming', 'blue'),
+          tile(w.overdue, 'Overdue', w.overdue ? 'red' : ''), tile(w.missed, 'Missed', w.missed ? 'red' : ''), tile(w.completed, 'Done', 'green'),
+          tile(w.announcements, 'Announcements'), tile(w.materials, 'Materials')]));
+      })
+      .catch(function () { body.textContent = ''; var e = document.createElement('p'); e.className = 'hint'; e.textContent = 'Could not load this right now.'; body.appendChild(e); });
+  }
+  refresh.addEventListener('click', load);
+  load();
+})();
+</script>
+{% endif %}
 <script>
 (function () {
   var btn = document.getElementById('cc-btn'), out = document.getElementById('cc-out');
@@ -158,7 +227,7 @@
         });
       })
       .catch(function () { var li = document.createElement('li'); li.className = 'fail'; li.textContent = 'Could not run the check. Try again.'; out.appendChild(li); })
-      .finally(function () { btn.disabled = false; btn.textContent = 'Check Classroom now'; });
+      .finally(function () { btn.disabled = false; btn.textContent = 'Permissions'; });
   });
 })();
 </script>

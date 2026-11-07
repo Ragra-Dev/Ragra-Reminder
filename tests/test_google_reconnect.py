@@ -249,7 +249,7 @@ def test_the_callback_page_never_prints_a_credential_value(client):
 def test_account_page_shows_a_reconnect_action_for_each_service(client):
     body = client.get("/account").text
     assert "/account/google/reconnect/classroom" in body
-    assert "/account/google/reconnect/calendar" not in body   # Calendar is under development: no write access requested
+    assert "/account/google/reconnect/calendar" in body
 
 
 # ---------------------------------------------------------------------------

@@ -378,6 +378,11 @@ class _FakeClassroom:
     def list_taught_course_ids(self):
         return set(self.taught)
 
+    students = frozenset()
+
+    def list_student_course_ids(self):
+        return set(self.students)
+
     def list_course_work(self, course_id):
         if self.coursework_error:
             raise self.coursework_error
@@ -505,3 +510,45 @@ def test_assignments_permission_counts_as_allowed_only_after_a_good_sync(client)
     assert 'class="ok"' in row() and 'class="allow"' not in row()          # a sync worked: allowed
     _set_classroom_sync(client, "ERROR", "coursework sync failed for 'OOP': HttpError 403")
     assert 'class="miss"' in row() and 'class="allow"' in row()            # refused again: allow button back
+
+
+def test_profile_shows_green_connected_when_both_google_services_are_healthy(client):
+    from ragra.adapters import credential_health
+
+    conn = connect(client.db_path)
+    uid = owner_id(conn)
+    for service in ("classroom", "calendar"):
+        credential_health.record_success(conn, user_id=uid, service=service)
+    conn.close()
+    html = client.get("/account").text
+    assert 'class="pill ok"' in html and "Connected</span>" in html
+    assert 'class="pill bad"' not in html
+    assert html.count('class="dot ok"') == 2
+    assert 'class="redbtn"' not in html          # no red reconnect button when everything is connected
+
+
+def test_profile_shows_red_connect_again_when_a_service_needs_connecting(client):
+    html = client.get("/account").text          # nothing connected yet
+    assert 'class="pill bad"' in html
+    assert html.count('class="dot bad"') == 2
+    assert "Connect Classroom again" in html and "Connect Calendar again" in html
+
+
+def test_calendar_can_be_connected_again(client):
+    token = client.get("/account").text.split('name="csrf_token" value="')[1].split('"')[0]
+    r = client.post("/account/google/reconnect/calendar", data={"csrf_token": token}, follow_redirects=False)
+    assert r.status_code in (303, 503)          # starts the Google flow (503 only when no OAuth client is configured here)
+
+
+def test_classroom_information_counts_classes_by_role_and_what_ragra_found(client, monkeypatch):
+    fake = _FakeClassroom()
+    fake.taught = frozenset({"c1"})
+    fake.students = frozenset({"c1", "c9"})      # c9 is not an active class here, so it is not counted
+    from ragra.adapters import user_clients
+
+    monkeypatch.setattr(user_clients, "classroom_client_for", lambda conn, config, user_id: fake)
+    token = client.get("/account").text.split('name="csrf_token" value="')[1].split('"')[0]
+    info = client.post("/account/classroom/info", headers={"X-CSRF-Token": token}).json()
+    assert info["ok"] is True
+    assert info["classes"] == {"active": 1, "archived": 1, "teacher": 1, "student": 1, "other": 0}
+    assert info["work"]["assignments"] >= 1 and info["work"]["overdue"] >= 1      # the fixture's overdue assignment

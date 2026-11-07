@@ -757,6 +757,75 @@ def create_app(
 
         return JSONResponse({"ok": ok, "steps": steps})
 
+    @app.post("/account/classroom/info")
+    def classroom_info(request: Request):
+        """Numbers about this account's Classroom for the Profile page: how many classes, as
+        teacher and as student, and what Ragra has found in them. Read-only. CSRF-checked by
+        the middleware."""
+        from fastapi.responses import JSONResponse
+
+        from ragra.adapters import user_clients
+        from ragra.config import load_config
+
+        now_iso = utc_iso(datetime.now(timezone.utc))
+        with connect_closing(db_path) as conn:
+            user_id = _acting_user(conn, request)
+            try:
+                client = user_clients.classroom_client_for(conn, load_config(), user_id=user_id)
+            except user_clients.UserCredentialsUnavailable:
+                return JSONResponse({"ok": False, "message": "Classroom isn't connected yet."})
+            except Exception as exc:  # noqa: BLE001 - report, never crash the page
+                return JSONResponse({"ok": False, "message": f"Couldn't start: {str(exc)[:140]}"})
+
+            # What Ragra has already found in this account's classes (local data, no Google call).
+            rows = {
+                r["source_type"]: r
+                for r in conn.execute(
+                    """SELECT source_type, COUNT(*) AS n,
+                              SUM(CASE WHEN actual_deadline IS NOT NULL THEN 1 ELSE 0 END) AS dated,
+                              SUM(CASE WHEN status = 'COMPLETED' THEN 1 ELSE 0 END) AS done
+                       FROM tasks WHERE user_id = ? AND status != 'CANCELLED' GROUP BY source_type""",
+                    (user_id,),
+                )
+            }
+            upcoming = len(repo.tasks_due_between(conn, user_id=user_id, start_iso=now_iso, end_iso="9999-12-31T23:59:59+00:00"))
+            overdue = len(repo.overdue_tasks(conn, user_id=user_id, now=now_iso))
+            missed = repo.count_missed_tasks(conn, user_id=user_id)
+
+        def count(kind, field="n"):
+            row = rows.get(kind)
+            return int(row[field] or 0) if row else 0
+
+        try:
+            courses = client.list_courses()
+        except Exception as exc:  # noqa: BLE001
+            return JSONResponse({"ok": False, "message": f"Couldn't read your classes: {str(exc)[:140]}"})
+        active = {c["id"] for c in courses if (c.get("courseState") or "ACTIVE") == "ACTIVE"}
+        archived = len(courses) - len(active)
+
+        def ids(fetch):
+            try:
+                return fetch() & active
+            except Exception:  # noqa: BLE001 - one role lookup failing must not hide the rest
+                return None
+
+        teacher, student = ids(client.list_taught_course_ids), ids(client.list_student_course_ids)
+        known = (teacher or set()) | (student or set())
+        return JSONResponse({
+            "ok": True,
+            "classes": {
+                "active": len(active), "archived": archived,
+                "teacher": None if teacher is None else len(teacher),
+                "student": None if student is None else len(student),
+                "other": None if (teacher is None or student is None) else len(active - known),
+            },
+            "work": {
+                "assignments": count("coursework"), "with_deadline": count("coursework", "dated"),
+                "completed": count("coursework", "done"), "upcoming": upcoming, "overdue": overdue, "missed": missed,
+                "announcements": count("announcement"), "materials": count("material"),
+            },
+        })
+
     @app.post("/logout")
     def logout(request: Request):  # CSRF-checked by the middleware above
         """POST only. A GET sign-out is a link an attacker can put in an

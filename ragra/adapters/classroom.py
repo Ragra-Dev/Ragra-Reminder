@@ -328,6 +328,14 @@ class ClassroomGoogleClient:
         )
         return {c["id"] for c in courses}
 
+    def list_student_course_ids(self) -> set[str]:
+        """Ids of the classes this account is a STUDENT in (read-only; classes permission only)."""
+        courses = self._list_all(
+            lambda page_token: self._service.courses().list(pageSize=100, pageToken=page_token, studentId="me"),
+            "courses",
+        )
+        return {c["id"] for c in courses}
+
     def list_course_work(self, course_id: str) -> list[dict[str, Any]]:
         return self._list_all(
             lambda page_token: self._service.courses()

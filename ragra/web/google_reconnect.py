@@ -384,7 +384,7 @@ def permission_rows(conn, *, user_id: int) -> list[dict]:
     worked = bool(sync and sync["last_success_at"]) and not refused
 
     rows: list[dict] = []
-    for service in (CLASSROOM,):          # Classroom only: read-only access to your classes
+    for service in SERVICES:
         stored = repo.google_credential_scopes(conn, user_id=user_id, service=service)
         if stored is None:
             continue  # not connected: the Connect button above covers it
