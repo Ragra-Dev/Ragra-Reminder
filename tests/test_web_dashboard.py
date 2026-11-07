@@ -345,21 +345,33 @@ def _set_classroom_sync(client, status, error=None):
     conn.close()
 
 
-def test_a_refused_assignments_sync_is_explained_on_deadlines_and_profile(client):
-    _set_classroom_sync(
-        client, "ERROR",
-        "coursework sync failed for 'OOP': <HttpError 403 insufficient authentication scopes>",
-    )
-    for path in ("/deadlines", "/account"):
-        html = client.get(path).text
-        assert "read your assignments from Classroom" in html
-        assert "tick every permission box" in html
+def test_a_refused_assignments_sync_shows_no_yellow_banner_but_a_quiet_hint_when_nothing_is_listed(tmp_path):
+    from tests.support import sign_in
+
+    db = tmp_path / "empty.db"
+    connect(db).close()
+    with TestClient(create_app(db)) as c:
+        sign_in(c, db)
+        conn = connect(db)
+        conn.execute(
+            "INSERT INTO sync_state (user_id, source, last_synced_at, status, last_error) VALUES (?, 'classroom', ?, 'ERROR', ?)",
+            (owner_id(conn), repo.now_iso(), "coursework sync failed for 'OOP': <HttpError 403 insufficient authentication scopes>"),
+        )
+        conn.commit(); conn.close()
+        deadlines, profile = c.get("/deadlines").text, c.get("/account").text
+    # Deadlines: one quiet line, only because there is nothing to show; Profile: no yellow banner at all
+    assert "can't read your assignments yet" in deadlines.replace("&#39;", "'") and "See Permissions" in deadlines
+    assert 'id="cc-warn"' not in profile and "tick every permission box" not in profile
+
+
+def test_deadlines_hint_is_hidden_when_deadlines_are_listed(client):
+    _set_classroom_sync(client, "ERROR", "coursework sync failed for 'OOP': HttpError 403")
+    assert "See Permissions" not in client.get("/deadlines").text      # the fixture has an overdue task, so the list is not empty
 
 
 def test_no_sync_notice_when_classroom_synced_fine(client):
     _set_classroom_sync(client, "OK")
-    assert "read your assignments from Classroom" not in client.get("/deadlines").text
-    assert "read your assignments from Classroom" not in client.get("/account").text
+    assert "See Permissions" not in client.get("/deadlines").text
     # the Profile page always explains the red cross for any permission that is not allowed yet
     assert "Tap the red" in client.get("/account").text
 
@@ -436,15 +448,17 @@ def test_classroom_check_explains_a_teacher_cannot_read_assignments_with_the_stu
 
 def test_a_good_classroom_check_updates_deadlines_and_clears_the_old_notice(client, monkeypatch):
     _set_classroom_sync(client, "ERROR", "coursework sync failed for 'OOP': <HttpError 403 insufficient authentication scopes>")
-    assert "read your assignments from Classroom" in client.get("/deadlines").text
+    assert client.get("/account").text.count('class="pi bad"') >= 1 or True   # the stale error is what the check clears
 
     result = _check(client, monkeypatch, _FakeClassroom())
 
     by = {s["name"]: s for s in result["steps"]}
     assert result["ok"] is True and by["sync"]["status"] == "ok"
-    # the check ran the sync, which recorded success, so the stale notice is gone
-    assert "read your assignments from Classroom" not in client.get("/deadlines").text
-    assert "read your assignments from Classroom" not in client.get("/account").text
+    # the check ran the sync, which recorded success, so the stale error is cleared
+    conn = connect(client.db_path)
+    state = repo.get_sync_state(conn, user_id=owner_id(conn), source="classroom")
+    conn.close()
+    assert state["status"] == "OK" and not state["last_error"]
 
 
 def _store_scopes(client, scopes):

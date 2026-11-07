@@ -104,7 +104,6 @@
   <div class="pf-title"><h2>Google connections</h2>
     {% if _all_ok %}<span class="pill ok"><i>&#10003;</i>Connected</span>{% else %}<span class="pill bad"><i>!</i>Action needed</span>{% endif %}</div>
   <p class="sub">Ragra only <b>reads</b> your Google Classroom. Calendar lets it add your deadlines to your calendar.</p>
-  {% if sync_problem %}<div class="flash warn-flash" id="cc-warn"><b>{{ sync_problem.text }}</b><br>{{ sync_problem.fix }}</div>{% endif %}
   {% for service, status in google_status.items() %}
   {% set _good = status.state == 'healthy' %}
   <div class="pf-row">

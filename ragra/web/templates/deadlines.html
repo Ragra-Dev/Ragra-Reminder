@@ -49,12 +49,8 @@
   .dlp-ok b { display: block; font-size: .92rem; color: #0F6B47; }
   .dlp-ok span { font-size: .82rem; color: #3E7F65; }
 
-  .dlp-sync { display: flex; gap: 14px; padding: 14px 18px; border-radius: 20px; background: #FFF8E6; border: 1px solid #FBE3A6; }
-  .dlp-sync .wi { width: 36px; height: 36px; flex: none; border-radius: 12px; display: grid; place-items: center; background: #F5B301; color: #fff; }
-  .dlp-sync .wi svg { width: 20px; height: 20px; }
-  .dlp-sync b { display: block; font-size: .92rem; color: #8A5A00; }
-  .dlp-sync span { font-size: .84rem; color: #8A6A20; }
-  .dlp-sync a { display: inline-block; margin-top: 6px; font-weight: 700; font-size: .84rem; color: #1D4ED8; }
+  .dlp-sync-note { margin: 0; font-size: .85rem; color: #6B6A7F; }
+  .dlp-sync-note a { font-weight: 700; color: #1D4ED8; }
 
   /* groups */
   .dlp-group { background: #fff; border-radius: 26px; padding: 6px 22px 10px; box-shadow: 0 14px 30px -18px rgba(37,99,235,.38), 0 2px 6px rgba(15,30,69,.05); }
@@ -111,11 +107,8 @@
       <p>{% if total %}{{ total }} open deadline{{ '' if total == 1 else 's' }}, soonest first.{% else %}Nothing due right now.{% endif %}</p></div>
   </div>
 
-  {% if sync_problem %}
-  <div class="dlp-sync" role="status">
-    <span class="wi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7M21 4v5h-5"/></svg></span>
-    <div><b>{{ sync_problem.text }}</b><span>{{ sync_problem.fix }}</span><br><a href="/account#google">Open Profile &rarr;</a></div>
-  </div>
+  {% if sync_problem and not total %}
+  <p class="dlp-sync-note">Nothing is showing because Ragra can't read your assignments yet. <a href="/account#google">See Permissions</a></p>
   {% endif %}
 
   {% if urgent %}
