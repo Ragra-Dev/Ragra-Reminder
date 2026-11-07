@@ -31,6 +31,19 @@
   .dd-card.wide { grid-column: 1 / -1; }
   .dd-desc { white-space: pre-wrap; font-size: .95rem; line-height: 1.55; color: #2A3566; overflow-wrap: anywhere; }
 
+  .dd-tl { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; }
+  .dd-tl li { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid #EEF2FD; }
+  .dd-tl li:first-child { border-top: 0; }
+  .dd-tl .dot { width: 10px; height: 10px; flex: none; border-radius: 50%; background: #94A3B8; }
+  .dd-tl .dot.ok { background: #22A06B; } .dd-tl .dot.wait { background: #F59E0B; } .dd-tl .dot.bad { background: #E5484D; }
+  .dd-tl .tx { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.3; }
+  .dd-tl .tx b { font-size: .92rem; color: var(--ink); } .dd-tl .tx small { font-size: .8rem; color: var(--ink-2); overflow-wrap: anywhere; }
+  .dd-tl .when { flex: none; font-size: .74rem; color: var(--ink-2); text-align: right; }
+  .dd-tl .chip { flex: none; padding: 3px 11px; border-radius: 999px; font-size: .74rem; font-weight: 800; background: #EEF2FD; color: #3B4C93; }
+  .dd-tl .chip.ok { background: #DDF6EA; color: #0F8F6E; } .dd-tl .chip.wait { background: #FFF1D6; color: #B7791F; } .dd-tl .chip.bad { background: #FFE0E3; color: #C2273B; }
+  .dd-hist summary { display: flex; align-items: center; justify-content: space-between; cursor: pointer; list-style: none; }
+  .dd-hist summary::-webkit-details-marker { display: none; }
+  .dd-hist summary b { min-width: 24px; height: 24px; padding: 0 8px; border-radius: 999px; display: inline-grid; place-items: center; background: #EEF2FD; color: var(--ink-2); font-size: .74rem; }
   .dd-actions { display: flex; flex-wrap: wrap; gap: 10px; }
   .dd-actions form { margin: 0; }
   .dd-actions .btn, .dd-actions button { margin: 0; padding: 12px 20px; border-radius: 999px; font-weight: 800; font-size: .92rem; text-decoration: none; cursor: pointer; border: 0; }
@@ -46,7 +59,7 @@
 {% include "_nav.html" %}
 
 <div class="dd">
-  <a class="dd-back" href="/deadlines"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>Back to Deadlines</a>
+  <a class="dd-back" href="{{ back_url }}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>{{ back_label }}</a>
 
   <div class="dd-hero">
     {% if card %}<div class="dd-date {{ card.group }}"><small>{{ card.month }}</small><b>{{ card.day }}</b><small>{{ card.weekday }}</small></div>{% endif %}
@@ -71,7 +84,7 @@
     </div>
     <div class="dd-card">
       <p class="k">Status</p>
-      <div class="v">{% if task.status == 'COMPLETED' %}Done{% elif task.status == 'MISSED' %}Missed{% elif task.status == 'CANCELLED' %}Cancelled{% else %}Not done yet{% endif %}</div>
+      <div class="v">{{ status_label }}{% if finished %}<small>{{ finished }}</small>{% endif %}</div>
     </div>
     {% if task.personal_deadline %}
     <div class="dd-card">
@@ -85,14 +98,29 @@
       <div class="dd-desc">{{ task.description }}</div>
     </div>
     {% endif %}
-    <div class="dd-card wide">
-      <p class="k">Reminders</p>
-      <div class="v" style="font-weight:600;font-size:.92rem">
-        {% if reminders %}{% for r in reminders %}<div>{{ r.reminder_type|replace('_', ' ')|capitalize }} &middot; {{ r.status|lower }} &middot; {{ r.scheduled_for|when }}</div>{% endfor %}
-        {% else %}No reminders set for this one.{% endif %}
-      </div>
-    </div>
   </div>
+
+  {% if reminders %}
+  <div class="dd-card">
+    <p class="k">Reminders</p>
+    <ul class="dd-tl">
+      {% for r in reminders %}
+      <li><span class="dot {{ r.tone }}"></span><span class="tx"><b>{{ r.label }}</b><small>{{ r.when }}</small></span><span class="chip {{ r.tone }}">{{ r.state }}</span></li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+
+  {% if history %}
+  <details class="dd-card dd-hist">
+    <summary><span class="k" style="margin:0">What changed</span><b>{{ history|length }}</b></summary>
+    <ul class="dd-tl">
+      {% for h in history %}
+      <li><span class="dot off"></span><span class="tx"><b>{{ h.label }}</b><small>{{ h.old }} &rarr; {{ h.new }}</small></span><small class="when">{{ h.when }}</small></li>
+      {% endfor %}
+    </ul>
+  </details>
+  {% endif %}
 
   <div class="dd-actions">
     {% if task.link %}<a class="btn go" href="{{ task.link }}" target="_blank" rel="noopener">Open in Classroom</a>{% endif %}
@@ -103,7 +131,6 @@
     </form>
     {% endif %}
   </div>
-  <p class="dd-foot"><a href="/tasks/{{ task.id }}">Full technical details</a></p>
 </div>
 </body>
 </html>

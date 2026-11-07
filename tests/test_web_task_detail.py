@@ -46,9 +46,11 @@ def test_task_detail_shows_core_fields(client):
     assert resp.status_code == 200
     assert "Assignment 2" in resp.text
     assert "Object Oriented Programming" in resp.text
-    assert "2026-09-10T23:59:00+00:00" in resp.text  # actual deadline
-    assert "2026-09-08" in resp.text  # personal deadline
-    assert "ACTION_REQUIRED" in resp.text  # status
+    assert "Fri 11 Sep" in resp.text or "Thu 10 Sep" in resp.text  # deadline, as a readable campus-time date
+    assert "2026-09-10T23:59:00+00:00" not in resp.text            # no raw timestamps on the page
+    assert "Tue 8 Sep" in resp.text  # personal target, as a readable date
+    assert "Planned" in resp.text  # status, in plain words (it has a personal target, so it is planned)
+    assert ">PLANNED<" not in resp.text
 
 
 def test_task_detail_shows_description_and_classroom_link(client):
@@ -59,14 +61,15 @@ def test_task_detail_shows_description_and_classroom_link(client):
 
 def test_task_detail_shows_reminder_state(client):
     resp = client.get(f"/tasks/{client.task_id}")
-    assert "T_MINUS_1D" in resp.text
-    assert "PENDING" in resp.text
-    assert "2026-09-09T23:59:00+00:00" in resp.text
+    assert "1 day before" in resp.text            # plain name, not T_MINUS_1D
+    assert "Scheduled" in resp.text               # plain status, not PENDING
+    assert "T_MINUS_1D" not in resp.text and "PENDING" not in resp.text
 
 
 def test_task_detail_shows_history(client):
     resp = client.get(f"/tasks/{client.task_id}")
-    assert "personal_deadline" in resp.text
+    assert "What changed" in resp.text and "Your own target" in resp.text   # plain label, not personal_deadline
+    assert "personal_deadline" not in resp.text
 
 
 def test_task_detail_404_for_missing_task(client):
@@ -91,9 +94,7 @@ def test_task_without_description_or_link_renders_fine(client):
     resp = client.get(f"/tasks/{result.task_id}")
     assert resp.status_code == 200
     assert "Bare Task" in resp.text
-    assert "No academic deadline set" in resp.text
-    assert "Not set" in resp.text  # personal deadline
-    assert "No reminders recorded" in resp.text
+    assert "No due date" in resp.text
 
 
 def test_dashboard_task_titles_link_to_detail_view(client):

@@ -295,7 +295,11 @@ def create_app(
         if not value:
             return ""
         if "T" not in str(value):
-            return str(value)  # a plain date has no time to convert
+            try:  # a plain date has no time to convert: just make it readable
+                d = datetime.strptime(str(value), "%Y-%m-%d")
+                return f"{d.strftime('%a')} {d.day} {d.strftime('%b')}"
+            except ValueError:
+                return str(value)
         try:
             from ragra.tz import parse_instant, to_local
 
@@ -987,21 +991,57 @@ def create_app(
              "urgent": within(3), "sync_problem": sync_problem},
         )
 
-    # --- One assignment, opened from the Deadlines list --------------------
-    @app.get("/deadlines/{task_id}")
-    def deadline_detail(request: Request, task_id: int):
+    # --- One assignment: the same clean page from Deadlines, Tasks, chat links and reminders ----
+    _REMINDER_LABELS = {
+        "NEW_ASSIGNMENT": "New assignment alert", "T_MINUS_7D": "1 week before", "T_MINUS_5D": "5 days before",
+        "T_MINUS_3D": "3 days before", "T_MINUS_2D": "2 days before", "T_MINUS_1D": "1 day before",
+        "DUE_TODAY": "Due-today alert", "FEW_HOURS": "A few hours before", "MIDPOINT": "Halfway reminder",
+        "FINAL_1H": "1 hour before", "DEADLINE_REACHED": "Deadline reached", "DEADLINE_CHANGED": "Deadline changed",
+    }
+    _STATUS_LABELS = {"ACTION_REQUIRED": "Not done yet", "PLANNED": "Planned", "DISCOVERED": "New", "COMPLETED": "Done", "MISSED": "Missed", "CANCELLED": "Cancelled"}
+    _FIELD_LABELS = {"actual_deadline": "Deadline", "personal_deadline": "Your own target", "status": "Status",
+                     "title": "Title", "description": "Details"}
+
+    def _task_page(request: Request, task_id: int, *, back: tuple[str, str]):
         now = datetime.now(timezone.utc)
         with connect_closing(db_path) as conn:
             user_id = _acting_user(conn, request)
-            # Scoped lookup: someone else's task id is a plain 404.
+            # Scoped lookup: someone else's task id is a plain 404, not a disclosure.
             task = repo.get_task_by_id(conn, user_id=user_id, task_id=task_id)
             if task is None:
                 raise HTTPException(status_code=404, detail="Task not found")
             reminders = repo.reminders_for_task(conn, user_id=user_id, task_id=task_id)
+            history = repo.history_for_task(conn, user_id=user_id, task_id=task_id)
         card = _deadline_card(task, now) if task["actual_deadline"] else None
+
+        def nice(field, value):
+            if value in (None, ""):
+                return "none"
+            return _STATUS_LABELS.get(value, value) if field == "status" else _friendly_when(value)
+
+        reminder_rows = [{
+            "label": _REMINDER_LABELS.get(r["reminder_type"], str(r["reminder_type"]).replace("_", " ").capitalize()),
+            "state": {"SENT": "Sent", "PENDING": "Scheduled", "CANCELLED": "Cancelled", "FAILED": "Failed"}.get(r["status"], r["status"]),
+            "tone": {"SENT": "ok", "PENDING": "wait", "FAILED": "bad"}.get(r["status"], "off"),
+            "when": _friendly_when(r["sent_at"] if r["status"] == "SENT" and r["sent_at"] else r["scheduled_for"]),
+        } for r in reminders]
+        history_rows = [{
+            "label": _FIELD_LABELS.get(h["field"], str(h["field"]).replace("_", " ").capitalize()),
+            "old": nice(h["field"], h["old_value"]), "new": nice(h["field"], h["new_value"]),
+            "when": _friendly_when(h["changed_at"]),
+        } for h in history]
+        finished = (_friendly_when(task["completed_at"]) if task["completed_at"] else
+                    _friendly_when(task["missed_at"]) if task["missed_at"] else "")
         return templates.TemplateResponse(
-            request, "deadline_detail.html", {"task": task, "card": card, "reminders": reminders},
+            request, "deadline_detail.html",
+            {"task": task, "card": card, "reminders": reminder_rows, "history": history_rows,
+             "status_label": _STATUS_LABELS.get(task["status"], str(task["status"]).replace("_", " ").capitalize()),
+             "finished": finished, "back_url": back[0], "back_label": back[1]},
         )
+
+    @app.get("/deadlines/{task_id}")
+    def deadline_detail(request: Request, task_id: int):
+        return _task_page(request, task_id, back=("/deadlines", "Back to Deadlines"))
 
     @app.get("/missed")
     def missed_full(request: Request):
@@ -1025,21 +1065,7 @@ def create_app(
 
     @app.get("/tasks/{task_id}")
     def task_detail(request: Request, task_id: int):
-        with connect_closing(db_path) as conn:
-            user_id = _acting_user(conn, request)
-            # Scoped lookup: another user's task id is indistinguishable from
-            # a nonexistent one, so this is a 404 and not a disclosure.
-            task = repo.get_task_by_id(conn, user_id=user_id, task_id=task_id)
-            if task is None:
-                raise HTTPException(status_code=404, detail="Task not found")
-            reminders = repo.reminders_for_task(conn, user_id=user_id, task_id=task_id)
-            history = repo.history_for_task(conn, user_id=user_id, task_id=task_id)
-
-        return templates.TemplateResponse(
-            request,
-            "task_detail.html",
-            {"task": task, "reminders": reminders, "history": history},
-        )
+        return _task_page(request, task_id, back=("/", "Back to Home"))
 
     @app.post("/tasks/{task_id}/complete")
     def complete_task(request: Request, task_id: int):
