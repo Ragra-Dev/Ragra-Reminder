@@ -32,6 +32,7 @@ from fastapi import BackgroundTasks, FastAPI, Form, HTTPException, Request
 from fastapi.responses import PlainTextResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
+from ragra import feedback_mail
 from ragra import accounts as accounts_module
 from ragra import crypto
 from ragra.adapters import credential_health, google_credentials
@@ -1061,7 +1062,8 @@ def create_app(
 
     @app.post("/contact/feedback")
     def contact_feedback(
-        request: Request, kind: str = Form("suggestion"), rating: str = Form(""), message: str = Form(""),
+        request: Request, background: BackgroundTasks,
+        kind: str = Form("suggestion"), rating: str = Form(""), message: str = Form(""),
     ):
         message = message.strip()[:2000]
         if kind not in repo.FEEDBACK_KINDS:
@@ -1074,7 +1076,9 @@ def create_app(
             user_id = _acting_user(conn, request)
             if repo.recent_feedback_count(conn, user_id=user_id, since_iso=since) >= repo.FEEDBACK_MAX_PER_HOUR:
                 return RedirectResponse("/contact?error=That+is+a+lot+of+messages+in+an+hour.+Please+try+again+later.", status_code=303)
-            repo.add_feedback(conn, user_id=user_id, kind=kind, rating=stars, message=message)
+            feedback_id = repo.add_feedback(conn, user_id=user_id, kind=kind, rating=stars, message=message)
+        # Saved first; the email to the team goes out afterwards so the person is never kept waiting.
+        background.add_task(feedback_mail.send_feedback_email, db_path, user_id, feedback_id)
         return RedirectResponse("/contact?sent=1", status_code=303)
 
     @app.get("/contact/inbox")
@@ -1089,6 +1093,7 @@ def create_app(
         items = [{
             "kind": r["kind"], "rating": r["rating"], "message": r["message"], "when": _friendly_when(r["created_at"]),
             "who": r["display_name"] or r["email"] or "Someone", "email": r["email"],
+            "emailed": bool(r["emailed_at"]), "email_note": r["email_note"] or "Not emailed yet.",
         } for r in rows]
         return templates.TemplateResponse(request, "contact_inbox.html", {"items": items})
 

@@ -1982,3 +1982,20 @@ def all_feedback(conn: sqlite3.Connection, *, limit: int = 200) -> list[sqlite3.
            ORDER BY feedback.id DESC LIMIT ?""",
         (limit,),
     ).fetchall()
+
+
+def get_feedback(conn: sqlite3.Connection, *, user_id: int, feedback_id: int) -> sqlite3.Row | None:
+    return conn.execute(
+        "SELECT * FROM feedback WHERE id = ? AND user_id = ?", (feedback_id, user_id)
+    ).fetchone()
+
+
+def mark_feedback_emailed(
+    conn: sqlite3.Connection, *, user_id: int, feedback_id: int, emailed: bool, note: str | None
+) -> None:
+    """Record what happened when the team was emailed about this feedback."""
+    conn.execute(
+        "UPDATE feedback SET emailed_at = ?, email_note = ? WHERE id = ? AND user_id = ?",
+        (now_iso() if emailed else None, note, feedback_id, user_id),
+    )
+    conn.commit()

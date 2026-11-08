@@ -1,7 +1,37 @@
 # My ideas and where I left off
 
 Read this first when resuming work. Update it at the end of every session.
-Last updated: 2026-11-06
+Last updated: 2026-11-08
+
+## Where things stand (2026-11-08)
+Everything below is committed and pushed to GitHub (2026-11-08).
+- **Pages** (all share the blue sidebar / phone bottom bar look): Home (chat card + upcoming deadline +
+  quick access), Chat, Tasks, Deadlines, Announcements, Missed, Notifications, Profile, Contact us.
+- **Chat**: typing dots, then the answer is written live. On phones `/chat` opens full screen like
+  WhatsApp and follows the keyboard (`visualViewport`). Unread badge counts only Ragra's alerts.
+- **Deadlines**: grouped list with filters (All, groups, within 24 hours / 7 days / 1 week) and a red
+  "due within 3 hours" warning. Tapping one opens one clean detail page (`/deadlines/{id}`; `/tasks/{id}`
+  shows the same page). Sidebar highlights Deadlines for the first, nothing for the second.
+- **Google Classroom permissions**: Ragra asks Google only for read-only Classroom scopes (Calendar is the
+  one allowed extra). Profile has one merged Permissions list: green tick = allowed, red cross = tap to
+  allow (opens Google's permission page), plus a Classroom information box (classes as teacher/student).
+  If a coursework permission is refused for a teacher account the note says so.
+- **WhatsApp / Telegram** are shown as "Under development" and disabled. Telegram code is kept (not deleted).
+- **Contact us**: two team cards (Aoun Abbas yellow background, Hashim Amjid blue, round photos with email
+  links) and a feedback form (type, stars, message). Feedback is saved in the `feedback` table (migration
+  0034). The owner (`RAGRA_OWNER_EMAIL`) reads everything at `/contact/inbox`.
+
+### Latest work (2026-11-08)
+- **Feedback is emailed to both team members** after it is saved (`ragra/feedback_mail.py`, migration 0035).
+  Uses Brevo (`RAGRA_BREVO_API_KEY` + `RAGRA_EMAIL_FROM`) or SMTP; `RAGRA_FEEDBACK_TO` overrides the
+  recipients. The inbox shows "Sent to 2 of 2" or the reason it failed. Brevo itself works now.
+- **Hosting move**: Railway's free trial ends after 7 days, so the plan is **Oracle Cloud Always Free**
+  (AMD micro VM `VM.Standard.E2.1.Micro`, Ubuntu 22.04, Docker Compose + Caddy + a free DuckDNS name).
+  Why: always on (reminder loop), real disk for the SQLite file, one process, outbound HTTPS. Render free
+  sleeps and has no disk; Koyeb has no free plan; Fly is trial only. Full steps: `docs/DEPLOY-ORACLE.md`;
+  daily backup script: `scripts/backup-db.sh`; settings template: `deploy.env.example`.
+  Watch-outs: needs a card for sign-up, Oracle may reclaim an idle free VM (upgrade to Pay As You Go if
+  warned), keep a private copy of `RAGRA_CREDENTIAL_KEY`, add the new redirect URIs in Google Cloud.
 
 ## The idea
 Get live messages from Ragra when Google Classroom (GCR) has something new:
@@ -16,7 +46,7 @@ Two ways I wanted:
 
 ## Constraints
 - Must be free of cost.
-- Already deployed on Railway (HTTPS URL exists).
+- Was deployed on Railway (HTTPS URL exists), but its free period is only 7 days, so moving to Oracle Cloud Always Free (see above).
 - Telegram is blocked in Pakistan, so it is NOT usable for me. Don't build more on it.
 - Student in Pakistan (FAST-NUCES).
 
@@ -56,22 +86,24 @@ Going with the **in-app chat bot** ("Ragra" in `/chat`) as the main path. WhatsA
 ## Already built (in the repo)
 - Committed (74a15ed): WhatsApp Cloud API channel + signed webhook, chat assistant
   (`ragra/chat.py`, Gemini for free questions), announcement and material alerts.
-- Uncommitted: `/chat` page (`ragra/web/templates/chat.html`, routes in
+- Since committed: `/chat` page (`ragra/web/templates/chat.html`, routes in
   `ragra/web/app.py`), chat messages tables (migrations 0031-0033), nags
   (`ragra/reminders/nags.py`), Telegram channel (`ragra/web/telegram.py`, migration 0030).
 - The `/chat` page only updates while it is open (it polls `/chat/messages`).
 
 ## Next steps (start here)
-1. Ask: Android or iPhone? (decides the install step)
-2. Run the tests, then commit the uncommitted chat/nags work (my git identity only,
-   no Claude co-author line).
-3. Build Web Push: PWA manifest, service worker, VAPID keys (private key in Railway
+1. Move hosting to Oracle (follow `docs/DEPLOY-ORACLE.md`), then switch Railway off after the checks pass.
+2. Test the feedback email on the live site (both inboxes + `/contact/inbox` says "Sent to 2 of 2").
+3. Optional polish: real roles/taglines for the two team cards, a "Send test email" button for Brevo.
+4. Ask: Android or iPhone? (decides the install step for push)
+5. Build Web Push (the chat work from step 2 of the old list is already committed): PWA manifest, service worker, VAPID keys (private key in Railway
    variables), `push_subscriptions` table, a `WebPushProvider` using the existing
    notification provider interface, delete subscriptions on 404/410, a button on
    `/account` to enable notifications. Each new GCR item should create a chat message
    and a push notification, and tapping it opens `/chat`.
-4. Deploy to Railway and test on my real phone with the app closed.
-5. Optional: switch on WhatsApp with the `RAGRA_WHATSAPP_*` variables.
+   (Do this after the Oracle move: the service worker needs the stable HTTPS address.)
+6. Deploy and test on my real phone with the app closed.
+7. Optional: switch on WhatsApp with the `RAGRA_WHATSAPP_*` variables.
 
 ## Open questions
 - Android or iPhone?

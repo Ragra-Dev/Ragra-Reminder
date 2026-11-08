@@ -18,6 +18,7 @@
   .ib-top .when { margin-left: auto; font-size: .78rem; color: var(--ink-2); }
   .ib-msg { white-space: pre-wrap; overflow-wrap: anywhere; font-size: .95rem; line-height: 1.55; color: #2A3566; }
   .ib-who { margin-top: 8px; font-size: .8rem; color: var(--ink-2); }
+  .ib-mail { margin-top: 6px; font-size: .78rem; font-weight: 700; } .ib-mail.ok { color: #0F8F6E; } .ib-mail.no { color: #B7791F; }
   .ib-none { background: #fff; border-radius: 22px; padding: 30px; text-align: center; color: var(--ink-2); }
 </style>
 </head>
@@ -35,6 +36,7 @@
     </div>
     <div class="ib-msg">{{ i.message }}</div>
     <div class="ib-who">{{ i.who }}{% if i.email %} &middot; {{ i.email }}{% endif %}</div>
+    <div class="ib-mail {{ 'ok' if i.emailed else 'no' }}">{{ '&#10003; ' | safe if i.emailed else '&#9888; ' | safe }}{{ i.email_note }}</div>
   </div>
   {% else %}
   <div class="ib-none">No feedback yet.</div>
